@@ -174,12 +174,13 @@ static void on_scan(const hcp::net::ScanResult* r, void*) {
     return;
   }
   uint8_t slen = (uint8_t)strlen(r->ssid);
-  // Per-AP record: [ssid_len][ssid][rssi]
-  if (g_wlist_len + 2u + slen <= sizeof(g_wlist)) {
-    g_wlist[g_wlist_len++] = slen;
+  // esp btc_blufi_send_wifi_list record layout: [slen+1][rssi(int8)][ssid...]
+  // i.e. the length byte counts ssid+rssi (rssi comes BEFORE the ssid).
+  if (g_wlist_len + 2u + slen <= BLUFI_MAX_DATA_LEN) {
+    g_wlist[g_wlist_len++] = slen + 1;          // length of (rssi + ssid)
+    g_wlist[g_wlist_len++] = (uint8_t)(int8_t)r->rssi;
     memcpy(&g_wlist[g_wlist_len], r->ssid, slen);
     g_wlist_len += slen;
-    g_wlist[g_wlist_len++] = (uint8_t)r->rssi;
   }
 }
 
