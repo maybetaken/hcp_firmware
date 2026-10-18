@@ -148,15 +148,17 @@ void blufi_set_callback(blufi_data_cb_t cb, void *user)
 	g_user = user;
 }
 
-static bool attr_dump_cb(const struct bt_gatt_attr *attr, uint16_t handle,
-			 void *user_data)
+static uint8_t attr_dump_cb(const struct bt_gatt_attr *attr, uint16_t handle,
+			    void *user_data)
 {
-	ARG_UNUSED(user_data);
-	if (attr->uuid != NULL &&
-	    bt_uuid_cmp(attr->uuid, BT_UUID_GATT_PRIMARY) == 0) {
-		LOG_INF("gatt primary-service decl @handle %u", handle);
-	}
-	return false;
+	uint16_t *count = user_data;
+	bool is_primary = (attr->uuid != NULL &&
+			   bt_uuid_cmp(attr->uuid, BT_UUID_GATT_PRIMARY) == 0);
+
+	(*count)++;
+	LOG_INF("db attr handle=0x%04x perm=0x%02x%s", handle, attr->perm,
+		is_primary ? "  <== PRIMARY SERVICE" : "");
+	return BT_GATT_ITER_CONTINUE;
 }
 
 int blufi_start(void)
@@ -179,8 +181,14 @@ int blufi_start(void)
 		LOG_INF("blufi attr[%u] handle=0x%04x",
 			(unsigned)i, blufi_attrs[i].handle);
 	}
-	bt_gatt_foreach_attr(0x0001, 0xffff,
-			     (bt_gatt_attr_func_t)attr_dump_cb, NULL);
+	/* Enumerate the DB through the SAME path ATT discovery uses
+	 * (foreach_attr_type covers static + dynamic services). If our
+	 * 0x0010 PRIMARY SERVICE shows here, the server DB is correct and a
+	 * blank client view means phone-side GATT caching, not the device. */
+	uint16_t db_count = 0;
+	bt_gatt_foreach_attr_type(0x0001, 0xffff, NULL, NULL, 0,
+				  attr_dump_cb, &db_count);
+	LOG_INF("gatt db total attrs visible to discovery = %u", db_count);
 	adv_start();
 	return 0;
 }
