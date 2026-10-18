@@ -9,6 +9,7 @@ rsource "lib/log/Kconfig"
 rsource "lib/input/Kconfig"
 rsource "lib/storage/Kconfig"
 rsource "lib/transport/serial/Kconfig"
+rsource "lib/modbus/Kconfig"
 rsource "lib/switch/Kconfig"
 rsource "lib/led/Kconfig"
 

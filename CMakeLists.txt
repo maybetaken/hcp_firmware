@@ -11,6 +11,7 @@ add_subdirectory(lib/log)
 add_subdirectory(lib/input)
 add_subdirectory(lib/storage)
 add_subdirectory(lib/transport/serial)
+add_subdirectory(lib/modbus)
 add_subdirectory(lib/switch)
 add_subdirectory(lib/led)
 

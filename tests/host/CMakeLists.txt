@@ -2,7 +2,7 @@
 # Not part of the Zephyr image build — run with a normal Linux toolchain
 # (we use the container's gcc/cmake/ninja). FetchContent pulls GoogleTest.
 cmake_minimum_required(VERSION 3.20)
-project(hcp_host_tests CXX)
+project(hcp_host_tests C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -71,3 +71,15 @@ add_executable(test_led ${D}/src/posix/strip_posix.cpp ${CMAKE_CURRENT_LIST_DIR}
 target_include_directories(test_led PRIVATE ${D}/include)
 target_link_libraries(test_led PRIVATE GTest::gtest_main)
 add_test(NAME test_led COMMAND test_led)
+
+# ---- hcp::modbus (nanoMODBUS over posix serial) ----
+set(M ${HCP_ROOT}/lib/modbus)
+add_executable(test_modbus
+  ${M}/vendor/nanomodbus/nanomodbus.c
+  ${M}/src/master.cpp
+  ${HCP_ROOT}/lib/transport/serial/src/posix/serial_posix.cpp
+  ${CMAKE_CURRENT_LIST_DIR}/test_modbus.cpp)
+target_include_directories(test_modbus PRIVATE
+  ${M}/include ${M}/vendor/nanomodbus ${HCP_ROOT}/lib/transport/serial/include)
+target_link_libraries(test_modbus PRIVATE GTest::gtest_main pthread)
+add_test(NAME test_modbus COMMAND test_modbus)

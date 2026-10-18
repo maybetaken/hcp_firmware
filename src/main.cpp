@@ -12,6 +12,9 @@
 #ifdef CONFIG_HCP_LED
 #include "hcp/led/strip.h"
 #endif
+#ifdef CONFIG_HCP_MODBUS_DEMO
+#include "hcp/modbus/master.h"
+#endif
 
 using namespace hcp::kernel;
 
@@ -56,6 +59,35 @@ static void LedWorker(void* /*arg*/) {
 }
 #endif  // CONFIG_HCP_LED
 
+#ifdef CONFIG_HCP_MODBUS_DEMO
+// Bring-up aid: periodically poll a Modbus slave over uart1 to exercise the
+// RTU path on real hardware. With no slave attached this logs a timeout,
+// which still proves the uart/RS485/nmbs integration is wired up.
+static void ModbusWorker(void* /*arg*/) {
+  hcp::modbus::Master bus;
+  hcp::modbus::Config cfg;
+  cfg.baud = CONFIG_HCP_MODBUS_DEFAULT_BAUD;
+  cfg.response_timeout_ms = 500;
+  if (!bus.Open(cfg)) {
+    HCP_LOGE(hcp::log::kDomainModbus, "modbus open failed");
+    return;
+  }
+  HCP_LOGI(hcp::log::kDomainModbus, "modbus master polling slave %d",
+           CONFIG_HCP_MODBUS_DEMO_SLAVE);
+  while (true) {
+    uint16_t regs[4] = {};
+    bool ok = bus.ReadHoldingRegisters(CONFIG_HCP_MODBUS_DEMO_SLAVE, 0, 4, regs);
+    if (ok) {
+      HCP_LOGI(hcp::log::kDomainModbus, "regs %u %u %u %u", regs[0], regs[1],
+               regs[2], regs[3]);
+    } else {
+      HCP_LOGW(hcp::log::kDomainModbus, "poll failed (err=%d)", bus.last_error());
+    }
+    time::DelayMs(2000);
+  }
+}
+#endif  // CONFIG_HCP_MODBUS_DEMO
+
 int main(void) {
   HCP_LOGI(hcp::log::kDomainDevice, "*** HCP (Helios Collector Platform) P0 bring-up ***");
   HCP_LOGI(hcp::log::kDomainDevice, "build %s %s", __DATE__, __TIME__);
@@ -88,6 +120,11 @@ int main(void) {
 #ifdef CONFIG_HCP_LED
   Thread led(LedWorker, nullptr, "led");
   led.Start();
+#endif
+
+#ifdef CONFIG_HCP_MODBUS_DEMO
+  Thread mb(ModbusWorker, nullptr, "modbus");
+  mb.Start();
 #endif
 
   // Continuous heartbeat so the ignition loop is observable at any time

@@ -1,0 +1,26 @@
+# hcp::modbus module Kconfig
+# SPDX-License-Identifier: Apache-2.0
+
+menuconfig HCP_MODBUS
+	bool "HCP Modbus RTU master (nanoMODBUS)"
+	default y
+	depends on HCP_SERIAL
+
+if HCP_MODBUS
+
+config HCP_MODBUS_DEFAULT_BAUD
+	int "Default modbus baud"
+	default 9600
+
+config HCP_MODBUS_DEMO
+	bool "Run a periodic Modbus poll demo in main"
+	default n
+	help
+	  Bring-up aid: periodically reads holding registers from a configured
+	  slave so the uart1/RS485 path can be exercised on real hardware.
+
+config HCP_MODBUS_DEMO_SLAVE
+	int "Demo: Modbus slave/unit address"
+	default 1
+
+endif
