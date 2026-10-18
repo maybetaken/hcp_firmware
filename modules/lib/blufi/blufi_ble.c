@@ -32,6 +32,10 @@ LOG_MODULE_REGISTER(blufi, CONFIG_LOG_DEFAULT_LEVEL);
 static blufi_data_cb_t g_cb;
 static void *g_user;
 static bool g_adv_running;
+/* Deferred (re)start of advertising after a disconnect, with bounded retries
+ * because bt_le_adv_start can transiently fail with -ENOMEM during teardown. */
+static struct k_work_delayable adv_restart_work;
+static uint8_t g_adv_retries;
 /* BluFi outbound frame sequence number. The client validates that the seq of
  * frames it receives increments strictly from 0 per connection (esp blufi
  * send_seq++), so we must too; reset on each new connection. */
@@ -125,6 +129,21 @@ static void adv_start(void)
 	}
 }
 
+#define BLUFI_ADV_MAX_RETRIES 5
+
+static void adv_restart_fn(struct k_work *work)
+{
+	ARG_UNUSED(work);
+	if (g_adv_running) {
+		return;  /* already advertising */
+	}
+	adv_start();
+	if (!g_adv_running && g_adv_retries < BLUFI_ADV_MAX_RETRIES) {
+		g_adv_retries++;
+		k_work_reschedule(&adv_restart_work, K_MSEC(500));
+	}
+}
+
 static void connected(struct bt_conn *conn, uint8_t err)
 {
 	if (err) {
@@ -141,7 +160,11 @@ static void connected(struct bt_conn *conn, uint8_t err)
 static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
 	LOG_INF("phone disconnected (%u), re-advertising", reason);
-	adv_start();
+	/* Do NOT call bt_le_adv_start() synchronously here: the link/adv buffers
+	 * are still being torn down and it fails with -ENOMEM. Defer to the
+	 * system workqueue with a small delay and retry until it takes. */
+	g_adv_retries = 0;
+	k_work_reschedule(&adv_restart_work, K_MSEC(100));
 }
 
 BT_CONN_CB_DEFINE(conn_callbacks) = {
@@ -170,6 +193,7 @@ static uint8_t attr_dump_cb(const struct bt_gatt_attr *attr, uint16_t handle,
 
 int blufi_start(void)
 {
+	k_work_init_delayable(&adv_restart_work, adv_restart_fn);
 	int err = bt_enable(bt_ready);
 	if (err && err != -EALREADY) {
 		return err;
