@@ -6,6 +6,7 @@ menuconfig BLUFI
 	select BT_PERIPHERAL
 	select BT_DRIVERS
 	select BT_ESP32
+	select BT_GATT_DYNAMIC_DB
 	help
 	  Reusable BluFi protocol implementation (frame codec now; GATT + security
 	  handshake + provisioning flow added by hcp::blufi on Zephyr BLE).

@@ -76,17 +76,20 @@ static ssize_t read_e2p(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 	return bt_gatt_attr_read(conn, attr, buf, len, offset, e2p_val, e2p_len);
 }
 
-BT_GATT_SERVICE_DEFINE(
-	blufi_svc, BT_GATT_PRIMARY_SERVICE(BLUFI_SVC_UUID),
+static const struct bt_gatt_attr blufi_attrs[] = {
+	BT_GATT_PRIMARY_SERVICE(BLUFI_SVC_UUID),
 	BT_GATT_CHARACTERISTIC(BLUFI_P2E_UUID,
 			       BT_GATT_CHRC_WRITE | BT_GATT_CHRC_WRITE_WITHOUT_RESP,
 			       BT_GATT_PERM_WRITE, NULL, p2e_write, NULL),
 	BT_GATT_CHARACTERISTIC(BLUFI_E2P_UUID, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY,
 			       BT_GATT_PERM_READ, read_e2p, NULL, e2p_val),
-	BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE), );
+	BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+};
+static struct bt_gatt_service blufi_svc = BT_GATT_SERVICE(blufi_attrs);
 
-/* attr index of the E2P value characteristic (for bt_gatt_notify) */
-#define BLUFI_E2P_ATTR (&blufi_svc.attrs[5])
+/* attr index of the E2P value characteristic (for bt_gatt_notify): 0=svc,
+ * 1=p2e decl, 2=p2e val, 3=e2p decl, 4=e2p val. */
+#define BLUFI_E2P_ATTR (&blufi_attrs[4])
 
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
@@ -141,6 +144,17 @@ void blufi_set_callback(blufi_data_cb_t cb, void *user)
 	g_user = user;
 }
 
+static bool attr_dump_cb(const struct bt_gatt_attr *attr, uint16_t handle,
+			 void *user_data)
+{
+	ARG_UNUSED(user_data);
+	if (attr->uuid != NULL &&
+	    bt_uuid_cmp(attr->uuid, BT_UUID_GATT_PRIMARY) == 0) {
+		LOG_INF("gatt primary-service decl @handle %u", handle);
+	}
+	return false;
+}
+
 int blufi_start(void)
 {
 	int err = bt_enable(bt_ready);
@@ -151,6 +165,12 @@ int blufi_start(void)
 		k_sem_take(&bt_enabled_sem, K_SECONDS(10));
 	}
 	bt_set_name(BLUFI_ADV_NAME);
+	err = bt_gatt_service_register(&blufi_svc);
+	if (err && err != -EALREADY) {
+		LOG_ERR("gatt service register failed (%d)", err);
+	}
+	bt_gatt_foreach_attr(0x0001, 0xffff,
+			     (bt_gatt_attr_func_t)attr_dump_cb, NULL);
 	adv_start();
 	return 0;
 }
