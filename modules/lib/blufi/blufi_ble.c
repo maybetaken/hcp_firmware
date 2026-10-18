@@ -131,6 +131,9 @@ static void connected(struct bt_conn *conn, uint8_t err)
 		LOG_WRN("connect failed (%u)", err);
 		return;
 	}
+	/* Advertising stopped once we connected; clear the flag so a later
+	 * disconnect re-advertises. */
+	g_adv_running = false;
 	LOG_INF("phone connected");
 	g_send_seq = 0;
 }
@@ -138,9 +141,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
 static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
 	LOG_INF("phone disconnected (%u), re-advertising", reason);
-	if (!g_adv_running) {
-		adv_start();
-	}
+	adv_start();
 }
 
 BT_CONN_CB_DEFINE(conn_callbacks) = {
