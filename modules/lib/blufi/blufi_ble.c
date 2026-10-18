@@ -27,8 +27,8 @@ LOG_MODULE_REGISTER(blufi, CONFIG_LOG_DEFAULT_LEVEL);
 #define BLUFI_SVC_UUID \
 	BT_UUID_DECLARE_128(0x00, 0x00, 0xff, 0xff, 0x00, 0x00, 0x10, 0x00, \
 			    0x80, 0x00, 0x00, 0x80, 0x5f, 0x9b, 0x34, 0xfb)
-#define BLUFI_P2E_UUID BT_UUID_DECLARE_16(0xFFF4) /* phone -> esp (write) */
-#define BLUFI_E2P_UUID BT_UUID_DECLARE_16(0xFFF5) /* esp -> phone (notify) */
+#define BLUFI_P2E_UUID BT_UUID_DECLARE_16(0xFF01) /* phone -> esp (write) */
+#define BLUFI_E2P_UUID BT_UUID_DECLARE_16(0xFF02) /* esp -> phone (notify) */
 
 /* BluFi apps (EspConfig / EspBlufi) filter on a name starting with BLUFI. */
 #define BLUFI_ADV_NAME   "BLUFI_DEVICE"
