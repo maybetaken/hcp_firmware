@@ -147,7 +147,7 @@ static void NetWorker(void* /*arg*/) {
       HCP_LOGI(hcp::log::kDomainWifi, "connecting to \"%s\"", CONFIG_HCP_NET_SSID);
       hcp::net::wifi::Connect(cred);
     }
-    time::DelayMs(30000);
+    time::DelayMs(3000);
   }
 }
 #endif  // CONFIG_HCP_NET_DEMO
