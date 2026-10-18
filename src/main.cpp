@@ -305,6 +305,21 @@ extern "C" void on_blufi_data(uint8_t type, uint8_t subtype,
         k_work_submit(&g_prov_work);  // connect off the BT RX thread
         break;
       }
+      case BLUFI_CTRL_GET_WIFI_STATUS:
+        // Some clients (incl. WeChat mini-programs) poll this instead of relying on
+        // the spontaneous got-IP report -> answer with the current conn state,
+        // exactly like the ESP-IDF example's ESP_BLUFI_EVENT_GET_WIFI_STATUS.
+        HCP_LOGI(hcp::log::kDomainWifi, "blufi: get wifi status");
+        if (hcp::net::wifi::IsConnected()) {
+          blufi_report_wifi_success();
+        } else {
+          blufi_report_wifi_state(BLUFI_STA_CONNECTING);
+        }
+        break;
+      case BLUFI_CTRL_SET_WIFI_OPMODE:
+        HCP_LOGI(hcp::log::kDomainWifi, "blufi: set wifi opmode %u",
+                 len ? data[0] : 0);
+        break;
       default:
         HCP_LOGI(hcp::log::kDomainWifi, "blufi ctrl subtype=0x%02x len=%u",
                  subtype, (unsigned)len);
