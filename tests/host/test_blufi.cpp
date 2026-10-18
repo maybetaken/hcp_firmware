@@ -4,6 +4,7 @@
  */
 #include <gtest/gtest.h>
 
+#include <cerrno>
 #include <cstring>
 
 extern "C" {
@@ -62,4 +63,44 @@ TEST(BlufiFrame, OversizedRejected) {
   int n = blufi_frame_build(BLUFI_TYPE_DATA, BLUFI_DATA_STA_PASSWD, 0, big, 256,
                             buf, sizeof(buf));
   EXPECT_LT(n, 0);  // > BLUFI_MAX_DATA_LEN -> caller must fragment
+}
+
+TEST(BlufiCrc16, CcittFalseVector) {
+  // CRC-16/CCITT-FALSE (poly 0x1021, MSB-first, no reflect) over "123456789"
+  // with init 0xFFFF is the well-known 0x29B1. Validates poly/bit-order.
+  const uint8_t check[] = {'1','2','3','4','5','6','7','8','9'};
+  EXPECT_EQ(blufi_crc16_be(0xFFFF, check, sizeof(check)), 0x29B1);
+}
+
+TEST(BlufiChecksum, AppendAndVerifyRoundtrip) {
+  uint8_t buf[64];
+  const uint8_t payload[] = {0x11, 0x22, 0x33};
+  int n = blufi_frame_build(BLUFI_TYPE_CTRL, BLUFI_CTRL_CONN_TO_AP, 5, payload,
+                            sizeof(payload), buf, sizeof(buf));
+  ASSERT_EQ(n, 7);  // 4 hdr + 3
+  int total = blufi_frame_append_checksum(buf, n, sizeof(buf));
+  ASSERT_EQ(total, 9);  // + 2 checksum bytes
+  EXPECT_EQ(buf[1] & BLUFI_FC_CHECK, BLUFI_FC_CHECK);
+  EXPECT_EQ(blufi_frame_verify_checksum(buf, total), 0);
+}
+
+TEST(BlufiChecksum, DetectsTamper) {
+  uint8_t buf[64];
+  const uint8_t payload[] = {0xAA, 0xBB};
+  int n = blufi_frame_build(BLUFI_TYPE_DATA, BLUFI_DATA_STA_SSID, 1, payload,
+                            sizeof(payload), buf, sizeof(buf));
+  int total = blufi_frame_append_checksum(buf, n, sizeof(buf));
+  ASSERT_GT(total, 0);
+  buf[4] ^= 0x01;  // flip a payload bit
+  EXPECT_EQ(blufi_frame_verify_checksum(buf, total), -EBADMSG);
+}
+
+TEST(BlufiChecksum, EmptyPayload) {
+  uint8_t buf[16];
+  int n = blufi_frame_build(BLUFI_TYPE_CTRL, BLUFI_CTRL_GET_WIFI_LIST, 0, nullptr,
+                            0, buf, sizeof(buf));
+  ASSERT_EQ(n, 4);
+  int total = blufi_frame_append_checksum(buf, n, sizeof(buf));
+  ASSERT_EQ(total, 6);
+  EXPECT_EQ(blufi_frame_verify_checksum(buf, total), 0);
 }

@@ -33,6 +33,12 @@ extern "C" {
 #define BLUFI_FC_REQ_ACK  0x08 /* request acknowledgement      */
 #define BLUFI_FC_FRAG     0x10 /* fragmented                   */
 
+/* Security mode bits (from CTRL SET_SEC_MODE payload), per esp blufi_int.h. */
+#define BLUFI_DATA_SEC_MODE_CHECK_MASK 0x01
+#define BLUFI_DATA_SEC_MODE_ENC_MASK   0x02
+#define BLUFI_CTRL_SEC_MODE_CHECK_MASK 0x10
+#define BLUFI_CTRL_SEC_MODE_ENC_MASK   0x20
+
 enum blufi_frame_type {
 	BLUFI_TYPE_CTRL = 0x0,
 	BLUFI_TYPE_DATA = 0x1,
@@ -83,6 +89,28 @@ int blufi_frame_build(uint8_t type, uint8_t subtype, uint8_t seq,
 
 /* Parse buf into out; returns 0 on success, negative errno on malformed input. */
 int blufi_frame_parse(const uint8_t *buf, size_t buf_len, struct blufi_frame *out);
+
+/*
+ * esp_crc16_be: CRC-16 with polynomial 0x1021, processed MSB-first, no input/output
+ * reflection and no final xor (i.e. CRC-16/CCITT-FALSE with a caller-supplied init).
+ * BluFi uses init = 0. Matches Espressif esp_crc16_be / blufi_security checksum.
+ */
+uint16_t blufi_crc16_be(uint16_t crc, const uint8_t *buf, uint32_t len);
+
+/*
+ * Finalize a frame buffer (as produced by blufi_frame_build: type,fc,seq,len,payload)
+ * by appending the BluFi checksum: crc16 over [seq, data_len, payload] (len+2 bytes
+ * starting at buf[2]), stored little-endian, and set the FC_CHECK bit.
+ * `len` is the current encoded frame length (4 + payload). Requires cap >= len + 2.
+ * Returns the new total length, or negative errno.
+ */
+int blufi_frame_append_checksum(uint8_t *buf, uint16_t len, size_t cap);
+
+/*
+ * Verify a received full frame buffer that carries FC_CHECK. buf_len is the total
+ * received length. Returns 0 if the checksum matches, negative errno otherwise.
+ */
+int blufi_frame_verify_checksum(const uint8_t *buf, uint16_t buf_len);
 
 #ifdef __cplusplus
 }

@@ -40,6 +40,12 @@ static uint8_t g_adv_retries;
  * frames it receives increments strictly from 0 per connection (esp blufi
  * send_seq++), so we must too; reset on each new connection. */
 static uint8_t g_send_seq;
+/* Negotiated security mode (from CTRL SET_SEC_MODE). esp masks:
+ * DATA check=0x01, DATA enc=0x02, CTRL check=0x10, CTRL enc=0x20.
+ * Default 0 -> plaintext, un-checksummed (matches the current working flow). */
+static uint8_t g_sec_mode;
+/* Expected inbound frame seq (esp validates strictly); reset per connection. */
+static uint8_t g_recv_seq;
 
 static K_SEM_DEFINE(bt_enabled_sem, 0, 1);
 
@@ -56,15 +62,45 @@ static ssize_t p2e_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 			 const void *buf, uint16_t len, uint16_t offset,
 			 uint8_t flags)
 {
-	LOG_HEXDUMP_DBG(buf, len, "blufi P2E rx");
+	LOG_HEXDUMP_INF(buf, len, "blufi P2E rx");
+
+	if (len < BLUFI_HDR_LEN) {
+		LOG_WRN("rx %u bytes: too short", len);
+		return len;
+	}
+	const uint8_t *b = buf;
+	uint8_t type = BLUFI_GET_TYPE(b[0]);
+	uint8_t sub = BLUFI_GET_SUBTYPE(b[0]);
+	uint8_t fc = b[1];
+	uint8_t seq = b[2];
+
+	/* esp validates recv_seq strictly; log a mismatch but still accept so we
+	 * never regress the working plaintext flow. */
+	if (seq != g_recv_seq) {
+		LOG_WRN("rx seq %u != expected %u", seq, g_recv_seq);
+	}
+	g_recv_seq = (uint8_t)(seq + 1);
+
+	if (fc & BLUFI_FC_ENC) {
+		/* DH/AES-CFB128 unavailable in this toolchain (mbedtls dhm.c absent). */
+		LOG_WRN("rx encrypted frame but no decrypt support; ignoring");
+		return len;
+	}
+	if ((fc & BLUFI_FC_CHECK) &&
+	    blufi_frame_verify_checksum(b, len) != 0) {
+		LOG_WRN("rx checksum error, dropping frame");
+		return len;
+	}
 
 	struct blufi_frame f;
-	if (blufi_frame_parse(buf, len, &f) == 0) {
-		uint8_t type = BLUFI_GET_TYPE(f.type_subtype);
-		uint8_t sub = BLUFI_GET_SUBTYPE(f.type_subtype);
+	if (blufi_frame_parse(b, len, &f) == 0) {
 		LOG_INF("rx frame: %s subtype=0x%02x seq=%u len=%u",
-			type == BLUFI_TYPE_CTRL ? "CTRL" : "DATA", sub, f.seq,
-			f.len);
+			type == BLUFI_TYPE_CTRL ? "CTRL" : "DATA", sub, seq, f.len);
+		if (type == BLUFI_TYPE_CTRL && sub == BLUFI_CTRL_SET_SEC_MODE &&
+		    f.len >= 1) {
+			g_sec_mode = f.data[0];
+			LOG_INF("blufi: set sec_mode=0x%02x", g_sec_mode);
+		}
 		if (g_cb) {
 			g_cb(type, sub, f.data, f.len, g_user);
 		}
@@ -155,11 +191,14 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	g_adv_running = false;
 	LOG_INF("phone connected");
 	g_send_seq = 0;
+	g_recv_seq = 0;
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
 	LOG_INF("phone disconnected (%u), re-advertising", reason);
+	g_sec_mode = 0;
+	g_recv_seq = 0;
 	/* Do NOT call bt_le_adv_start() synchronously here: the link/adv buffers
 	 * are still being torn down and it fails with -ENOMEM. Defer to the
 	 * system workqueue with a small delay and retry until it takes. */
@@ -224,10 +263,27 @@ int blufi_send(uint8_t type, uint8_t subtype, const uint8_t *data, uint16_t len)
 	e2p_val[1] |= BLUFI_FC_DIR_E2P;
 	uint8_t used_seq = g_send_seq;
 	g_send_seq = (uint8_t)(g_send_seq + 1);
+
+	/* Append the BluFi checksum only when the negotiated sec_mode asks for it
+	 * (esp masks). Default sec_mode=0 -> no change to the plaintext flow. */
+	bool cksum =
+		(type == BLUFI_TYPE_CTRL &&
+		 (g_sec_mode & BLUFI_CTRL_SEC_MODE_CHECK_MASK)) ||
+		(type == BLUFI_TYPE_DATA && subtype != BLUFI_DATA_NEG &&
+		 subtype != BLUFI_DATA_ERROR_INFO &&
+		 (g_sec_mode & BLUFI_DATA_SEC_MODE_CHECK_MASK));
+	if (cksum) {
+		int t = blufi_frame_append_checksum(e2p_val, n, sizeof(e2p_val));
+		if (t < 0) {
+			return t;
+		}
+		n = t;
+	}
 	e2p_len = n;
 	int ret = bt_gatt_notify(NULL, BLUFI_E2P_ATTR, e2p_val, n);
 	LOG_INF("tx type=%u sub=0x%02x seq=%u len=%u notify_ret=%d",
 		type, subtype, used_seq, n, ret);
+	LOG_HEXDUMP_INF(e2p_val, n, "blufi tx frame");
 	if (ret) {
 		LOG_WRN("notify failed (%d): phone not subscribed to E2P CCC?", ret);
 	}
