@@ -298,7 +298,10 @@ extern "C" void on_blufi_data(uint8_t type, uint8_t subtype,
         break;
       case BLUFI_CTRL_CONN_TO_AP: {
         HCP_LOGI(hcp::log::kDomainWifi, "blufi: connect to \"%s\"", g_ssid);
-        blufi_report_wifi_state(BLUFI_STA_CONNECTING);
+        // Match the ESP-IDF example: do NOT send an unsolicited CONNECTING report
+        // here. Only the got-IP SUCCESS report (via on_wifi_for_blufi) is sent.
+        // The WeChat mini-program doesn't expect a mid-write CONNECTING frame and
+        // desyncs/misses the real result if we emit one.
         k_work_submit(&g_prov_work);  // connect off the BT RX thread
         break;
       }
