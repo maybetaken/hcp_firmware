@@ -11,6 +11,7 @@
 #   ./build.sh all                   # build hcp_c3 + hcp_c5 + hcp_c6
 #   ./build.sh hcp_c3                # one board, LED on
 #   ./build.sh <board> --no-led      # disable LED (Kconfig off)
+#   ./build.sh <board> --rs485       # RS485 uart1 variant (per-board overlay)
 #   ./build.sh <board> -- <extra west args>
 set -euo pipefail
 
@@ -19,17 +20,19 @@ APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # .../zephyr/hcp
 
 BOARD_OR_ALL="hcp_c6/esp32c6/hpcore"
 WANT_LED=1
+WANT_RS485=0
 EXTRA_ARGS=""
 positional_seen=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    all)       BOARD_OR_ALL="all"; positional_seen=1; shift ;;
-    --no-led)  WANT_LED=0; shift ;;
-    --led)     WANT_LED=1; shift ;;
-    --)        shift; EXTRA_ARGS="$EXTRA_ARGS $*"; break ;;
-    -*)        echo "unknown option: $1" >&2; exit 1 ;;
-    *)         if [ "$positional_seen" -eq 0 ]; then BOARD_OR_ALL="$1"; positional_seen=1; shift;
-               else EXTRA_ARGS="$EXTRA_ARGS $1"; shift; fi ;;
+    all)        BOARD_OR_ALL="all"; positional_seen=1; shift ;;
+    --no-led)   WANT_LED=0; shift ;;
+    --led)      WANT_LED=1; shift ;;
+    --rs485)    WANT_RS485=1; shift ;;
+    --)         shift; EXTRA_ARGS="$EXTRA_ARGS $*"; break ;;
+    -*)         echo "unknown option: $1" >&2; exit 1 ;;
+    *)          if [ "$positional_seen" -eq 0 ]; then BOARD_OR_ALL="$1"; positional_seen=1; shift;
+                else EXTRA_ARGS="$EXTRA_ARGS $1"; shift; fi ;;
   esac
 done
 
@@ -41,10 +44,21 @@ fi
 
 build_one() {
   local BOARD="$1"
+  local BOARD_NAME="${BOARD%%/*}"
+  local RS485_ARGS=""
+  if [ "$WANT_RS485" = "1" ]; then
+    local OV="boards/helios/${BOARD_NAME}/${BOARD_NAME}-rs485.overlay"
+    if [ ! -f "${APP_DIR}/${OV}" ]; then
+      echo "no rs485 overlay for '${BOARD_NAME}' (${OV})" >&2; exit 1
+    fi
+    RS485_ARGS="-DEXTRA_DTC_OVERLAY_FILE=${OV}"
+  fi
+
   local SLUG; SLUG="$(echo "${BOARD}" | tr '/-' '__')"
   [ "$WANT_LED" = "0" ] && SLUG="${SLUG}_nold"
+  [ "$WANT_RS485" = "1" ] && SLUG="${SLUG}_rs485"
 
-  echo ">>> building ${BOARD}  (LED=${WANT_LED})  -> build/${SLUG}"
+  echo ">>> building ${BOARD}  (LED=${WANT_LED} RS485=${WANT_RS485})  -> build/${SLUG}"
   docker run --rm \
     -v "$(dirname "${APP_DIR}")":/workspace \
     --entrypoint /bin/bash "${IMAGE}" -lc "
@@ -54,7 +68,7 @@ build_one() {
       export ZEPHYR_BASE=/opt/toolchains/zephyr
       cd /workspace/hcp
       west build -p auto -d /workspace/hcp/build/${SLUG} -b ${BOARD} . -- \
-        -DBOARD_ROOT=/workspace/hcp ${LED_ARGS} ${EXTRA_ARGS}
+        -DBOARD_ROOT=/workspace/hcp ${LED_ARGS} ${RS485_ARGS} ${EXTRA_ARGS}
     "
 }
 
