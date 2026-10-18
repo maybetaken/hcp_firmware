@@ -20,10 +20,18 @@
 
 LOG_MODULE_REGISTER(blufi, CONFIG_LOG_DEFAULT_LEVEL);
 
-/* BluFi GATT UUIDs (16-bit). */
-#define BLUFI_SVC_UUID   BT_UUID_DECLARE_16(0xFFFF)
-#define BLUFI_P2E_UUID   BT_UUID_DECLARE_16(0xFFF4) /* phone -> esp (write) */
-#define BLUFI_E2P_UUID   BT_UUID_DECLARE_16(0xFFF5) /* esp -> phone (notify) */
+/* BluFi GATT UUIDs. Service is the esp_blufi 128-bit UUID
+ * 0000FFFF-0000-1000-8000-00FB349B5FFF (the EspConfig WeChat mini-program
+ * filters on this 128-bit UUID in the advertisement). Characteristics are
+ * 16-bit. */
+#define BLUFI_SVC_UUID \
+	BT_UUID_DECLARE_128(0x00, 0x00, 0xff, 0xff, 0x00, 0x00, 0x10, 0x00, \
+			    0x80, 0x00, 0x00, 0x80, 0x5f, 0x9b, 0x34, 0xfb)
+#define BLUFI_P2E_UUID BT_UUID_DECLARE_16(0xFFF4) /* phone -> esp (write) */
+#define BLUFI_E2P_UUID BT_UUID_DECLARE_16(0xFFF5) /* esp -> phone (notify) */
+
+/* BluFi apps (EspConfig / EspBlufi) filter on a name starting with BLUFI. */
+#define BLUFI_ADV_NAME   "BLUFI_DEVICE"
 
 static blufi_data_cb_t g_cb;
 static void *g_user;
@@ -86,8 +94,15 @@ BT_GATT_SERVICE_DEFINE(
 
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
-	/* 16-bit service UUID, matching the GATT primary service (0xFFFF). */
-	BT_DATA_BYTES(BT_DATA_UUID16_ALL, BT_UUID_16_ENCODE(0xFFFF)),
+	/* Same 128-bit service UUID as the GATT primary service (LSB-first on
+	 * air, exactly like esp_blufi). */
+	BT_DATA_BYTES(BT_DATA_UUID128_ALL,
+		      0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80,
+		      0x00, 0x10, 0x00, 0x00, 0xff, 0xff, 0x00, 0x00),
+};
+
+static const struct bt_data sd[] = {
+	BT_DATA(BT_DATA_NAME_COMPLETE, BLUFI_ADV_NAME, sizeof(BLUFI_ADV_NAME) - 1),
 };
 
 static void adv_start(void)
@@ -95,7 +110,7 @@ static void adv_start(void)
 	struct bt_le_adv_param param = BT_LE_ADV_PARAM_INIT(
 		BT_LE_ADV_OPT_CONN, BT_GAP_ADV_FAST_INT_MIN_2,
 		BT_GAP_ADV_FAST_INT_MAX_2, NULL);
-	int err = bt_le_adv_start(&param, ad, ARRAY_SIZE(ad), NULL, 0);
+	int err = bt_le_adv_start(&param, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
 	g_adv_running = (err == 0);
 	if (err) {
 		LOG_ERR("adv start failed (%d)", err);
@@ -139,6 +154,7 @@ int blufi_start(void)
 	if (err != -EALREADY) {
 		k_sem_take(&bt_enabled_sem, K_SECONDS(10));
 	}
+	bt_set_name(BLUFI_ADV_NAME);
 	adv_start();
 	return 0;
 }
