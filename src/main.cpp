@@ -163,6 +163,28 @@ static void NetWorker(void* /*arg*/) {
 static char g_ssid[33];
 static char g_pass[64];
 
+// esp_blufi WIFI_REP encodes station connection state (esp_blufi_api.h).
+#define BLUFI_STA_CONN_SUCCESS 0x00
+#define BLUFI_STA_CONN_FAIL    0x01
+#define BLUFI_STA_CONNECTING   0x02
+#define BLUFI_OPMODE_STA       0x01  // wifi_mode_t WIFI_MODE_STA
+
+// Send a 3-byte WIFI_REP [opmode][sta_state][softap_conn_num] like esp.
+static void blufi_report_wifi_state(uint8_t sta_state) {
+  uint8_t rep[3] = {BLUFI_OPMODE_STA, sta_state, 0x00};
+  blufi_send(BLUFI_TYPE_DATA, BLUFI_DATA_WIFI_REP, rep, sizeof(rep));
+}
+
+// Wi-Fi result -> report the final BluFi conn state so the app confirms success
+// instead of timing out waiting for it (then disconnects, reason 19).
+static void on_wifi_for_blufi(hcp::net::WifiEvent e, void*) {
+  using E = hcp::net::WifiEvent;
+  if (e == E::kConnected) {
+    HCP_LOGI(hcp::log::kDomainWifi, "blufi: wifi connected, report SUCCESS");
+    blufi_report_wifi_state(BLUFI_STA_CONN_SUCCESS);
+  }
+}
+
 // Accumulate a Wi-Fi scan into a BluFi WIFI_LIST payload.
 static uint8_t g_wlist[512];
 static uint16_t g_wlist_len;
@@ -205,9 +227,8 @@ extern "C" void on_blufi_data(uint8_t type, uint8_t subtype,
       case BLUFI_CTRL_CONN_TO_AP: {
         HCP_LOGI(hcp::log::kDomainWifi, "blufi: connect to \"%s\"", g_ssid);
         hcp::net::WifiCredential c{g_ssid, g_pass[0] ? g_pass : nullptr};
+        blufi_report_wifi_state(BLUFI_STA_CONNECTING);
         hcp::net::wifi::Connect(c);
-        const uint8_t connecting = (uint8_t)hcp::net::WifiEvent::kConnecting;
-        blufi_send(BLUFI_TYPE_DATA, BLUFI_DATA_WIFI_REP, &connecting, 1);
         break;
       }
       default:
@@ -286,6 +307,8 @@ int main(void) {
 
 #ifdef CONFIG_BLUFI
   hcp::log::SetLevel(hcp::log::kDomainWifi, hcp::log::kLevelDebug);
+  hcp::net::wifi::SetCallback(on_wifi_for_blufi, nullptr);
+  hcp::net::wifi::Init();
   blufi_set_callback(on_blufi_data, nullptr);
   if (blufi_start() == 0) {
     HCP_LOGI(hcp::log::kDomainWifi, "blufi advertising; waiting for phone app");
