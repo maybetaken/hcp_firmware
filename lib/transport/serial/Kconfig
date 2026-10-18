@@ -12,4 +12,12 @@ config HCP_SERIAL_UART_BAUD
 	int "Default modbus UART baud"
 	default 115200
 
+config HCP_SERIAL_LOOPBACK_TEST
+	bool "Run a TX->RX loopback self-test on the modbus UART"
+	default n
+	help
+	  Bring-up aid: repeatedly writes a pattern to the hcp-uart and reads it
+	  back. Short the port's TX and RX pins (e.g. c6 TTL: GPIO22<->GPIO23) to
+	  verify the physical serial path without any Modbus slave attached.
+
 endif

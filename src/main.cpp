@@ -15,6 +15,9 @@
 #ifdef CONFIG_HCP_MODBUS_DEMO
 #include "hcp/modbus/master.h"
 #endif
+#ifdef CONFIG_HCP_SERIAL_LOOPBACK_TEST
+#include "hcp/serial/port.h"
+#endif
 
 using namespace hcp::kernel;
 
@@ -88,6 +91,35 @@ static void ModbusWorker(void* /*arg*/) {
 }
 #endif  // CONFIG_HCP_MODBUS_DEMO
 
+#ifdef CONFIG_HCP_SERIAL_LOOPBACK_TEST
+// Raw TX->RX loopback self-test on the modbus UART (hcp-uart alias = uart1).
+// Short the port's TX and RX pins to see echo_ok turn true. c6 TTL = GPIO22<->23.
+static void LoopbackWorker(void* /*arg*/) {
+  hcp::serial::Port p;
+  if (!p.Open(CONFIG_HCP_SERIAL_UART_BAUD)) {
+    HCP_LOGE(hcp::log::kDomainModbus, "loopback: uart open failed");
+    return;
+  }
+  static const uint8_t pat[] = {0x55, 0xAA, 'H', 'C', 'P', '1', 0x0D, 0x0A};
+  HCP_LOGI(hcp::log::kDomainModbus,
+           "loopback start: short TX<->RX (c6 TTL GPIO22<->GPIO23)");
+  while (true) {
+    // Discard any stale bytes, then write and try to read the echo back.
+    uint8_t dummy;
+    while (p.Read(&dummy, 1, 0) > 0) {
+    }
+    p.Write(pat, sizeof(pat));
+    uint8_t rb[sizeof(pat)] = {};
+    int got = p.Read(rb, sizeof(pat), 100);
+    bool ok = (got == (int)sizeof(pat)) &&
+              __builtin_memcmp(rb, pat, sizeof(pat)) == 0;
+    HCP_LOGI(hcp::log::kDomainModbus, "loopback got=%d/%u echo_ok=%d", got,
+             (unsigned)sizeof(pat), ok ? 1 : 0);
+    time::DelayMs(1000);
+  }
+}
+#endif  // CONFIG_HCP_SERIAL_LOOPBACK_TEST
+
 int main(void) {
   HCP_LOGI(hcp::log::kDomainDevice, "*** HCP (Helios Collector Platform) P0 bring-up ***");
   HCP_LOGI(hcp::log::kDomainDevice, "build %s %s", __DATE__, __TIME__);
@@ -125,6 +157,11 @@ int main(void) {
 #ifdef CONFIG_HCP_MODBUS_DEMO
   Thread mb(ModbusWorker, nullptr, "modbus");
   mb.Start();
+#endif
+
+#ifdef CONFIG_HCP_SERIAL_LOOPBACK_TEST
+  Thread lb(LoopbackWorker, nullptr, "loopback");
+  lb.Start();
 #endif
 
   // Continuous heartbeat so the ignition loop is observable at any time
