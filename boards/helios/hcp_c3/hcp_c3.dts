@@ -11,7 +11,7 @@
 #include "hcp_c3-pinctrl.dtsi"
 
 #define HCP_SRAM sram1
-#define HCP_BTN_GPIO 9
+#define HCP_BTN_GPIO 10
 
 / {
 	model = "HCP ESP32-C3";
