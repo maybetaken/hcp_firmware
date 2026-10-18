@@ -158,17 +158,75 @@ static void NetWorker(void* /*arg*/) {
 #endif  // CONFIG_HCP_NET_DEMO
 
 #ifdef CONFIG_BLUFI
+#include <string.h>
+
+static char g_ssid[33];
+static char g_pass[64];
+
+// Accumulate a Wi-Fi scan into a BluFi WIFI_LIST payload.
+static uint8_t g_wlist[512];
+static uint16_t g_wlist_len;
+static void on_scan(const hcp::net::ScanResult* r, void*) {
+  if (r == nullptr) {
+    HCP_LOGI(hcp::log::kDomainWifi, "blufi: sending wifi list (%u bytes)",
+             (unsigned)g_wlist_len);
+    blufi_send(BLUFI_TYPE_DATA, BLUFI_DATA_WIFI_LIST, g_wlist, g_wlist_len);
+    return;
+  }
+  uint8_t slen = (uint8_t)strlen(r->ssid);
+  // Per-AP record: [ssid_len][ssid][rssi]
+  if (g_wlist_len + 2u + slen <= sizeof(g_wlist)) {
+    g_wlist[g_wlist_len++] = slen;
+    memcpy(&g_wlist[g_wlist_len], r->ssid, slen);
+    g_wlist_len += slen;
+    g_wlist[g_wlist_len++] = (uint8_t)r->rssi;
+  }
+}
+
 extern "C" void on_blufi_data(uint8_t type, uint8_t subtype,
                               const uint8_t *data, uint16_t len, void *user) {
   (void)user;
-  if (type == BLUFI_TYPE_DATA && subtype == BLUFI_DATA_STA_SSID) {
-    HCP_LOGI(hcp::log::kDomainWifi, "blufi STA_SSID: %.*s", (int)len,
-             (const char *)data);
-  } else if (type == BLUFI_TYPE_DATA && subtype == BLUFI_DATA_STA_PASSWD) {
-    HCP_LOGI(hcp::log::kDomainWifi, "blufi STA_PASSWD: (%u bytes)", (unsigned)len);
-  } else {
-    HCP_LOGI(hcp::log::kDomainWifi, "blufi rx type=%u subtype=0x%02x len=%u",
-             type, subtype, (unsigned)len);
+  if (type == BLUFI_TYPE_CTRL) {
+    switch (subtype) {
+      case BLUFI_CTRL_GET_VERSION: {
+        const uint8_t ver[4] = {0x00, 0x01, 0x00, 0x00};  // major/minor
+        blufi_send(BLUFI_TYPE_DATA, BLUFI_DATA_REPLY_VERSION, ver, sizeof(ver));
+        break;
+      }
+      case BLUFI_CTRL_GET_WIFI_LIST:
+        HCP_LOGI(hcp::log::kDomainWifi, "blufi: wifi scan requested");
+        g_wlist_len = 0;
+        hcp::net::wifi::Scan(on_scan, nullptr);
+        break;
+      case BLUFI_CTRL_CONN_TO_AP: {
+        HCP_LOGI(hcp::log::kDomainWifi, "blufi: connect to \"%s\"", g_ssid);
+        hcp::net::WifiCredential c{g_ssid, g_pass[0] ? g_pass : nullptr};
+        hcp::net::wifi::Connect(c);
+        const uint8_t connecting = (uint8_t)hcp::net::WifiEvent::kConnecting;
+        blufi_send(BLUFI_TYPE_DATA, BLUFI_DATA_WIFI_REP, &connecting, 1);
+        break;
+      }
+      default:
+        HCP_LOGI(hcp::log::kDomainWifi, "blufi ctrl subtype=0x%02x len=%u",
+                 subtype, (unsigned)len);
+        break;
+    }
+  } else if (type == BLUFI_TYPE_DATA) {
+    if (subtype == BLUFI_DATA_STA_SSID) {
+      uint16_t n = len < sizeof(g_ssid) - 1 ? len : sizeof(g_ssid) - 1;
+      memcpy(g_ssid, data, n);
+      g_ssid[n] = '\0';
+      HCP_LOGI(hcp::log::kDomainWifi, "blufi STA_SSID: %s", g_ssid);
+    } else if (subtype == BLUFI_DATA_STA_PASSWD) {
+      uint16_t n = len < sizeof(g_pass) - 1 ? len : sizeof(g_pass) - 1;
+      memcpy(g_pass, data, n);
+      g_pass[n] = '\0';
+      HCP_LOGI(hcp::log::kDomainWifi, "blufi STA_PASSWD: (%u bytes)",
+               (unsigned)len);
+    } else {
+      HCP_LOGI(hcp::log::kDomainWifi, "blufi data subtype=0x%02x len=%u", subtype,
+               (unsigned)len);
+    }
   }
 }
 #endif  // CONFIG_BLUFI

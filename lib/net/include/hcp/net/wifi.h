@@ -25,7 +25,15 @@ enum class WifiEvent {
   kDisconnected,
 };
 
+// A Wi-Fi scan result (subset, enough for BluFi AP list).
+struct ScanResult {
+  char ssid[33];
+  int8_t rssi;
+};
+
 using WifiCallback = void (*)(WifiEvent evt, void* user);
+// Scan callback: invoked once per AP, then once with count==0 to signal done.
+using ScanCallback = void (*)(const ScanResult* result, void* user);
 
 namespace wifi {
 
@@ -38,6 +46,10 @@ bool Init();
 // Connect as a station (async). Progress/result via the callback.
 // Returns false on immediate validation error, true if a connect was issued.
 bool Connect(const WifiCredential& cred);
+
+// Start an async Wi-Fi scan; each AP is delivered to the callback, and a final
+// call with result==nullptr marks completion. Returns false on error.
+bool Scan(ScanCallback cb, void* user = nullptr);
 
 bool Disconnect();
 bool IsConnected();

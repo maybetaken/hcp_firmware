@@ -30,6 +30,9 @@ struct State {
   struct net_if* iface = nullptr;
   struct net_mgmt_event_callback wifi_cb;
   struct net_mgmt_event_callback ipv4_cb;
+  struct net_mgmt_event_callback scan_cb;
+  ScanCallback scan_user_cb = nullptr;
+  void* scan_user = nullptr;
   WifiCallback cb = nullptr;
   void* user = nullptr;
   volatile bool connected = false;
@@ -65,6 +68,23 @@ void Ipv4Handler(struct net_mgmt_event_callback* cb, uint64_t event,
   }
 }
 
+void ScanHandler(struct net_mgmt_event_callback* cb, uint64_t event,
+                 struct net_if* iface) {
+  ARG_UNUSED(iface);
+  if (event == NET_EVENT_WIFI_SCAN_RESULT && g.scan_user_cb != nullptr) {
+    const struct wifi_scan_result* r =
+        static_cast<const struct wifi_scan_result*>(cb->info);
+    ScanResult out{};
+    uint8_t n = r->ssid_length < 32 ? r->ssid_length : 32;
+    memcpy(out.ssid, r->ssid, n);
+    out.ssid[n] = '\0';
+    out.rssi = r->rssi;
+    g.scan_user_cb(&out, g.scan_user);
+  } else if (event == NET_EVENT_WIFI_SCAN_DONE && g.scan_user_cb != nullptr) {
+    g.scan_user_cb(nullptr, g.scan_user);
+  }
+}
+
 }  // namespace
 
 void SetCallback(WifiCallback cb, void* user) {
@@ -86,7 +106,22 @@ bool Init() {
   net_mgmt_add_event_callback(&g.wifi_cb);
   net_mgmt_init_event_callback(&g.ipv4_cb, Ipv4Handler, NET_EVENT_IPV4_ADDR_ADD);
   net_mgmt_add_event_callback(&g.ipv4_cb);
+  net_mgmt_init_event_callback(
+      &g.scan_cb, ScanHandler,
+      NET_EVENT_WIFI_SCAN_RESULT | NET_EVENT_WIFI_SCAN_DONE);
+  net_mgmt_add_event_callback(&g.scan_cb);
   return true;
+}
+
+bool Scan(ScanCallback cb, void* user) {
+  if (!Init()) {
+    return false;
+  }
+  g.scan_user_cb = cb;
+  g.scan_user = user;
+  struct wifi_scan_params params = {};
+  int ret = net_mgmt(NET_REQUEST_WIFI_SCAN, g.iface, &params, sizeof(params));
+  return ret == 0;
 }
 
 bool Connect(const WifiCredential& cred) {
