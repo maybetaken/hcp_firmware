@@ -76,11 +76,13 @@ static ssize_t read_e2p(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 	return bt_gatt_attr_read(conn, attr, buf, len, offset, e2p_val, e2p_len);
 }
 
-/* NOTE: attrs MUST be non-const (RAM). Dynamic registration writes the
- * assigned handle back into each attr (gatt.c: attrs->handle = ++handle);
- * a `const` table lives in flash on ESP32-C6, so those writes silently fail
- * and the service registers with handle 0 -> clients can't enumerate it. */
-static struct bt_gatt_attr blufi_attrs[] = {
+/* Static GATT service (canonical Zephyr path, used by every BLE sample).
+ * BT_GATT_SERVICE_DEFINE puts the service in the _bt_gatt_service_static
+ * iterable section; handles are assigned by the stack at bt_enable time, the
+ * attr table stays const in flash, and discovery/ATT reads never write back
+ * into it. (The earlier dynamic bt_gatt_service_register path kept crashing
+ * with an illegal-instruction on the first client Read By Group Type.) */
+BT_GATT_SERVICE_DEFINE(blufi_svc,
 	BT_GATT_PRIMARY_SERVICE(BLUFI_SVC_UUID),
 	BT_GATT_CHARACTERISTIC(BLUFI_P2E_UUID,
 			       BT_GATT_CHRC_WRITE | BT_GATT_CHRC_WRITE_WITHOUT_RESP,
@@ -88,12 +90,11 @@ static struct bt_gatt_attr blufi_attrs[] = {
 	BT_GATT_CHARACTERISTIC(BLUFI_E2P_UUID, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY,
 			       BT_GATT_PERM_READ, read_e2p, NULL, e2p_val),
 	BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
-};
-static struct bt_gatt_service blufi_svc = BT_GATT_SERVICE(blufi_attrs);
+);
 
 /* attr index of the E2P value characteristic (for bt_gatt_notify): 0=svc,
  * 1=p2e decl, 2=p2e val, 3=e2p decl, 4=e2p val. */
-#define BLUFI_E2P_ATTR (&blufi_attrs[4])
+#define BLUFI_E2P_ATTR (&blufi_svc.attrs[4])
 
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
@@ -171,20 +172,9 @@ int blufi_start(void)
 		k_sem_take(&bt_enabled_sem, K_SECONDS(10));
 	}
 	bt_set_name(BLUFI_ADV_NAME);
-	err = bt_gatt_service_register(&blufi_svc);
-	if (err && err != -EALREADY) {
-		LOG_ERR("gatt service register failed (%d)", err);
-	}
-	/* Runtime evidence: log the handles actually assigned to our attrs.
-	 * If any is 0 the registration didn't take (see RAM note above). */
-	for (size_t i = 0; i < ARRAY_SIZE(blufi_attrs); i++) {
-		LOG_INF("blufi attr[%u] handle=0x%04x",
-			(unsigned)i, blufi_attrs[i].handle);
-	}
 	/* Enumerate the DB through the SAME path ATT discovery uses
-	 * (foreach_attr_type covers static + dynamic services). If our
-	 * 0x0010 PRIMARY SERVICE shows here, the server DB is correct and a
-	 * blank client view means phone-side GATT caching, not the device. */
+	 * (foreach_attr_type covers static + dynamic services). Our BluFi
+	 * PRIMARY SERVICE should appear here with a valid handle. */
 	uint16_t db_count = 0;
 	bt_gatt_foreach_attr_type(0x0001, 0xffff, NULL, NULL, 0,
 				  attr_dump_cb, &db_count);
