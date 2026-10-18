@@ -3,20 +3,23 @@
 
 menuconfig HCP_NET
 	bool "HCP networking (Wi-Fi station)"
-	default n
+	default y
 	select NETWORKING
 	select NET_IPV4
 	select NET_DHCPV4
+	select NET_L2_ETHERNET
 	select NET_MGMT
 	select NET_MGMT_EVENT
 	select NET_MGMT_EVENT_INFO
 	select NET_L2_WIFI_MGMT
 	select WIFI
 	select DNS_RESOLVER
+	# esp32 Wi-Fi runtime essentials (else association/DHCP are flaky)
+	select ESP32_WIFI_STA_AUTO_DHCPV4
 	help
-	  Wi-Fi station support (connect to an AP, DHCP). Selecting this pulls in
-	  the Zephyr network stack + Wi-Fi management, which enables the Espressif
-	  esp32 Wi-Fi driver (the board's &wifi node is already status=okay).
+	  Wi-Fi station support. Enabled by default: networking is core to the
+	  collector. Pulls the Zephyr net stack + esp_wifi driver (the board's
+	  &wifi node is already status=okay). Heap/stack sizing lives in prj.conf.
 
 if HCP_NET
 

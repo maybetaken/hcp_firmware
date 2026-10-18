@@ -1,10 +1,12 @@
+# Build outputs (created by ./build.sh inside the container, persisted to host)
 build/
 build_*/
+
+# Local / secret config — never commit (e.g. real Wi-Fi credentials)
+*.local.conf
+wificreds.conf
+
+# Editor / OS cruft
 .vscode/
 *.swp
 .DS_Store
-
-# local bring-up credentials (never commit)
-wificreds.conf
-
-tests/wifi_smoke/
