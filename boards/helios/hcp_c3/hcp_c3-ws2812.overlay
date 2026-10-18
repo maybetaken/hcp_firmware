@@ -2,7 +2,8 @@
  * ESP32-C3 specific: optional WS2812 binding for the hcp_c3 board.
  * Applied via: build.sh hcp_c3 --led
  * Strip data = SPI2 MOSI -> GPIO8 (CONFIRM your c3 board's RGB data pin).
- * SCLK -> GPIO6 (SPI clock only; not wired to the strip).
+ * SCLK -> GPIO11 (SPI clock only; not wired to the strip). GPIO6/7/8 are C3
+ * strapping pins and GPIO6 is RX on the c3-485 variant, so avoid them here.
  */
 
 #include <zephyr/dt-bindings/led/led.h>
@@ -17,7 +18,7 @@
 &pinctrl {
 	spi2_default: spi2_default {
 		group1 {
-			pinmux = <SPIM2_SCLK_GPIO6>;
+			pinmux = <SPIM2_SCLK_GPIO11>;
 		};
 		group2 {
 			pinmux = <SPIM2_MOSI_GPIO8>;
