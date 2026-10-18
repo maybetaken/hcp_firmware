@@ -12,5 +12,6 @@ rsource "lib/transport/serial/Kconfig"
 rsource "lib/modbus/Kconfig"
 rsource "lib/switch/Kconfig"
 rsource "lib/led/Kconfig"
+rsource "lib/net/Kconfig"
 
 source "Kconfig.zephyr"

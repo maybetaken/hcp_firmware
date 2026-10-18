@@ -18,6 +18,9 @@
 #ifdef CONFIG_HCP_SERIAL_LOOPBACK_TEST
 #include "hcp/serial/port.h"
 #endif
+#ifdef CONFIG_HCP_NET
+#include "hcp/net/wifi.h"
+#endif
 
 using namespace hcp::kernel;
 
@@ -120,6 +123,35 @@ static void LoopbackWorker(void* /*arg*/) {
 }
 #endif  // CONFIG_HCP_SERIAL_LOOPBACK_TEST
 
+#ifdef CONFIG_HCP_NET_DEMO
+static void OnWifi(hcp::net::WifiEvent e, void* /*user*/) {
+  using E = hcp::net::WifiEvent;
+  const char* s = (e == E::kConnected)     ? "connected (IP up)"
+                  : (e == E::kConnecting)  ? "connecting"
+                  : (e == E::kDisconnected) ? "disconnected"
+                                            : "?";
+  HCP_LOGI(hcp::log::kDomainWifi, "wifi %s", s);
+}
+
+static void NetWorker(void* /*arg*/) {
+  hcp::net::wifi::SetCallback(OnWifi);
+  if (!hcp::net::wifi::Init()) {
+    HCP_LOGE(hcp::log::kDomainWifi, "wifi init failed");
+    return;
+  }
+  hcp::net::WifiCredential cred;
+  cred.ssid = CONFIG_HCP_NET_SSID;
+  cred.psk = CONFIG_HCP_NET_PSK[0] ? CONFIG_HCP_NET_PSK : nullptr;
+  while (true) {
+    if (!hcp::net::wifi::IsConnected()) {
+      HCP_LOGI(hcp::log::kDomainWifi, "connecting to \"%s\"", CONFIG_HCP_NET_SSID);
+      hcp::net::wifi::Connect(cred);
+    }
+    time::DelayMs(8000);
+  }
+}
+#endif  // CONFIG_HCP_NET_DEMO
+
 int main(void) {
   HCP_LOGI(hcp::log::kDomainDevice, "*** HCP (Helios Collector Platform) P0 bring-up ***");
   HCP_LOGI(hcp::log::kDomainDevice, "build %s %s", __DATE__, __TIME__);
@@ -162,6 +194,11 @@ int main(void) {
 #ifdef CONFIG_HCP_SERIAL_LOOPBACK_TEST
   Thread lb(LoopbackWorker, nullptr, "loopback");
   lb.Start();
+#endif
+
+#ifdef CONFIG_HCP_NET_DEMO
+  Thread net(NetWorker, nullptr, "net");
+  net.Start();
 #endif
 
   // Continuous heartbeat so the ignition loop is observable at any time

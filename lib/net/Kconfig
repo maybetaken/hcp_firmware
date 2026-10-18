@@ -1,0 +1,34 @@
+# hcp::net module Kconfig
+# SPDX-License-Identifier: Apache-2.0
+
+menuconfig HCP_NET
+	bool "HCP networking (Wi-Fi station)"
+	default n
+	select NETWORKING
+	select NET_IPV4
+	select NET_DHCPV4
+	select NET_MGMT
+	select NET_MGMT_EVENT
+	select NET_MGMT_EVENT_INFO
+	select WIFI
+	select DNS_RESOLVER
+	help
+	  Wi-Fi station support (connect to an AP, DHCP). Selecting this pulls in
+	  the Zephyr network stack + Wi-Fi management, which enables the Espressif
+	  esp32 Wi-Fi driver (the board's &wifi node is already status=okay).
+
+if HCP_NET
+
+config HCP_NET_DEMO
+	bool "Bring-up: connect to the SSID below on boot and log status"
+	default n
+
+config HCP_NET_SSID
+	string "Bring-up Wi-Fi SSID (for the demo connect)"
+	default ""
+
+config HCP_NET_PSK
+	string "Bring-up Wi-Fi PSK (empty = open)"
+	default ""
+
+endif

@@ -14,6 +14,7 @@ add_subdirectory(lib/transport/serial)
 add_subdirectory(lib/modbus)
 add_subdirectory(lib/switch)
 add_subdirectory(lib/led)
+add_subdirectory(lib/net)
 
 # Application sources.
 target_sources(app PRIVATE src/main.cpp)

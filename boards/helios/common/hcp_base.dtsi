@@ -73,6 +73,13 @@
 	status = "okay";
 };
 
+/* Wi-Fi is physically present on all Espressif Helios boards; the node is
+ * always enabled here, and the networking stack / driver is pulled in only
+ * when CONFIG_HCP_NET (see lib/net) selects CONFIG_WIFI. */
+&wifi {
+	status = "okay";
+};
+
 /* Console via native USB-Serial-JTAG (CDC-ACM) -> /dev/cu.usbmodem* on host. */
 &usb_serial {
 	status = "okay";
