@@ -53,9 +53,9 @@ void MgmtHandler(struct net_mgmt_event_callback* cb, uint64_t event,
       g.connected = false;
       Report(WifiEvent::kDisconnected);
       break;
-    case NET_EVENT_IPV4_DHCP_BOUND:
+    case NET_EVENT_IPV4_ADDR_ADD:
       g.connected = true;
-      LOG_INF("DHCP bound (IPv4 acquired)");
+      LOG_INF("IPv4 address assigned (DHCP bound)");
       Report(WifiEvent::kConnected);
       break;
     default:
@@ -82,7 +82,7 @@ bool Init() {
   net_mgmt_init_event_callback(
       &g.mgmt_cb, MgmtHandler,
       NET_EVENT_WIFI_CONNECT_RESULT | NET_EVENT_WIFI_DISCONNECT_RESULT |
-          NET_EVENT_IPV4_DHCP_BOUND);
+          NET_EVENT_IPV4_ADDR_ADD);
   net_mgmt_add_event_callback(&g.mgmt_cb);
   return true;
 }
