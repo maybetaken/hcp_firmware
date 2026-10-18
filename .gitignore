@@ -6,3 +6,5 @@ build_*/
 
 # local bring-up credentials (never commit)
 wificreds.conf
+
+tests/wifi_smoke/
