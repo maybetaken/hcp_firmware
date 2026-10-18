@@ -1,0 +1,156 @@
+/*
+ * BluFi device side: BLE peripheral + ESP BluFi GATT (service 0xFFFF,
+ * write 0xFFF4 phone->esp, notify 0xFFF5 esp->phone). Received frames are
+ * parsed and surfaced to the app callback. Phase 1: no encryption yet (we can
+ * already observe the app's handshake/control frames).
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+#if defined(CONFIG_BLUFI) && defined(CONFIG_BT_PERIPHERAL)
+
+#include <string.h>
+
+#include <zephyr/logging/log.h>
+#include <zephyr/bluetooth/bluetooth.h>
+#include <zephyr/bluetooth/conn.h>
+#include <zephyr/bluetooth/gatt.h>
+#include <zephyr/bluetooth/uuid.h>
+
+#include "blufi/blufi.h"
+
+LOG_MODULE_REGISTER(blufi, CONFIG_LOG_DEFAULT_LEVEL);
+
+/* BluFi GATT UUIDs (16-bit). */
+#define BLUFI_SVC_UUID   BT_UUID_DECLARE_16(0xFFFF)
+#define BLUFI_P2E_UUID   BT_UUID_DECLARE_16(0xFFF4) /* phone -> esp (write) */
+#define BLUFI_E2P_UUID   BT_UUID_DECLARE_16(0xFFF5) /* esp -> phone (notify) */
+
+static blufi_data_cb_t g_cb;
+static void *g_user;
+static bool g_adv_running;
+
+static K_SEM_DEFINE(bt_ready, 0, 1);
+
+static void bt_ready(int err)
+{
+	if (err == 0) {
+		k_sem_give(&bt_ready);
+	} else {
+		LOG_ERR("bt enable failed (%d)", err);
+	}
+}
+
+static ssize_t p2e_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+			 const void *buf, uint16_t len, uint16_t offset,
+			 uint8_t flags)
+{
+	LOG_HEXDUMP_DBG(buf, len, "blufi P2E rx");
+
+	struct blufi_frame f;
+	if (blufi_frame_parse(buf, len, &f) == 0) {
+		uint8_t type = BLUFI_GET_TYPE(f.type_subtype);
+		uint8_t sub = BLUFI_GET_SUBTYPE(f.type_subtype);
+		LOG_INF("rx frame: %s subtype=0x%02x seq=%u len=%u",
+			type == BLUFI_TYPE_CTRL ? "CTRL" : "DATA", sub, f.seq,
+			f.len);
+		if (g_cb) {
+			g_cb(type, sub, f.data, f.len, g_user);
+		}
+	} else {
+		LOG_WRN("rx %u bytes (not a complete/valid frame yet)", len);
+	}
+	return len;
+}
+
+/* Notify value storage for E2P. */
+static uint8_t e2p_val[512];
+static uint16_t e2p_len;
+
+static ssize_t read_e2p(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+			void *buf, uint16_t len, uint16_t offset)
+{
+	return bt_gatt_attr_read(conn, attr, buf, len, offset, e2p_val, e2p_len);
+}
+
+BT_GATT_SERVICE_DEFINE(
+	blufi_svc, BT_GATT_PRIMARY_SERVICE(BLUFI_SVC_UUID),
+	BT_GATT_CHARACTERISTIC(BLUFI_P2E_UUID,
+			       BT_GATT_CHRC_WRITE | BT_GATT_CHRC_WRITE_WITHOUT_RESP,
+			       BT_GATT_PERM_WRITE, NULL, p2e_write, NULL),
+	BT_GATT_CHARACTERISTIC(BLUFI_E2P_UUID, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY,
+			       BT_GATT_PERM_READ, read_e2p, NULL, e2p_val),
+	BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE), );
+
+/* attr index of the E2P value characteristic (for bt_gatt_notify) */
+#define BLUFI_E2P_ATTR (&blufi_svc.attrs[5])
+
+static const struct bt_data ad[] = {
+	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
+	BT_DATA_BYTES(BT_DATA_UUID16_ALL, BT_UUID_16_ENCODE(0xFFFF)),
+};
+
+static void adv_start(void)
+{
+	struct bt_le_adv_param param = BT_LE_ADV_PARAM_INIT(
+		BT_LE_ADV_OPT_CONN, BT_GAP_ADV_FAST_INT_MIN_2,
+		BT_GAP_ADV_FAST_INT_MAX_2, NULL);
+	int err = bt_le_adv_start(&param, ad, ARRAY_SIZE(ad), NULL, 0);
+	g_adv_running = (err == 0);
+	if (err) {
+		LOG_ERR("adv start failed (%d)", err);
+	}
+}
+
+static void connected(struct bt_conn *conn, uint8_t err)
+{
+	if (err) {
+		LOG_WRN("connect failed (%u)", err);
+		return;
+	}
+	LOG_INF("phone connected");
+}
+
+static void disconnected(struct bt_conn *conn, uint8_t reason)
+{
+	LOG_INF("phone disconnected (%u), re-advertising", reason);
+	if (!g_adv_running) {
+		adv_start();
+	}
+}
+
+BT_CONN_CB_DEFINE(conn_callbacks) = {
+	.connected = connected,
+	.disconnected = disconnected,
+};
+
+void blufi_set_callback(blufi_data_cb_t cb, void *user)
+{
+	g_cb = cb;
+	g_user = user;
+}
+
+int blufi_start(void)
+{
+	int err = bt_enable(bt_ready);
+	if (err && err != -EALREADY) {
+		return err;
+	}
+	if (err != -EALREADY) {
+		k_sem_take(&bt_ready, K_SECONDS(10));
+	}
+	adv_start();
+	return 0;
+}
+
+int blufi_send(uint8_t type, uint8_t subtype, const uint8_t *data, uint16_t len)
+{
+	int n = blufi_frame_build(type, subtype, 0, data, len, e2p_val,
+				  sizeof(e2p_val));
+	if (n < 0) {
+		return n;
+	}
+	e2p_len = n;
+	return bt_gatt_notify(NULL, BLUFI_E2P_ATTR, e2p_val, n);
+}
+
+#endif /* CONFIG_BLUFI && CONFIG_BT_PERIPHERAL */

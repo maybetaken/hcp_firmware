@@ -21,6 +21,11 @@
 #ifdef CONFIG_HCP_NET
 #include "hcp/net/wifi.h"
 #endif
+#ifdef CONFIG_BLUFI
+extern "C" {
+#include "blufi/blufi.h"
+}
+#endif
 
 using namespace hcp::kernel;
 
@@ -152,6 +157,22 @@ static void NetWorker(void* /*arg*/) {
 }
 #endif  // CONFIG_HCP_NET_DEMO
 
+#ifdef CONFIG_BLUFI
+extern "C" void on_blufi_data(uint8_t type, uint8_t subtype,
+                              const uint8_t *data, uint16_t len, void *user) {
+  (void)user;
+  if (type == BLUFI_TYPE_DATA && subtype == BLUFI_DATA_STA_SSID) {
+    HCP_LOGI(hcp::log::kDomainWifi, "blufi STA_SSID: %.*s", (int)len,
+             (const char *)data);
+  } else if (type == BLUFI_TYPE_DATA && subtype == BLUFI_DATA_STA_PASSWD) {
+    HCP_LOGI(hcp::log::kDomainWifi, "blufi STA_PASSWD: (%u bytes)", (unsigned)len);
+  } else {
+    HCP_LOGI(hcp::log::kDomainWifi, "blufi rx type=%u subtype=0x%02x len=%u",
+             type, subtype, (unsigned)len);
+  }
+}
+#endif  // CONFIG_BLUFI
+
 int main(void) {
   HCP_LOGI(hcp::log::kDomainDevice, "*** HCP (Helios Collector Platform) P0 bring-up ***");
   HCP_LOGI(hcp::log::kDomainDevice, "build %s %s", __DATE__, __TIME__);
@@ -199,6 +220,16 @@ int main(void) {
 #ifdef CONFIG_HCP_NET_DEMO
   Thread net(NetWorker, nullptr, "net");
   net.Start();
+#endif
+
+#ifdef CONFIG_BLUFI
+  hcp::log::SetLevel(hcp::log::kDomainWifi, hcp::log::kLevelDebug);
+  blufi_set_callback(on_blufi_data, nullptr);
+  if (blufi_start() == 0) {
+    HCP_LOGI(hcp::log::kDomainWifi, "blufi advertising; waiting for phone app");
+  } else {
+    HCP_LOGE(hcp::log::kDomainWifi, "blufi start failed");
+  }
 #endif
 
   // Continuous heartbeat so the ignition loop is observable at any time

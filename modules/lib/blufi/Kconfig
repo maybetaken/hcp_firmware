@@ -2,6 +2,8 @@
 menuconfig BLUFI
 	bool "BluFi BLE provisioning protocol (ESP BluFi compatible)"
 	default n
+	select BT
+	select BT_PERIPHERAL
 	help
 	  Reusable BluFi protocol implementation (frame codec now; GATT + security
 	  handshake + provisioning flow added by hcp::blufi on Zephyr BLE).
