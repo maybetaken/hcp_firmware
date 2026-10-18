@@ -1,0 +1,28 @@
+# hcp::led module Kconfig
+# SPDX-License-Identifier: Apache-2.0
+
+menuconfig HCP_LED
+	bool "HCP LED strip (WS2812-class)"
+	default n
+	help
+	  Addressable LED strip abstraction. Off by default: Zephyr v4.4.2 has no
+	  in-tree Espressif RMT led_strip driver. Enable with a supported backend
+	  (e.g. SPI-emulated WS2812) once a `hcp-led-strip` node is added.
+
+if HCP_LED
+
+choice HCP_LED_BACKEND
+	prompt "LED backend"
+	default HCP_LED_BACKEND_ZEPHYR if LED_STRIP
+	default HCP_LED_BACKEND_POSIX
+
+config HCP_LED_BACKEND_ZEPHYR
+	bool "Zephyr led_strip"
+	depends on LED_STRIP
+
+config HCP_LED_BACKEND_POSIX
+	bool "POSIX framebuffer (host tests)"
+
+endchoice
+
+endif

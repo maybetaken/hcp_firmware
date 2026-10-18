@@ -1,0 +1,15 @@
+# hcp::input module Kconfig
+# SPDX-License-Identifier: Apache-2.0
+
+menuconfig HCP_INPUT
+	bool "HCP input (button debounce)"
+	default y
+	depends on GPIO
+
+if HCP_INPUT
+
+config HCP_INPUT_DEBOUNCE_MS
+	int "Debounce settle time (ms)"
+	default 30
+
+endif

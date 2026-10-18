@@ -1,0 +1,15 @@
+# hcp::switchctl module Kconfig
+# SPDX-License-Identifier: Apache-2.0
+
+menuconfig HCP_SWITCH
+	bool "HCP relay switch control (K1/K2)"
+	default y
+	depends on GPIO
+
+if HCP_SWITCH
+
+config HCP_ENABLE_SWITCH_CONTROL
+	bool "Compile relay control into the application logic"
+	default n
+
+endif

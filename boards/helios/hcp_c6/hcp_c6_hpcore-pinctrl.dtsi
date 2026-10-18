@@ -1,0 +1,33 @@
+/*
+ * HCP ESP32-C6 pin control (hpcore). Console UART (uart0) + Modbus UART (uart1).
+ * uart1 default = TTL pins (RS485 variant overlay switches pins + DE later).
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#include <zephyr/dt-bindings/pinctrl/esp-pinctrl-common.h>
+#include <zephyr/dt-bindings/pinctrl/esp32c6-pinctrl.h>
+#include <zephyr/dt-bindings/pinctrl/esp32c6-gpio-sigmap.h>
+
+&pinctrl {
+	uart0_default: uart0_default {
+		group1 {
+			pinmux = <UART0_TX_GPIO16>;
+			output-high;
+		};
+		group2 {
+			pinmux = <UART0_RX_GPIO17>;
+			bias-pull-up;
+		};
+	};
+
+	uart1_default: uart1_default {
+		group1 {
+			pinmux = <UART1_TX_GPIO22>;
+			output-high;
+		};
+		group2 {
+			pinmux = <UART1_RX_GPIO23>;
+			bias-pull-up;
+		};
+	};
+};

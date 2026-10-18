@@ -1,0 +1,21 @@
+/*
+ * HCP (Helios Collector Platform) — ESP32-C3 board (single core).
+ * Shared skeleton lives in ../common/hcp_base.dtsi.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/dts-v1/;
+
+#include <espressif/esp32c3/esp32c3_wroom_n4.dtsi>
+#include <espressif/partitions_0x0_default.dtsi>
+#include "hcp_c3-pinctrl.dtsi"
+
+#define HCP_SRAM sram1
+#define HCP_BTN_GPIO 9
+
+/ {
+	model = "HCP ESP32-C3";
+	compatible = "espressif,esp32c3";
+};
+
+#include "../common/hcp_base.dtsi"

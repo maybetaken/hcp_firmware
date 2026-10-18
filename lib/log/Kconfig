@@ -1,0 +1,51 @@
+# hcp::log module Kconfig
+# SPDX-License-Identifier: Apache-2.0
+
+menuconfig HCP_LOG
+	bool "HCP domain logging"
+	default y
+
+if HCP_LOG
+
+choice
+	prompt "log backend"
+	default HCP_LOG_BACKEND_ZEPHYR
+
+config HCP_LOG_BACKEND_ZEPHYR
+	bool "Zephyr LOG"
+	depends on LOG
+
+config HCP_LOG_BACKEND_POSIX
+	bool "POSIX (host tests)"
+
+endchoice
+
+menu "Per-domain log level (0=off 1=err 2=warn 3=info 4=dbg)"
+
+config HCP_LOG_LEVEL_WIFI
+	int "wifi domain level"
+	default 3
+
+config HCP_LOG_LEVEL_MQTT
+	int "mqtt domain level"
+	default 3
+
+config HCP_LOG_LEVEL_MODBUS
+	int "modbus domain level"
+	default 3
+
+config HCP_LOG_LEVEL_DEVICE
+	int "device domain level"
+	default 3
+
+config HCP_LOG_LEVEL_OTA
+	int "ota domain level"
+	default 3
+
+config HCP_LOG_LEVEL_SSDP
+	int "ssdp domain level"
+	default 3
+
+endmenu
+
+endif

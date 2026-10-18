@@ -1,0 +1,12 @@
+# Standalone Zephyr ztest app exercising the hcp::kernel ZEPHYR backend
+# (runs on native_sim, no hardware needed).
+cmake_minimum_required(VERSION 3.20.0)
+find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
+project(hcp_kernel_ztest)
+
+get_filename_component(HCP_ROOT "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
+
+target_include_directories(app PRIVATE ${HCP_ROOT}/lib/kernel/include)
+target_sources(app PRIVATE
+  src/main.cpp
+  ${HCP_ROOT}/lib/kernel/src/zephyr/kernel_zephyr.cpp)

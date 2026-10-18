@@ -1,0 +1,15 @@
+# hcp::serial module Kconfig
+# SPDX-License-Identifier: Apache-2.0
+
+menuconfig HCP_SERIAL
+	bool "HCP serial transport (modbus UART)"
+	default y
+	depends on SERIAL
+
+if HCP_SERIAL
+
+config HCP_SERIAL_UART_BAUD
+	int "Default modbus UART baud"
+	default 115200
+
+endif

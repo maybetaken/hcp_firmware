@@ -1,0 +1,78 @@
+/*
+ * HCP shared board skeleton (all Helios custom boards).
+ *
+ * The including board .dts MUST, before this file:
+ *   - include its Espressif module dtsi, the partitions dtsi, and its
+ *     `<board>-pinctrl.dtsi` (which defines uart0_default + uart1_default),
+ *   - define the macros HCP_SRAM (label: sramhp|sram1) and HCP_BTN_GPIO
+ *     (the button's GPIO number).
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/input/input-event-codes.h>
+
+/ {
+	chosen {
+		zephyr,sram = &HCP_SRAM;
+		zephyr,console = &usb_serial;
+		zephyr,shell-uart = &usb_serial;
+		zephyr,flash = &flash0;
+		zephyr,code-partition = &slot0_partition;
+	};
+
+	aliases {
+		sw0 = &hcp_button;
+		hcp-uart = &uart1;
+		hcp-k1 = &relay_k1;
+		hcp-k2 = &relay_k2;
+	};
+
+	gpio_keys {
+		compatible = "gpio-keys";
+		hcp_button: button_0 {
+			label = "HCP User SW";
+			gpios = <&gpio0 HCP_BTN_GPIO (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+			zephyr,code = <INPUT_KEY_0>;
+		};
+	};
+
+	/* Relay outputs K1/K2 (same pins across chips). Held as gpio-leds so the
+	 * gpios property parses; hcp::switchctl drives them via gpio_dt_spec. */
+	relays {
+		compatible = "gpio-leds";
+		relay_k1: relay_0 {
+			label = "HCP Relay K1";
+			gpios = <&gpio0 0 GPIO_ACTIVE_HIGH>;
+		};
+		relay_k2: relay_1 {
+			label = "HCP Relay K2";
+			gpios = <&gpio0 3 GPIO_ACTIVE_HIGH>;
+		};
+	};
+};
+
+&uart0 {
+	status = "okay";
+	current-speed = <115200>;
+	pinctrl-0 = <&uart0_default>;
+	pinctrl-names = "default";
+};
+
+/* Modbus UART (UART1). Default TTL pins; RS485 variant overlay re-pins + DE. */
+&uart1 {
+	status = "okay";
+	current-speed = <115200>;
+	pinctrl-0 = <&uart1_default>;
+	pinctrl-names = "default";
+};
+
+&gpio0 {
+	status = "okay";
+};
+
+/* Console via native USB-Serial-JTAG (CDC-ACM) -> /dev/cu.usbmodem* on host. */
+&usb_serial {
+	status = "okay";
+};

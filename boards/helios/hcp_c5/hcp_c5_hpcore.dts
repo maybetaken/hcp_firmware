@@ -1,0 +1,22 @@
+/*
+ * HCP (Helios Collector Platform) — ESP32-C5 hpcore board.
+ * Uses the 0x2000 bootloader / 8M partition set.
+ * Shared skeleton lives in ../common/hcp_base.dtsi.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/dts-v1/;
+
+#include <espressif/esp32c5/esp32c5_wroom_n8r4.dtsi>
+#include <espressif/partitions_0x2000_default_8M.dtsi>
+#include "hcp_c5_hpcore-pinctrl.dtsi"
+
+#define HCP_SRAM sramhp
+#define HCP_BTN_GPIO 28
+
+/ {
+	model = "HCP ESP32-C5 HP Core";
+	compatible = "espressif,esp32c5";
+};
+
+#include "../common/hcp_base.dtsi"

@@ -1,0 +1,30 @@
+# hcp::kernel module Kconfig
+# SPDX-License-Identifier: Apache-2.0
+
+menuconfig HCP_KERNEL
+	bool "HCP kernel abstraction (thread/mutex/msgq/timer/time)"
+	default y
+	help
+	  Backend-agnostic wrapper over OS primitives. On-target uses the
+	  Zephyr backend; host unit tests compile the posix backend directly.
+
+if HCP_KERNEL
+
+choice
+	prompt "kernel backend"
+	default HCP_KERNEL_BACKEND_ZEPHYR
+
+config HCP_KERNEL_BACKEND_ZEPHYR
+	bool "Zephyr"
+
+endchoice
+
+config HCP_KERNEL_THREAD_STACK_SIZE
+	int "Default dynamic thread stack size (bytes)"
+	default 2048
+
+config HCP_KERNEL_MAX_THREADS
+	int "Static pool size for dynamically created threads"
+	default 8
+
+endif

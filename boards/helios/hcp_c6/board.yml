@@ -1,0 +1,6 @@
+board:
+  name: hcp_c6
+  full_name: Helios Collector Platform (ESP32-C6)
+  vendor: helios
+  socs:
+  - name: esp32c6

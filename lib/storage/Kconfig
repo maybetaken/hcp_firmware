@@ -1,0 +1,36 @@
+# hcp::storage module Kconfig
+# SPDX-License-Identifier: Apache-2.0
+
+menuconfig HCP_STORAGE
+	bool "HCP key/value storage"
+	default y
+
+if HCP_STORAGE
+
+choice HCP_STORAGE_BACKEND
+	prompt "storage backend"
+	default HCP_STORAGE_BACKEND_ZEPHYR if SETTINGS
+	default HCP_STORAGE_BACKEND_POSIX
+
+config HCP_STORAGE_BACKEND_ZEPHYR
+	bool "Zephyr settings"
+	depends on SETTINGS
+
+config HCP_STORAGE_BACKEND_POSIX
+	bool "POSIX filesystem (host tests)"
+
+endchoice
+
+config HCP_STORAGE_MAX_KEYS
+	int "Max cached keys"
+	default 16
+
+config HCP_STORAGE_MAX_VALUE
+	int "Max value size (bytes)"
+	default 64
+
+config HCP_STORAGE_KEY_MAX
+	int "Max key length"
+	default 16
+
+endif
