@@ -79,6 +79,8 @@ void ScanHandler(struct net_mgmt_event_callback* cb, uint64_t event,
     memcpy(out.ssid, r->ssid, n);
     out.ssid[n] = '\0';
     out.rssi = r->rssi;
+    out.channel = r->channel;
+    memcpy(out.bssid, r->mac, sizeof(out.bssid));
     g.scan_user_cb(&out, g.scan_user);
   } else if (event == NET_EVENT_WIFI_SCAN_DONE && g.scan_user_cb != nullptr) {
     g.scan_user_cb(nullptr, g.scan_user);

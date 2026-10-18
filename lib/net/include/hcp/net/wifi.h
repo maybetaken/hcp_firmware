@@ -25,10 +25,12 @@ enum class WifiEvent {
   kDisconnected,
 };
 
-// A Wi-Fi scan result (subset, enough for BluFi AP list).
+// A Wi-Fi scan result (subset, enough for BluFi AP list + conn report).
 struct ScanResult {
   char ssid[33];
   int8_t rssi;
+  uint8_t bssid[6];  // AP MAC (for the BluFi conn report extra info)
+  uint8_t channel;
 };
 
 using WifiCallback = void (*)(WifiEvent evt, void* user);

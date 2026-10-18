@@ -176,13 +176,56 @@ static void blufi_report_wifi_state(uint8_t sta_state) {
   blufi_send(BLUFI_TYPE_DATA, BLUFI_DATA_WIFI_REP, rep, sizeof(rep));
 }
 
+// Remember scanned APs so the success report can carry the AP's BSSID + channel
+// as esp's btc_blufi_send_wifi_conn_report extra_info (the official EspBlufi app
+// relies on this; a bare 3-byte report is ignored by it).
+struct ApRec {
+  char ssid[33];
+  uint8_t bssid[6];
+  uint8_t channel;
+};
+#define BLUFI_MAX_APS 8
+static ApRec g_aps[BLUFI_MAX_APS];
+static int g_ap_count;
+
+static const ApRec* find_ap(const char* ssid) {
+  for (int i = 0; i < g_ap_count; i++) {
+    if (strcmp(g_aps[i].ssid, ssid) == 0) return &g_aps[i];
+  }
+  return nullptr;
+}
+
+// CONN_SUCCESS report with esp-style extra_info TLVs: [opmode][state][softap]
+// + BSSID(0x01,len=6) + SSID(0x02,len). Mirrors the ESP-IDF got-IP report.
+static void blufi_report_wifi_success() {
+  uint8_t rep[3 + 2 + 6 + 2 + 32];
+  int n = 0;
+  rep[n++] = BLUFI_OPMODE_STA;
+  rep[n++] = BLUFI_STA_CONN_SUCCESS;
+  rep[n++] = 0x00;  // softap_conn_num
+  const ApRec* ap = find_ap(g_ssid);
+  if (ap != nullptr) {
+    rep[n++] = BLUFI_DATA_STA_BSSID;
+    rep[n++] = 6;
+    memcpy(&rep[n], ap->bssid, 6);
+    n += 6;
+    uint8_t slen = (uint8_t)strlen(ap->ssid);
+    rep[n++] = BLUFI_DATA_STA_SSID;
+    rep[n++] = slen;
+    memcpy(&rep[n], ap->ssid, slen);
+    n += slen;
+  }
+  HCP_LOGI(hcp::log::kDomainWifi, "blufi: report SUCCESS (%d bytes, bssid=%s)",
+           n, ap ? "yes" : "no");
+  blufi_send(BLUFI_TYPE_DATA, BLUFI_DATA_WIFI_REP, rep, n);
+}
+
 // Wi-Fi result -> report the final BluFi conn state so the app confirms success
 // instead of timing out waiting for it (then disconnects, reason 19).
 static void on_wifi_for_blufi(hcp::net::WifiEvent e, void*) {
   using E = hcp::net::WifiEvent;
   if (e == E::kConnected) {
-    HCP_LOGI(hcp::log::kDomainWifi, "blufi: wifi connected, report SUCCESS");
-    blufi_report_wifi_state(BLUFI_STA_CONN_SUCCESS);
+    blufi_report_wifi_success();
   }
 }
 
@@ -224,6 +267,14 @@ static void on_scan(const hcp::net::ScanResult* r, void*) {
     memcpy(&g_wlist[g_wlist_len], r->ssid, slen);
     g_wlist_len += slen;
   }
+  // Remember the AP (ssid -> bssid/channel) for the success conn report.
+  if (g_ap_count < BLUFI_MAX_APS && slen < sizeof(g_aps[0].ssid)) {
+    ApRec& a = g_aps[g_ap_count++];
+    memcpy(a.ssid, r->ssid, slen);
+    a.ssid[slen] = '\0';
+    memcpy(a.bssid, r->bssid, 6);
+    a.channel = r->channel;
+  }
 }
 
 extern "C" void on_blufi_data(uint8_t type, uint8_t subtype,
@@ -242,6 +293,7 @@ extern "C" void on_blufi_data(uint8_t type, uint8_t subtype,
       case BLUFI_CTRL_GET_WIFI_LIST:
         HCP_LOGI(hcp::log::kDomainWifi, "blufi: wifi scan requested");
         g_wlist_len = 0;
+        g_ap_count = 0;
         hcp::net::wifi::Scan(on_scan, nullptr);
         break;
       case BLUFI_CTRL_CONN_TO_AP: {
