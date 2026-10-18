@@ -19,3 +19,4 @@
 };
 
 #include "../common/hcp_base.dtsi"
+#include "../common/hcp_ws2812.dtsi"

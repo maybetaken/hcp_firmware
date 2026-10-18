@@ -2,57 +2,49 @@
 # Build the HCP app for a target board inside the env-zephyr-espressif image
 # (one-shot container; output persists to host under hcp/build/<slug>).
 #
-# WS2812 (addressable LED) is ON by default for any board that ships a
-# boards/helios/<board>/<board>-ws2812.overlay. Opt out with --no-led.
+# The WS2812 LED is described in each board's devicetree and driven by the app
+# by default (CONFIG_HCP_LED=y). No extra overlay args are needed. Opt out with
+# --no-led (also drops the led_strip/SPI drivers from the binary).
 #
 # Usage:
-#   ./build.sh                                  # default board (hcp_c6), LED on
-#   ./build.sh all                              # build hcp_c3 + hcp_c5 + hcp_c6
-#   ./build.sh hcp_c3                           # one board, LED on
-#   ./build.sh hcp_c6/esp32c6/hpcore --no-led   # LED off
-#   ./build.sh <board> -- <extra west args>     # arbitrary extra cmake args
+#   ./build.sh                       # default board (hcp_c6), LED on
+#   ./build.sh all                   # build hcp_c3 + hcp_c5 + hcp_c6
+#   ./build.sh hcp_c3                # one board, LED on
+#   ./build.sh <board> --no-led      # disable LED (Kconfig off)
+#   ./build.sh <board> -- <extra west args>
 set -euo pipefail
 
 IMAGE="env-zephyr-espressif"
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # .../zephyr/hcp
 
-# ---- parse args ----
 BOARD_OR_ALL="hcp_c6/esp32c6/hpcore"
-WANT_LED=1                 # default ON
+WANT_LED=1
 EXTRA_ARGS=""
 positional_seen=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    all)               BOARD_OR_ALL="all"; positional_seen=1; shift ;;
-    --no-led)          WANT_LED=0; shift ;;
-    --led)             WANT_LED=1; shift ;;          # explicit (already default)
-    --)                shift; EXTRA_ARGS="$EXTRA_ARGS $*"; break ;;
-    -*)                echo "unknown option: $1" >&2; exit 1 ;;
-    *)                 if [ "$positional_seen" -eq 0 ]; then BOARD_OR_ALL="$1"; positional_seen=1; shift;
-                       else EXTRA_ARGS="$EXTRA_ARGS $1"; shift; fi ;;
+    all)       BOARD_OR_ALL="all"; positional_seen=1; shift ;;
+    --no-led)  WANT_LED=0; shift ;;
+    --led)     WANT_LED=1; shift ;;
+    --)        shift; EXTRA_ARGS="$EXTRA_ARGS $*"; break ;;
+    -*)        echo "unknown option: $1" >&2; exit 1 ;;
+    *)         if [ "$positional_seen" -eq 0 ]; then BOARD_OR_ALL="$1"; positional_seen=1; shift;
+               else EXTRA_ARGS="$EXTRA_ARGS $1"; shift; fi ;;
   esac
 done
 
-# ---- build one board ----
+# LED-off is a pure Kconfig choice now (DT always describes the hardware).
+LED_ARGS=""
+if [ "$WANT_LED" = "0" ]; then
+  LED_ARGS="-DCONFIG_HCP_LED=n -DCONFIG_LED_STRIP=n -DCONFIG_WS2812_STRIP_SPI=n"
+fi
+
 build_one() {
   local BOARD="$1"
-  local BOARD_NAME="${BOARD%%/*}"
-  local OVERLAY="boards/helios/${BOARD_NAME}/${BOARD_NAME}-ws2812.overlay"
-  local LED_ARGS="" USE_LED="$WANT_LED"
-
-  if [ "$USE_LED" = "1" ]; then
-    if [ -f "${APP_DIR}/${OVERLAY}" ]; then
-      LED_ARGS="-DEXTRA_CONF_FILE=lib/led/ws2812-spi.conf -DEXTRA_DTC_OVERLAY_FILE=${OVERLAY}"
-    else
-      echo "note: no ws2812 overlay for '${BOARD_NAME}' (${OVERLAY}); building without LED" >&2
-      LED_ARGS=""; USE_LED=0
-    fi
-  fi
-
   local SLUG; SLUG="$(echo "${BOARD}" | tr '/-' '__')"
-  [ "$USE_LED" = "1" ] && SLUG="${SLUG}_led"
+  [ "$WANT_LED" = "0" ] && SLUG="${SLUG}_nold"
 
-  echo ">>> building ${BOARD}  (LED=${USE_LED})  -> build/${SLUG}"
+  echo ">>> building ${BOARD}  (LED=${WANT_LED})  -> build/${SLUG}"
   docker run --rm \
     -v "$(dirname "${APP_DIR}")":/workspace \
     --entrypoint /bin/bash "${IMAGE}" -lc "
@@ -66,7 +58,6 @@ build_one() {
     "
 }
 
-# ---- dispatch ----
 if [ "$BOARD_OR_ALL" = "all" ]; then
   for b in hcp_c5/esp32c5/hpcore hcp_c6/esp32c6/hpcore hcp_c3; do
     build_one "$b"

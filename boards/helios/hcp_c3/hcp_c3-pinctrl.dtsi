@@ -29,4 +29,16 @@
 			bias-pull-up;
 		};
 	};
+
+	/* WS2812 data on SPI2 MOSI=GPIO8; SCLK=GPIO11 (clock only; GPIO6/7/8 are
+	 * C3 strapping and GPIO6 is RX on the c3-485 variant, so avoid them). */
+	spi2_default: spi2_default {
+		group1 {
+			pinmux = <SPIM2_SCLK_GPIO11>;
+		};
+		group2 {
+			pinmux = <SPIM2_MOSI_GPIO8>;
+			output-high;
+		};
+	};
 };

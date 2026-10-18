@@ -3,22 +3,25 @@
 
 menuconfig HCP_LED
 	bool "HCP LED strip (WS2812-class)"
-	default n
+	default y
 	help
-	  Addressable LED strip abstraction. Off by default: Zephyr v4.4.2 has no
-	  in-tree Espressif RMT led_strip driver. Enable with a supported backend
-	  (e.g. SPI-emulated WS2812) once a `hcp-led-strip` node is added.
+	  Addressable LED strip support. The WS2812 node is described in each
+	  board's devicetree (see boards/helios/common/hcp_ws2812.dtsi) since the
+	  LED is physically present on all Helios boards; this option only decides
+	  whether the application drives it. Uses Zephyr's in-tree
+	  worldsemi,ws2812-spi backend. To also drop the driver from the binary,
+	  disable CONFIG_LED_STRIP / CONFIG_WS2812_STRIP_SPI.
 
 if HCP_LED
 
 choice HCP_LED_BACKEND
 	prompt "LED backend"
-	default HCP_LED_BACKEND_ZEPHYR if LED_STRIP
-	default HCP_LED_BACKEND_POSIX
+	default HCP_LED_BACKEND_ZEPHYR
 
 config HCP_LED_BACKEND_ZEPHYR
-	bool "Zephyr led_strip"
-	depends on LED_STRIP
+	bool "Zephyr led_strip (worldsemi,ws2812-spi)"
+	select LED_STRIP
+	select SPI
 
 config HCP_LED_BACKEND_POSIX
 	bool "POSIX framebuffer (host tests)"

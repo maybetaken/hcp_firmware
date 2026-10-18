@@ -1,0 +1,42 @@
+/*
+ * HCP shared WS2812 (addressable RGB) binding — the LED is physically present
+ * on all Helios boards (data = GPIO8), so it lives in the board devicetree, not
+ * a bolt-on overlay. Included by each hcp_cX.dts AFTER its -pinctrl.dtsi (which
+ * must define the chip-specific `spi2_default` group: MOSI=GPIO8 + a free SCLK).
+ *
+ * Application use is gated by CONFIG_HCP_LED (Kconfig), not by this file.
+ * To drop it entirely from a build, disable the driver too:
+ *   -DCONFIG_HCP_LED=n -DCONFIG_LED_STRIP=n -DCONFIG_WS2812_STRIP_SPI=n
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#include <zephyr/dt-bindings/led/led.h>
+
+/ {
+	aliases {
+		hcp-led-strip = &led_strip;
+	};
+};
+
+&spi2 {
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+	pinctrl-0 = <&spi2_default>;
+	pinctrl-names = "default";
+
+	led_strip: ws2812@0 {
+		compatible = "worldsemi,ws2812-spi";
+		reg = <0>;
+		spi-max-frequency = <3200000>;
+		chain-length = <1>;
+
+		spi-one-frame = <0x70>;
+		spi-zero-frame = <0x40>;
+
+		color-mapping = <LED_COLOR_ID_GREEN
+				 LED_COLOR_ID_RED
+				 LED_COLOR_ID_BLUE>;
+	};
+};

@@ -30,4 +30,15 @@
 			bias-pull-up;
 		};
 	};
+
+	/* WS2812 data on SPI2 MOSI=GPIO8; SCLK=GPIO6 (clock only, not wired). */
+	spi2_default: spi2_default {
+		group1 {
+			pinmux = <SPIM2_SCLK_GPIO6>;
+		};
+		group2 {
+			pinmux = <SPIM2_MOSI_GPIO8>;
+			output-high;
+		};
+	};
 };
