@@ -84,3 +84,10 @@ target_include_directories(test_modbus PRIVATE
   ${M}/include ${NM} ${HCP_ROOT}/lib/transport/serial/include)
 target_link_libraries(test_modbus PRIVATE GTest::gtest_main pthread)
 add_test(NAME test_modbus COMMAND test_modbus)
+
+# ---- BluFi frame codec (module) ----
+set(BF ${HCP_ROOT}/modules/lib/blufi)
+add_executable(test_blufi ${BF}/frame.c ${CMAKE_CURRENT_LIST_DIR}/test_blufi.cpp)
+target_include_directories(test_blufi PRIVATE ${BF}/include)
+target_link_libraries(test_blufi PRIVATE GTest::gtest_main)
+add_test(NAME test_blufi COMMAND test_blufi)
