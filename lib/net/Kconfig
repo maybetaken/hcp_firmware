@@ -23,6 +23,21 @@ config HCP_NET_DEMO
 	bool "Bring-up: connect to the SSID below on boot and log status"
 	default n
 
+choice HCP_NET_SECURITY
+	prompt "Wi-Fi security (bring-up demo)"
+	default HCP_NET_SECURITY_AUTO
+
+config HCP_NET_SECURITY_AUTO
+	bool "WPA/WPA2/WPA3 auto-negotiate"
+
+config HCP_NET_SECURITY_PSK
+	bool "WPA2-PSK only"
+
+config HCP_NET_SECURITY_SAE
+	bool "WPA3-SAE only"
+
+endchoice
+
 config HCP_NET_SSID
 	string "Bring-up Wi-Fi SSID (for the demo connect)"
 	default ""

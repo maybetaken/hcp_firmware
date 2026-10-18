@@ -96,9 +96,23 @@ bool Connect(const WifiCredential& cred) {
   param.ssid = reinterpret_cast<const uint8_t*>(cred.ssid);
   param.ssid_length = static_cast<uint8_t>(strlen(cred.ssid));
   if (cred.psk != nullptr && cred.psk[0] != '\0') {
-    param.psk = reinterpret_cast<const uint8_t*>(cred.psk);
-    param.psk_length = static_cast<uint8_t>(strlen(cred.psk));
-    param.security = WIFI_SECURITY_TYPE_PSK; /* WPA2-PSK */
+    const uint8_t* secret = reinterpret_cast<const uint8_t*>(cred.psk);
+    size_t slen = strlen(cred.psk);
+#if defined(CONFIG_HCP_NET_SECURITY_SAE)
+    param.security = WIFI_SECURITY_TYPE_SAE;
+    param.sae_password = secret;
+    param.sae_password_length = static_cast<uint8_t>(slen);
+#elif defined(CONFIG_HCP_NET_SECURITY_PSK)
+    param.security = WIFI_SECURITY_TYPE_PSK;
+    param.psk = secret;
+    param.psk_length = static_cast<uint8_t>(slen);
+#else /* AUTO: give both so the supplicant can negotiate WPA2 or WPA3 */
+    param.security = WIFI_SECURITY_TYPE_WPA_AUTO_PERSONAL;
+    param.psk = secret;
+    param.psk_length = static_cast<uint8_t>(slen);
+    param.sae_password = secret;
+    param.sae_password_length = static_cast<uint8_t>(slen);
+#endif
   } else {
     param.security = WIFI_SECURITY_TYPE_NONE;
   }
