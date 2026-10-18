@@ -76,7 +76,11 @@ static ssize_t read_e2p(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 	return bt_gatt_attr_read(conn, attr, buf, len, offset, e2p_val, e2p_len);
 }
 
-static const struct bt_gatt_attr blufi_attrs[] = {
+/* NOTE: attrs MUST be non-const (RAM). Dynamic registration writes the
+ * assigned handle back into each attr (gatt.c: attrs->handle = ++handle);
+ * a `const` table lives in flash on ESP32-C6, so those writes silently fail
+ * and the service registers with handle 0 -> clients can't enumerate it. */
+static struct bt_gatt_attr blufi_attrs[] = {
 	BT_GATT_PRIMARY_SERVICE(BLUFI_SVC_UUID),
 	BT_GATT_CHARACTERISTIC(BLUFI_P2E_UUID,
 			       BT_GATT_CHRC_WRITE | BT_GATT_CHRC_WRITE_WITHOUT_RESP,
@@ -168,6 +172,12 @@ int blufi_start(void)
 	err = bt_gatt_service_register(&blufi_svc);
 	if (err && err != -EALREADY) {
 		LOG_ERR("gatt service register failed (%d)", err);
+	}
+	/* Runtime evidence: log the handles actually assigned to our attrs.
+	 * If any is 0 the registration didn't take (see RAM note above). */
+	for (size_t i = 0; i < ARRAY_SIZE(blufi_attrs); i++) {
+		LOG_INF("blufi attr[%u] handle=0x%04x",
+			(unsigned)i, blufi_attrs[i].handle);
 	}
 	bt_gatt_foreach_attr(0x0001, 0xffff,
 			     (bt_gatt_attr_func_t)attr_dump_cb, NULL);
