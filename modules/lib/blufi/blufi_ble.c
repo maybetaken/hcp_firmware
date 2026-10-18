@@ -20,13 +20,9 @@
 
 LOG_MODULE_REGISTER(blufi, CONFIG_LOG_DEFAULT_LEVEL);
 
-/* BluFi GATT UUIDs. Service is the esp_blufi 128-bit UUID
- * 0000FFFF-0000-1000-8000-00FB349B5FFF (the EspConfig WeChat mini-program
- * filters on this 128-bit UUID in the advertisement). Characteristics are
- * 16-bit. */
-#define BLUFI_SVC_UUID \
-	BT_UUID_DECLARE_128(0x00, 0x00, 0xff, 0xff, 0x00, 0x00, 0x10, 0x00, \
-			    0x80, 0x00, 0x00, 0x80, 0x5f, 0x9b, 0x34, 0xfb)
+/* BluFi GATT: the primary service is 16-bit 0xFFFF (esp BLUFI_APP_UUID); only
+ * the *advertisement* carries the 128-bit form. Characteristics are 16-bit. */
+#define BLUFI_SVC_UUID   BT_UUID_DECLARE_16(0xFFFF)
 #define BLUFI_P2E_UUID BT_UUID_DECLARE_16(0xFF01) /* phone -> esp (write) */
 #define BLUFI_E2P_UUID BT_UUID_DECLARE_16(0xFF02) /* esp -> phone (notify) */
 
