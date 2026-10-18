@@ -1,0 +1,54 @@
+/*
+ * Optional WS2812 (addressable RGB) binding for HCP boards, applied only when
+ * you opt in via:  -DEXTRA_DTC_OVERLAY_FILE=lib/led/ws2812-spi.overlay
+ *
+ * Uses Zephyr's in-tree worldsemi,ws2812-spi driver. The strip data line is
+ * SPI MOSI -> GPIO8. SPI also requires a clock line (SCLK -> GPIO6 here); the
+ * strip does NOT use that pin — it just carries the controller clock.
+ *
+ * To later switch to a plain single-color LED, drop this overlay and use a
+ * gpio-leds node instead (no SPI, no led_strip).
+ */
+
+#include <zephyr/dt-bindings/led/led.h>
+#include <zephyr/dt-bindings/pinctrl/esp32c6-pinctrl.h>
+
+/ {
+	aliases {
+		hcp-led-strip = &led_strip;
+	};
+};
+
+&pinctrl {
+	spi2_default: spi2_default {
+		group1 {
+			pinmux = <SPIM2_SCLK_GPIO6>;   /* SPI clock, not wired to the strip */
+		};
+		group2 {
+			pinmux = <SPIM2_MOSI_GPIO8>;   /* strip data line */
+			output-high;
+		};
+	};
+};
+
+&spi2 {
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+	pinctrl-0 = <&spi2_default>;
+	pinctrl-names = "default";
+
+	led_strip: ws2812@0 {
+		compatible = "worldsemi,ws2812-spi";
+		reg = <0>;
+		spi-max-frequency = <3200000>;
+		chain-length = <1>;
+
+		spi-one-frame = <0x70>;
+		spi-zero-frame = <0x40>;
+
+		color-mapping = <LED_COLOR_ID_GREEN
+				 LED_COLOR_ID_RED
+				 LED_COLOR_ID_BLUE>;
+	};
+};

@@ -9,6 +9,9 @@
 #include "hcp/kernel/kernel.h"
 #include "hcp/log/log.h"
 #include "hcp/input/input.h"
+#ifdef CONFIG_HCP_LED
+#include "hcp/led/strip.h"
+#endif
 
 using namespace hcp::kernel;
 
@@ -30,6 +33,28 @@ static void OnButton(bool pressed, void* /*arg*/) {
   HCP_LOGI(hcp::log::kDomainDevice, "button %s",
            pressed ? "pressed" : "released");
 }
+
+#ifdef CONFIG_HCP_LED
+// Optional addressable-LED demo; only built when CONFIG_HCP_LED is enabled AND
+// the ws2812-spi overlay is applied (see lib/led/ws2812-spi.{conf,overlay}).
+static void LedWorker(void* /*arg*/) {
+  hcp::led::Strip s(1);
+  if (!s.Open()) {
+    HCP_LOGW(hcp::log::kDomainDevice,
+             "led_strip open failed (apply ws2812-spi.overlay?)");
+    return;
+  }
+  static const hcp::led::Color seq[] = {
+      {40, 0, 0}, {0, 40, 0}, {0, 0, 40}, {20, 20, 0}, {0, 0, 0}};
+  unsigned i = 0;
+  while (true) {
+    s.SetAll(seq[i]);
+    s.Show();
+    i = (i + 1) % (sizeof(seq) / sizeof(seq[0]));
+    time::DelayMs(1200);
+  }
+}
+#endif  // CONFIG_HCP_LED
 
 int main(void) {
   HCP_LOGI(hcp::log::kDomainDevice, "*** HCP (Helios Collector Platform) P0 bring-up ***");
@@ -59,6 +84,11 @@ int main(void) {
   if (!hcp::input::Button::Init(OnButton, nullptr)) {
     HCP_LOGW(hcp::log::kDomainDevice, "button init failed (no sw0?)");
   }
+
+#ifdef CONFIG_HCP_LED
+  Thread led(LedWorker, nullptr, "led");
+  led.Start();
+#endif
 
   // Continuous heartbeat so the ignition loop is observable at any time
   // after a reset.

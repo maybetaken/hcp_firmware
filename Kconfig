@@ -12,12 +12,4 @@ rsource "lib/transport/serial/Kconfig"
 rsource "lib/switch/Kconfig"
 rsource "lib/led/Kconfig"
 
-config HCP_LED_TEST
-	bool "Build WS2812 GPIO8 bit-bang bring-up test (replaces the app main)"
-	default n
-	help
-	  Throwaway hardware test: builds src/ledtest.c (color cycle on the
-	  onboard WS2812) instead of src/main.cpp. Zephyr v4.4.2 has no
-	  Espressif led_strip/RMT driver, so this bit-bangs the data line.
-
 source "Kconfig.zephyr"

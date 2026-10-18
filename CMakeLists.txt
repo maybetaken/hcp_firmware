@@ -14,10 +14,5 @@ add_subdirectory(lib/transport/serial)
 add_subdirectory(lib/switch)
 add_subdirectory(lib/led)
 
-# Application sources. HCP_LED_TEST swaps in a throwaway WS2812 bring-up test
-# (C) instead of the normal C++ bring-up app.
-if(CONFIG_HCP_LED_TEST)
-  target_sources(app PRIVATE src/ledtest.c)
-else()
-  target_sources(app PRIVATE src/main.cpp)
-endif()
+# Application sources.
+target_sources(app PRIVATE src/main.cpp)
