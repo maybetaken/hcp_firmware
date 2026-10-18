@@ -26,6 +26,13 @@ extern "C" {
 #define BLUFI_GET_TYPE(ts)       ((ts) & BLUFI_TYPE_MASK)
 #define BLUFI_GET_SUBTYPE(ts)    (((ts) >> BLUFI_SUBTYPE_SHIFT) & 0x3F)
 
+/* Frame-control (fc) bit flags — faithful to esp blufi_int.h. */
+#define BLUFI_FC_ENC      0x01 /* payload encrypted            */
+#define BLUFI_FC_CHECK    0x02 /* crc16 checksum appended      */
+#define BLUFI_FC_DIR_E2P  0x04 /* direction esp -> phone       */
+#define BLUFI_FC_REQ_ACK  0x08 /* request acknowledgement      */
+#define BLUFI_FC_FRAG     0x10 /* fragmented                   */
+
 enum blufi_frame_type {
 	BLUFI_TYPE_CTRL = 0x0,
 	BLUFI_TYPE_DATA = 0x1,

@@ -32,6 +32,10 @@ LOG_MODULE_REGISTER(blufi, CONFIG_LOG_DEFAULT_LEVEL);
 static blufi_data_cb_t g_cb;
 static void *g_user;
 static bool g_adv_running;
+/* BluFi outbound frame sequence number. The client validates that the seq of
+ * frames it receives increments strictly from 0 per connection (esp blufi
+ * send_seq++), so we must too; reset on each new connection. */
+static uint8_t g_send_seq;
 
 static K_SEM_DEFINE(bt_enabled_sem, 0, 1);
 
@@ -128,6 +132,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
 		return;
 	}
 	LOG_INF("phone connected");
+	g_send_seq = 0;
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
@@ -185,13 +190,23 @@ int blufi_start(void)
 
 int blufi_send(uint8_t type, uint8_t subtype, const uint8_t *data, uint16_t len)
 {
-	int n = blufi_frame_build(type, subtype, 0, data, len, e2p_val,
+	int n = blufi_frame_build(type, subtype, g_send_seq, data, len, e2p_val,
 				  sizeof(e2p_val));
 	if (n < 0) {
 		return n;
 	}
+	/* esp sets direction esp->phone on every outbound frame. */
+	e2p_val[1] |= BLUFI_FC_DIR_E2P;
+	uint8_t used_seq = g_send_seq;
+	g_send_seq = (uint8_t)(g_send_seq + 1);
 	e2p_len = n;
-	return bt_gatt_notify(NULL, BLUFI_E2P_ATTR, e2p_val, n);
+	int ret = bt_gatt_notify(NULL, BLUFI_E2P_ATTR, e2p_val, n);
+	LOG_INF("tx type=%u sub=0x%02x seq=%u len=%u notify_ret=%d",
+		type, subtype, used_seq, n, ret);
+	if (ret) {
+		LOG_WRN("notify failed (%d): phone not subscribed to E2P CCC?", ret);
+	}
+	return ret;
 }
 
 #endif /* CONFIG_BLUFI && CONFIG_BT_PERIPHERAL */

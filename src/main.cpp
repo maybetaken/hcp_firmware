@@ -189,7 +189,10 @@ extern "C" void on_blufi_data(uint8_t type, uint8_t subtype,
   if (type == BLUFI_TYPE_CTRL) {
     switch (subtype) {
       case BLUFI_CTRL_GET_VERSION: {
-        const uint8_t ver[4] = {0x00, 0x01, 0x00, 0x00};  // major/minor
+        // esp blufi replies exactly 2 bytes: [major, minor] (BTC_BLUFI_GREAT_VER=0x01,
+        // BTC_BLUFI_SUB_VER=0x03). A longer/shorter payload makes the app reject it
+        // ("receive device version error: 103").
+        const uint8_t ver[2] = {0x01, 0x03};
         blufi_send(BLUFI_TYPE_DATA, BLUFI_DATA_REPLY_VERSION, ver, sizeof(ver));
         break;
       }
