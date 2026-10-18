@@ -29,12 +29,12 @@ static blufi_data_cb_t g_cb;
 static void *g_user;
 static bool g_adv_running;
 
-static K_SEM_DEFINE(bt_ready, 0, 1);
+static K_SEM_DEFINE(bt_enabled_sem, 0, 1);
 
 static void bt_ready(int err)
 {
 	if (err == 0) {
-		k_sem_give(&bt_ready);
+		k_sem_give(&bt_enabled_sem);
 	} else {
 		LOG_ERR("bt enable failed (%d)", err);
 	}
@@ -136,7 +136,7 @@ int blufi_start(void)
 		return err;
 	}
 	if (err != -EALREADY) {
-		k_sem_take(&bt_ready, K_SECONDS(10));
+		k_sem_take(&bt_enabled_sem, K_SECONDS(10));
 	}
 	adv_start();
 	return 0;

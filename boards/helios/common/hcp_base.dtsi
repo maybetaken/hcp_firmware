@@ -80,6 +80,12 @@
 	status = "okay";
 };
 
+/* ESP32 Bluetooth controller (HCI) — needed for BLE/BluFi. Disabled by default
+ * in the SoC dtsi; the stock devkitc enables it the same way. */
+&esp32_bt_hci {
+	status = "okay";
+};
+
 /* Console via native USB-Serial-JTAG (CDC-ACM) -> /dev/cu.usbmodem* on host. */
 &usb_serial {
 	status = "okay";
