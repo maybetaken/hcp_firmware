@@ -1,0 +1,49 @@
+/*
+ * ESP32-C5 specific: optional WS2812 binding for the hcp_c5 board (hpcore).
+ * Applied via: build.sh hcp_c5/esp32c5/hpcore --led
+ * Strip data = SPI2 MOSI -> GPIO8 (CONFIRM your c5 board's RGB data pin).
+ * SCLK -> GPIO6 (SPI clock only; not wired to the strip).
+ */
+
+#include <zephyr/dt-bindings/led/led.h>
+#include <zephyr/dt-bindings/pinctrl/esp32c5-pinctrl.h>
+
+/ {
+	aliases {
+		hcp-led-strip = &led_strip;
+	};
+};
+
+&pinctrl {
+	spi2_default: spi2_default {
+		group1 {
+			pinmux = <SPIM2_SCLK_GPIO6>;
+		};
+		group2 {
+			pinmux = <SPIM2_MOSI_GPIO8>;
+			output-high;
+		};
+	};
+};
+
+&spi2 {
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+	pinctrl-0 = <&spi2_default>;
+	pinctrl-names = "default";
+
+	led_strip: ws2812@0 {
+		compatible = "worldsemi,ws2812-spi";
+		reg = <0>;
+		spi-max-frequency = <3200000>;
+		chain-length = <1>;
+
+		spi-one-frame = <0x70>;
+		spi-zero-frame = <0x40>;
+
+		color-mapping = <LED_COLOR_ID_GREEN
+				 LED_COLOR_ID_RED
+				 LED_COLOR_ID_BLUE>;
+	};
+};
