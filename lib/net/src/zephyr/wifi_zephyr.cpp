@@ -122,6 +122,11 @@ bool Scan(ScanCallback cb, void* user) {
   g.scan_user_cb = cb;
   g.scan_user = user;
   struct wifi_scan_params params = {};
+  // The ESP32 Wi-Fi driver forwards scan_type verbatim to esp_wifi, whose values are
+  // 0=WIFI_FAST_SCAN (stops early, few APs) / 1=WIFI_ALL_CHANNEL_SCAN. Zephyr names
+  // these ACTIVE(0)/PASSIVE(1). Pick the second so esp does an all-channel scan ->
+  // complete AP list for the BluFi wifi list.
+  params.scan_type = WIFI_SCAN_TYPE_PASSIVE;
   int ret = net_mgmt(NET_REQUEST_WIFI_SCAN, g.iface, &params, sizeof(params));
   return ret == 0;
 }
