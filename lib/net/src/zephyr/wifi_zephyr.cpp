@@ -8,12 +8,17 @@
 
 #include "hcp/net/wifi.h"
 
+#include <errno.h>
 #include <string.h>
 
 #include <zephyr/kernel.h>
+#include <zephyr/logging/log.h>
 #include <zephyr/net/net_if.h>
+#include <zephyr/net/net_ip.h>
 #include <zephyr/net/net_mgmt.h>
 #include <zephyr/net/wifi_mgmt.h>
+
+LOG_MODULE_REGISTER(hcp_wifi, CONFIG_LOG_DEFAULT_LEVEL);
 
 namespace hcp {
 namespace net {
@@ -50,9 +55,11 @@ void MgmtHandler(struct net_mgmt_event_callback* cb, uint64_t event,
       break;
     case NET_EVENT_IPV4_DHCP_BOUND:
       g.connected = true;
+      LOG_INF("DHCP bound (IPv4 acquired)");
       Report(WifiEvent::kConnected);
       break;
     default:
+      LOG_DBG("mgmt event 0x%llx", (unsigned long long)event);
       break;
   }
 }
@@ -91,11 +98,17 @@ bool Connect(const WifiCredential& cred) {
   if (cred.psk != nullptr && cred.psk[0] != '\0') {
     param.psk = reinterpret_cast<const uint8_t*>(cred.psk);
     param.psk_length = static_cast<uint8_t>(strlen(cred.psk));
+    param.security = WIFI_SECURITY_TYPE_PSK; /* WPA2-PSK */
+  } else {
+    param.security = WIFI_SECURITY_TYPE_NONE;
   }
   param.timeout = 20;  /* seconds */
 
   Report(WifiEvent::kConnecting);
   int ret = net_mgmt(NET_REQUEST_WIFI_CONNECT, g.iface, &param, sizeof(param));
+  if (ret != 0) {
+    LOG_ERR("WIFI_CONNECT req failed: ret=%d errno=%d", ret, errno);
+  }
   return ret == 0;
 }
 
