@@ -10,6 +10,7 @@ menuconfig HCP_NET
 	select NET_MGMT
 	select NET_MGMT_EVENT
 	select NET_MGMT_EVENT_INFO
+	select NET_L2_WIFI_MGMT
 	select WIFI
 	select DNS_RESOLVER
 	help
