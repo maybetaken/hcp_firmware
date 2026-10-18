@@ -143,12 +143,15 @@ bool Connect(const WifiCredential& cred) {
     param.security = WIFI_SECURITY_TYPE_PSK;
     param.psk = secret;
     param.psk_length = static_cast<uint8_t>(slen);
-#else /* AUTO: give both so the supplicant can negotiate WPA2 or WPA3 */
-    param.security = WIFI_SECURITY_TYPE_WPA_AUTO_PERSONAL;
+#else /* AUTO */
+    /* The ESP32 Wi-Fi supplicant has no WPA-Personal transition security type;
+     * WIFI_SECURITY_TYPE_WPA_AUTO_PERSONAL falls through to "Authentication
+     * method not supported" (-EIO). Use PSK: the driver maps it to a WPA2_PSK
+     * threshold, which also associates with WPA2/WPA3-transition APs. Opt into
+     * SAE explicitly (CONFIG_HCP_NET_SECURITY_SAE) for WPA3-only networks. */
+    param.security = WIFI_SECURITY_TYPE_PSK;
     param.psk = secret;
     param.psk_length = static_cast<uint8_t>(slen);
-    param.sae_password = secret;
-    param.sae_password_length = static_cast<uint8_t>(slen);
 #endif
   } else {
     param.security = WIFI_SECURITY_TYPE_NONE;
