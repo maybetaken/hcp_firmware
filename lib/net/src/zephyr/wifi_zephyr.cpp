@@ -28,7 +28,8 @@ namespace {
 
 struct State {
   struct net_if* iface = nullptr;
-  struct net_mgmt_event_callback mgmt_cb;
+  struct net_mgmt_event_callback wifi_cb;
+  struct net_mgmt_event_callback ipv4_cb;
   WifiCallback cb = nullptr;
   void* user = nullptr;
   volatile bool connected = false;
@@ -41,26 +42,26 @@ void Report(WifiEvent e) {
   }
 }
 
-void MgmtHandler(struct net_mgmt_event_callback* cb, uint64_t event,
+void WifiHandler(struct net_mgmt_event_callback* cb, uint64_t event,
                  struct net_if* iface) {
   ARG_UNUSED(cb);
   ARG_UNUSED(iface);
-  switch (event) {
-    case NET_EVENT_WIFI_CONNECT_RESULT:
-      Report(WifiEvent::kConnecting);
-      break;
-    case NET_EVENT_WIFI_DISCONNECT_RESULT:
-      g.connected = false;
-      Report(WifiEvent::kDisconnected);
-      break;
-    case NET_EVENT_IPV4_ADDR_ADD:
-      g.connected = true;
-      LOG_INF("IPv4 address assigned (DHCP bound)");
-      Report(WifiEvent::kConnected);
-      break;
-    default:
-      LOG_DBG("mgmt event 0x%llx", (unsigned long long)event);
-      break;
+  if (event == NET_EVENT_WIFI_CONNECT_RESULT) {
+    Report(WifiEvent::kConnecting);
+  } else if (event == NET_EVENT_WIFI_DISCONNECT_RESULT) {
+    g.connected = false;
+    Report(WifiEvent::kDisconnected);
+  }
+}
+
+void Ipv4Handler(struct net_mgmt_event_callback* cb, uint64_t event,
+                 struct net_if* iface) {
+  ARG_UNUSED(cb);
+  ARG_UNUSED(iface);
+  if (event == NET_EVENT_IPV4_ADDR_ADD) {
+    g.connected = true;
+    LOG_INF("IPv4 address assigned (DHCP bound)");
+    Report(WifiEvent::kConnected);
   }
 }
 
@@ -80,10 +81,11 @@ bool Init() {
     return false;
   }
   net_mgmt_init_event_callback(
-      &g.mgmt_cb, MgmtHandler,
-      NET_EVENT_WIFI_CONNECT_RESULT | NET_EVENT_WIFI_DISCONNECT_RESULT |
-          NET_EVENT_IPV4_ADDR_ADD);
-  net_mgmt_add_event_callback(&g.mgmt_cb);
+      &g.wifi_cb, WifiHandler,
+      NET_EVENT_WIFI_CONNECT_RESULT | NET_EVENT_WIFI_DISCONNECT_RESULT);
+  net_mgmt_add_event_callback(&g.wifi_cb);
+  net_mgmt_init_event_callback(&g.ipv4_cb, Ipv4Handler, NET_EVENT_IPV4_ADDR_ADD);
+  net_mgmt_add_event_callback(&g.ipv4_cb);
   return true;
 }
 
