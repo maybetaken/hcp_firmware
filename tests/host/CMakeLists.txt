@@ -72,14 +72,15 @@ target_include_directories(test_led PRIVATE ${D}/include)
 target_link_libraries(test_led PRIVATE GTest::gtest_main)
 add_test(NAME test_led COMMAND test_led)
 
-# ---- hcp::modbus (nanoMODBUS over posix serial) ----
+# ---- hcp::modbus (nanoMODBUS module over posix serial) ----
 set(M ${HCP_ROOT}/lib/modbus)
+set(NM ${HCP_ROOT}/modules/lib/nanomodbus)
 add_executable(test_modbus
-  ${M}/vendor/nanomodbus/nanomodbus.c
+  ${NM}/nanomodbus.c
   ${M}/src/master.cpp
   ${HCP_ROOT}/lib/transport/serial/src/posix/serial_posix.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_modbus.cpp)
 target_include_directories(test_modbus PRIVATE
-  ${M}/include ${M}/vendor/nanomodbus ${HCP_ROOT}/lib/transport/serial/include)
+  ${M}/include ${NM} ${HCP_ROOT}/lib/transport/serial/include)
 target_link_libraries(test_modbus PRIVATE GTest::gtest_main pthread)
 add_test(NAME test_modbus COMMAND test_modbus)

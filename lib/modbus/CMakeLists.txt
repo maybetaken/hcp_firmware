@@ -1,9 +1,7 @@
 # hcp::modbus module — Zephyr build integration.
-# Vendored nanoMODBUS (C) + thin C++ master over hcp::serial::Port.
+# Thin C++ master over hcp::serial::Port. The Modbus protocol comes from the
+# nanoMODBUS Zephyr module (modules/lib/nanomodbus), not vendored here.
 zephyr_include_directories(include)
-zephyr_include_directories(vendor/nanomodbus)
 if(CONFIG_HCP_MODBUS)
-  target_sources(app PRIVATE
-    vendor/nanomodbus/nanomodbus.c
-    src/master.cpp)
+  target_sources(app PRIVATE src/master.cpp)
 endif()
