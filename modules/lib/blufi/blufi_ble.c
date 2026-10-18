@@ -86,16 +86,8 @@ BT_GATT_SERVICE_DEFINE(
 
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
-	/* BluFi 128-bit service UUID (LSB-first), as esp_blufi advertises it:
-	 * 0000FFFF-0000-1000-8000-00FB349B5FFF */
-	BT_DATA_BYTES(BT_DATA_UUID128_ALL,
-		      0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80,
-		      0x00, 0x10, 0x00, 0x00, 0xff, 0xff, 0x00, 0x00),
-};
-
-static const struct bt_data sd[] = {
-	BT_DATA(BT_DATA_NAME_COMPLETE, CONFIG_BT_DEVICE_NAME,
-		sizeof(CONFIG_BT_DEVICE_NAME) - 1),
+	/* 16-bit service UUID, matching the GATT primary service (0xFFFF). */
+	BT_DATA_BYTES(BT_DATA_UUID16_ALL, BT_UUID_16_ENCODE(0xFFFF)),
 };
 
 static void adv_start(void)
@@ -103,7 +95,7 @@ static void adv_start(void)
 	struct bt_le_adv_param param = BT_LE_ADV_PARAM_INIT(
 		BT_LE_ADV_OPT_CONN, BT_GAP_ADV_FAST_INT_MIN_2,
 		BT_GAP_ADV_FAST_INT_MAX_2, NULL);
-	int err = bt_le_adv_start(&param, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
+	int err = bt_le_adv_start(&param, ad, ARRAY_SIZE(ad), NULL, 0);
 	g_adv_running = (err == 0);
 	if (err) {
 		LOG_ERR("adv start failed (%d)", err);
