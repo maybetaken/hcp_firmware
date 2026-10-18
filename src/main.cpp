@@ -22,6 +22,7 @@
 #include "hcp/net/wifi.h"
 #endif
 #ifdef CONFIG_BLUFI
+#include <zephyr/kernel.h>
 extern "C" {
 #include "blufi/blufi.h"
 }
@@ -185,6 +186,25 @@ static void on_wifi_for_blufi(hcp::net::WifiEvent e, void*) {
   }
 }
 
+// Provisioning connect runs on the system workqueue (NOT the BT RX thread:
+// net_mgmt WIFI_CONNECT blocks up to `timeout`). It forcibly Disconnects first
+// so re-provisioning works — the ESP32 driver returns -EALREADY whenever its
+// state is already CONNECTING/CONNECTED, and IsConnected() (IP-based) can't see
+// a lingering CONNECTING state. Final SUCCESS is reported via on_wifi_for_blufi.
+static struct k_work g_prov_work;
+static void prov_work_fn(struct k_work *work) {
+  ARG_UNUSED(work);
+  hcp::net::wifi::Disconnect();
+  k_sleep(K_MSEC(300));
+  hcp::net::WifiCredential c{g_ssid, g_pass[0] ? g_pass : nullptr};
+  HCP_LOGI(hcp::log::kDomainWifi, "blufi: (re)connecting to \"%s\"", g_ssid);
+  bool ok = hcp::net::wifi::Connect(c);
+  if (!ok && !hcp::net::wifi::IsConnected()) {
+    HCP_LOGW(hcp::log::kDomainWifi, "blufi: connect failed, report FAIL");
+    blufi_report_wifi_state(BLUFI_STA_CONN_FAIL);
+  }
+}
+
 // Accumulate a Wi-Fi scan into a BluFi WIFI_LIST payload.
 static uint8_t g_wlist[512];
 static uint16_t g_wlist_len;
@@ -226,9 +246,8 @@ extern "C" void on_blufi_data(uint8_t type, uint8_t subtype,
         break;
       case BLUFI_CTRL_CONN_TO_AP: {
         HCP_LOGI(hcp::log::kDomainWifi, "blufi: connect to \"%s\"", g_ssid);
-        hcp::net::WifiCredential c{g_ssid, g_pass[0] ? g_pass : nullptr};
         blufi_report_wifi_state(BLUFI_STA_CONNECTING);
-        hcp::net::wifi::Connect(c);
+        k_work_submit(&g_prov_work);  // connect off the BT RX thread
         break;
       }
       default:
@@ -309,6 +328,7 @@ int main(void) {
   hcp::log::SetLevel(hcp::log::kDomainWifi, hcp::log::kLevelDebug);
   hcp::net::wifi::SetCallback(on_wifi_for_blufi, nullptr);
   hcp::net::wifi::Init();
+  k_work_init(&g_prov_work, prov_work_fn);
   blufi_set_callback(on_blufi_data, nullptr);
   if (blufi_start() == 0) {
     HCP_LOGI(hcp::log::kDomainWifi, "blufi advertising; waiting for phone app");
