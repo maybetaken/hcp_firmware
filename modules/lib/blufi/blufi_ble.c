@@ -11,7 +11,9 @@
 #include <string.h>
 
 #include <zephyr/logging/log.h>
+#include <zephyr/random/random.h>
 #include <zephyr/bluetooth/bluetooth.h>
+#include <zephyr/bluetooth/addr.h>
 #include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/gatt.h>
 #include <zephyr/bluetooth/uuid.h>
@@ -33,6 +35,11 @@ LOG_MODULE_REGISTER(blufi, CONFIG_LOG_DEFAULT_LEVEL);
 static blufi_data_cb_t g_cb;
 static void *g_user;
 static bool g_adv_running;
+/* Local identity index used for advertising. Set to a fresh random-static
+ * identity at start so the phone treats each power-up as a new device and
+ * (re)runs the BluFi negotiation instead of trusting a cached "no-encryption"
+ * entry keyed on a fixed public address. */
+static uint8_t g_adv_id = BT_ID_DEFAULT;
 /* Deferred (re)start of advertising after a disconnect, with bounded retries
  * because bt_le_adv_start can transiently fail with -ENOMEM during teardown. */
 static struct k_work_delayable adv_restart_work;
@@ -204,6 +211,7 @@ static void adv_start(void)
 	struct bt_le_adv_param param = BT_LE_ADV_PARAM_INIT(
 		BT_LE_ADV_OPT_CONN, BT_GAP_ADV_FAST_INT_MIN_2,
 		BT_GAP_ADV_FAST_INT_MAX_2, NULL);
+	param.id = g_adv_id;
 	int err = bt_le_adv_start(&param, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
 	g_adv_running = (err == 0);
 	if (err) {
@@ -296,6 +304,20 @@ int blufi_start(void)
 		k_sem_take(&bt_enabled_sem, K_SECONDS(10));
 	}
 	bt_set_name(BLUFI_ADV_NAME);
+	/* Advertise from a fresh random-static identity so the app negotiates. */
+	{
+		bt_addr_le_t raddr;
+		sys_csrand_get(raddr.a.val, sizeof(raddr.a.val));
+		raddr.a.val[5] |= 0xC0; /* random static: top 2 bits = 11 */
+		raddr.type = BT_ADDR_LE_RANDOM;
+		int id = bt_id_create(&raddr, NULL);
+		if (id >= 0) {
+			g_adv_id = (uint8_t)id;
+			LOG_INF("blufi: advertising from random identity %d", id);
+		} else {
+			LOG_WRN("blufi: bt_id_create failed (%d), using default", id);
+		}
+	}
 	/* Enumerate the DB through the SAME path ATT discovery uses
 	 * (foreach_attr_type covers static + dynamic services). Our BluFi
 	 * PRIMARY SERVICE should appear here with a valid handle. */
