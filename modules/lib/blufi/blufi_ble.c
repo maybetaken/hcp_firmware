@@ -47,6 +47,14 @@ static uint8_t g_send_seq;
 static uint8_t g_sec_mode;
 /* Expected inbound frame seq (esp validates strictly); reset per connection. */
 static uint8_t g_recv_seq;
+/* Inbound fragment reassembly (esp blufi_env.aggr_buf): large frames (the DH
+ * negotiate payload) arrive FC_FRAG-chunked, each chunk carrying a 2-byte
+ * total_len prefix. Accumulate until the final (non-FRAG) chunk, then dispatch. */
+#define BLUFI_FRAG_MAX 1024
+static uint8_t g_frag_buf[BLUFI_FRAG_MAX];
+static uint16_t g_frag_total;
+static uint16_t g_frag_off;
+static uint8_t g_frag_type;
 
 static K_SEM_DEFINE(bt_enabled_sem, 0, 1);
 
@@ -56,6 +64,30 @@ static void bt_ready(int err)
 		k_sem_give(&bt_enabled_sem);
 	} else {
 		LOG_ERR("bt enable failed (%d)", err);
+	}
+}
+
+/* Handle one fully-assembled (post-reassembly) BluFi frame. */
+static void handle_decoded(uint8_t type, uint8_t sub, const uint8_t *data,
+			   uint16_t len)
+{
+	if (type == BLUFI_TYPE_CTRL && sub == BLUFI_CTRL_SET_SEC_MODE && len >= 1) {
+		g_sec_mode = data[0];
+		LOG_INF("blufi: set sec_mode=0x%02x", g_sec_mode);
+	}
+#if defined(CONFIG_BLUFI_SECURITY)
+	/* Key negotiation handled at the wire layer: run DH, reply device pubkey. */
+	if (type == BLUFI_TYPE_DATA && sub == BLUFI_DATA_NEG) {
+		const uint8_t *out = NULL;
+		uint16_t out_len = 0;
+		if (blufi_negotiate(data, len, &out, &out_len) == 0 && out_len > 0) {
+			blufi_send(BLUFI_TYPE_DATA, BLUFI_DATA_NEG, out, out_len);
+		}
+		return;
+	}
+#endif
+	if (g_cb) {
+		g_cb(type, sub, data, len, g_user);
 	}
 }
 
@@ -104,34 +136,50 @@ static ssize_t p2e_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 	}
 
 	struct blufi_frame f;
-	if (blufi_frame_parse(b, len, &f) == 0) {
-		LOG_INF("rx frame: %s subtype=0x%02x seq=%u len=%u",
-			type == BLUFI_TYPE_CTRL ? "CTRL" : "DATA", sub, seq, f.len);
-		if (type == BLUFI_TYPE_CTRL && sub == BLUFI_CTRL_SET_SEC_MODE &&
-		    f.len >= 1) {
-			g_sec_mode = f.data[0];
-			LOG_INF("blufi: set sec_mode=0x%02x", g_sec_mode);
-		}
-#if defined(CONFIG_BLUFI_SECURITY)
-		/* Key negotiation is handled at the wire layer (not surfaced to the
-		 * app): run DH and reply with the device DH public key (plaintext). */
-		if (type == BLUFI_TYPE_DATA && sub == BLUFI_DATA_NEG) {
-			const uint8_t *out = NULL;
-			uint16_t out_len = 0;
-			if (blufi_negotiate(f.data, f.len, &out, &out_len) == 0 &&
-			    out_len > 0) {
-				blufi_send(BLUFI_TYPE_DATA, BLUFI_DATA_NEG, out,
-					   out_len);
-			}
-			return len;
-		}
-#endif
-		if (g_cb) {
-			g_cb(type, sub, f.data, f.len, g_user);
-		}
-	} else {
+	if (blufi_frame_parse(b, len, &f) != 0) {
 		LOG_WRN("rx %u bytes (not a complete/valid frame yet)", len);
+		return len;
 	}
+	LOG_INF("rx frame: %s subtype=0x%02x seq=%u len=%u%s",
+		type == BLUFI_TYPE_CTRL ? "CTRL" : "DATA", sub, seq, f.len,
+		(f.fc & BLUFI_FC_FRAG) ? " FRAG" : "");
+
+	/* Fragment reassembly (esp aggr_buf): FC_FRAG chunks each carry a 2-byte
+	 * total_len prefix; the final chunk is not flagged. Dispatch once whole. */
+	if (f.fc & BLUFI_FC_FRAG) {
+		if (g_frag_off == 0) {
+			if (f.len < 2) {
+				return len;
+			}
+			g_frag_total = (uint16_t)(f.data[0] | (f.data[1] << 8));
+			g_frag_type = f.type_subtype;
+			if (g_frag_total > sizeof(g_frag_buf)) {
+				LOG_WRN("frag total %u too big", g_frag_total);
+				return len;
+			}
+		}
+		if (g_frag_off + (uint16_t)(f.len - 2) <= g_frag_total) {
+			memcpy(g_frag_buf + g_frag_off, f.data + 2, f.len - 2);
+			g_frag_off += f.len - 2;
+		} else {
+			g_frag_off = 0;
+		}
+		return len;
+	}
+	if (g_frag_off > 0) {
+		if (g_frag_off + f.len <= g_frag_total) {
+			memcpy(g_frag_buf + g_frag_off, f.data, f.len);
+			g_frag_off += f.len;
+		}
+		if (g_frag_off == g_frag_total) {
+			handle_decoded(BLUFI_GET_TYPE(g_frag_type),
+				       BLUFI_GET_SUBTYPE(g_frag_type), g_frag_buf,
+				       g_frag_total);
+		}
+		g_frag_off = 0;
+		return len;
+	}
+	handle_decoded(type, sub, f.data, f.len);
 	return len;
 }
 
@@ -217,6 +265,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	LOG_INF("phone connected");
 	g_send_seq = 0;
 	g_recv_seq = 0;
+	g_frag_off = 0;
 #if defined(CONFIG_BLUFI_SECURITY)
 	/* Fresh DH/PSK state per connection. */
 	blufi_security_deinit();
