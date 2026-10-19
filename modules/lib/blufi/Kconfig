@@ -9,3 +9,16 @@ menuconfig BLUFI
 	help
 	  Reusable BluFi protocol implementation (frame codec now; GATT + security
 	  handshake + provisioning flow added by hcp::blufi on Zephyr BLE).
+
+if BLUFI
+
+config BLUFI_SECURITY
+	bool "BluFi security handshake (DH + AES-CFB128 + MD5)"
+	default n
+	help
+	  Enables the ESP-compatible BluFi key negotiation (Diffie-Hellman) and
+	  AES-128-CFB128 payload encryption used when the phone app selects
+	  encrypted provisioning. Uses a vendored mbedtls-2.4 DHM/bignum plus
+	  self-contained MD5/AES (TF-PSA-Crypto 1.0 removed those legacy APIs).
+
+endif
