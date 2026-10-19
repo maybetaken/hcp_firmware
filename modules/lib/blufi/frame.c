@@ -177,8 +177,8 @@ int blufi_next_fragment(const uint8_t *in, uint16_t in_len, uint16_t *off,
 	if (frag_cap < 3 || frag_cap > BLUFI_MAX_DATA_LEN) {
 		return -EINVAL;
 	}
-	if (in_len <= BLUFI_MAX_DATA_LEN) {
-		/* Whole payload in one frame. */
+	if (in_len <= frag_cap) {
+		/* Whole payload fits one frame (respecting the caller's MTU-based cap). */
 		memcpy(out, in + *off, remain);
 		*out_len = remain;
 		*is_frag = false;

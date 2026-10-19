@@ -40,6 +40,8 @@ static bool g_adv_running;
  * (re)runs the BluFi negotiation instead of trusting a cached "no-encryption"
  * entry keyed on a fixed public address. */
 static uint8_t g_adv_id = BT_ID_DEFAULT;
+/* Current connection (for MTU-based outbound fragmentation like esp's frag_size). */
+static struct bt_conn *g_conn;
 /* Deferred (re)start of advertising after a disconnect, with bounded retries
  * because bt_le_adv_start can transiently fail with -ENOMEM during teardown. */
 static struct k_work_delayable adv_restart_work;
@@ -244,6 +246,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	 * disconnect re-advertises. */
 	g_adv_running = false;
 	LOG_INF("phone connected");
+	g_conn = bt_conn_ref(conn);
 	g_send_seq = 0;
 	g_recv_seq = 0;
 	blufi_reasm_reset(&g_reasm);
@@ -257,6 +260,10 @@ static void connected(struct bt_conn *conn, uint8_t err)
 static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
 	LOG_INF("phone disconnected (%u), re-advertising", reason);
+	if (g_conn) {
+		bt_conn_unref(g_conn);
+		g_conn = NULL;
+	}
 	g_sec_mode = 0;
 	g_recv_seq = 0;
 #if defined(CONFIG_BLUFI_SECURITY)
@@ -339,10 +346,21 @@ int blufi_send(uint8_t type, uint8_t subtype, const uint8_t *data, uint16_t len)
 	int ret = 0;
 	int r;
 
+	/* Outbound fragmentation to the negotiated ATT MTU (like esp frag_size):
+	 * a notification carries at most MTU-3 bytes; frame = 4 hdr + data region,
+	 * so the data region (incl a fragment's 2-byte length prefix) caps at MTU-7.
+	 * Without this a 128-byte DH public-key reply is one big notify the phone
+	 * (small MTU) can't receive -> it re-negotiates and fails. */
+	uint16_t mtu = g_conn ? bt_gatt_get_mtu(g_conn) : 23;
+	uint16_t frag_cap = (mtu >= 10) ? (uint16_t)(mtu - 7) : 3;
+	if (frag_cap > BLUFI_MAX_DATA_LEN) {
+		frag_cap = BLUFI_MAX_DATA_LEN;
+	}
+
 	do {
 		uint16_t blen;
 		bool is_frag;
-		r = blufi_next_fragment(data, len, &off, BLUFI_MAX_DATA_LEN, body,
+		r = blufi_next_fragment(data, len, &off, frag_cap, body,
 				  &blen, &is_frag);
 		if (r < 0) {
 			return r;
