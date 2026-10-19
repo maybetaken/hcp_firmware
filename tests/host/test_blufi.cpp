@@ -187,3 +187,80 @@ TEST(BlufiFrag, EncodeReassembleRoundtrip) {
   } while (fr == 0);
   EXPECT_TRUE(got_complete);
 }
+
+// ---- full DH + AES-CFB interop: simulate the phone against blufi_security ----
+TEST(BlufiHandshake, DhThenAesCfbInterop) {
+  ASSERT_EQ(blufi_security_init(), 0);
+
+  // Phone group: P = 2^31-1 (prime), g = 2, private x, public X = g^x mod P.
+  mbedtls_mpi P, G, X, x, Y, shared;
+  mbedtls_mpi_init(&P); mbedtls_mpi_init(&G); mbedtls_mpi_init(&X);
+  mbedtls_mpi_init(&x);  mbedtls_mpi_init(&Y); mbedtls_mpi_init(&shared);
+  ASSERT_EQ(mbedtls_mpi_lset(&P, 0x7FFFFFFF), 0);
+  ASSERT_EQ(mbedtls_mpi_lset(&G, 2), 0);
+  ASSERT_EQ(mbedtls_mpi_lset(&x, 0x12345678), 0);
+  ASSERT_EQ(mbedtls_mpi_exp_mod(&X, &G, &x, &P, nullptr), 0);
+
+  // dh_param = [2B len][be] for P, G, then the peer public value (GY=X).
+  auto bignum = [](const mbedtls_mpi *m) {
+    size_t n = mbedtls_mpi_size(m);
+    uint8_t buf[64];
+    mbedtls_mpi_write_binary(m, buf, n);
+    std::vector<uint8_t> r;
+    r.push_back((uint8_t)(n >> 8));
+    r.push_back((uint8_t)(n & 0xff));
+    r.insert(r.end(), buf, buf + n);
+    return r;
+  };
+  std::vector<uint8_t> der;
+  for (auto v : {bignum(&P), bignum(&G), bignum(&X)})
+    der.insert(der.end(), v.begin(), v.end());
+
+  uint8_t lenf[3] = {SEC_TYPE_DH_PARAM_LEN, (uint8_t)(der.size() >> 8),
+                     (uint8_t)(der.size() & 0xff)};
+  const uint8_t *tmp; uint16_t tl;
+  ASSERT_EQ(blufi_negotiate(lenf, sizeof(lenf), &tmp, &tl), 0);
+
+  std::vector<uint8_t> f; f.push_back(SEC_TYPE_DH_PARAM_DATA);
+  f.insert(f.end(), der.begin(), der.end());
+  const uint8_t *out = nullptr; uint16_t ylen = 0;
+  ASSERT_EQ(blufi_negotiate(f.data(), (uint16_t)f.size(), &out, &ylen), 0);
+  ASSERT_GT(ylen, 0);
+  ASSERT_LE(ylen, sizeof(uint8_t) * 64);
+  uint8_t ykey[64]; memcpy(ykey, out, ylen);
+
+  // Phone computes shared = devicePub^x mod P, psk = MD5(shared_be).
+  // Must match device calc_secret, which writes mbedtls_mpi_size(K) bytes (no
+  // leading zeros) and MD5s that length.
+  ASSERT_EQ(mbedtls_mpi_read_binary(&Y, ykey, ylen), 0);
+  ASSERT_EQ(mbedtls_mpi_exp_mod(&shared, &Y, &x, &P, nullptr), 0);
+  size_t slen = mbedtls_mpi_size(&shared);
+  uint8_t share_be[64];
+  ASSERT_EQ(mbedtls_mpi_write_binary(&shared, share_be, slen), 0);
+  uint8_t psk[16];
+  blufimbed_md5(share_be, slen, psk);
+
+  // Phone AES-128-CFB128-encrypts a password (iv=0, iv[0]=seq); device decrypts.
+  const uint8_t seq = 42;
+  const char *plain = "secret-password-1234";
+  size_t plen = strlen(plain);
+  uint8_t cipher[32];
+  uint8_t iv[16] = {0}; iv[0] = seq;
+  blufimbed_aes_context a;
+  blufimbed_aes_init(&a);
+  ASSERT_EQ(blufimbed_aes_setkey_enc(&a, psk, 128), 0);
+  size_t off = 0;
+  blufimbed_aes_crypt_cfb128(&a, MBEDTLS_AES_ENCRYPT, plen, &off, iv,
+                              (const uint8_t *)plain, cipher);
+  blufimbed_aes_free(&a);
+  EXPECT_NE(memcmp(cipher, plain, plen), 0);
+
+  uint8_t recovered[32];
+  memcpy(recovered, cipher, plen);
+  ASSERT_EQ(blufi_aes_decrypt(seq, recovered, (int)plen), (int)plen);
+  EXPECT_EQ(memcmp(recovered, plain, plen), 0);
+
+  mbedtls_mpi_free(&P); mbedtls_mpi_free(&G); mbedtls_mpi_free(&X);
+  mbedtls_mpi_free(&x);  mbedtls_mpi_free(&Y); mbedtls_mpi_free(&shared);
+  blufi_security_deinit();
+}

@@ -146,9 +146,12 @@ int blufi_negotiate(const uint8_t *data, uint16_t len, const uint8_t **out,
 			return -1;
 		}
 
+		/* make_public requires 1 <= olen <= ctx->len (group size). Pass dhm_len
+		 * (not the max buffer size) so we don't trip BAD_INPUT_DATA for
+		 * groups smaller than DH_SELF_PUB_KEY_LEN (e.g. 1024-bit => len 128). */
 		ret = mbedtls_dhm_make_public(&sec->dhm, dhm_len,
 					      sec->self_public_key,
-					      DH_SELF_PUB_KEY_LEN, myrand, NULL);
+					      (size_t)dhm_len, myrand, NULL);
 		if (ret) {
 			LOG_ERR("blufi sec: make_public failed %d", ret);
 			return -1;
