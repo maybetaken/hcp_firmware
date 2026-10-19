@@ -10,11 +10,12 @@ if(CONFIG_BLUFI)
     # config so these don't pick up the app-wide TF-PSA-Crypto config. Third-party sources
     # are compiled with warnings suppressed (they predate Zephyr's -Werror flags).
     set(_blufi_compat "-include ${CMAKE_CURRENT_SOURCE_DIR}/sec/blufi_dhm_compat.h")
-    set_source_files_properties(sec/vendor/dhm.c sec/vendor/bignum.c
-                                PROPERTIES COMPILE_FLAGS "-w ${_blufi_compat}")
+    set_source_files_properties(sec/vendor/dhm.c sec/vendor/bignum.c sec/vendor/aes.c
+                                sec/vendor/md5.c PROPERTIES COMPILE_FLAGS "-w ${_blufi_compat}")
     set_source_files_properties(sec/blufi_security.c
                                 PROPERTIES COMPILE_FLAGS "${_blufi_compat}")
-    zephyr_library_sources(sec/blufi_security.c sec/vendor/dhm.c sec/vendor/bignum.c)
+    zephyr_library_sources(sec/blufi_security.c sec/vendor/dhm.c sec/vendor/bignum.c
+                           sec/vendor/aes.c sec/vendor/md5.c)
     zephyr_library_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/sec ${CMAKE_CURRENT_SOURCE_DIR}/sec/vendor)
   endif()
 endif()

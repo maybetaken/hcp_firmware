@@ -17,6 +17,7 @@
 #include <zephyr/bluetooth/uuid.h>
 
 #include "blufi/blufi.h"
+#include "blufi/blufi_security.h"
 
 LOG_MODULE_REGISTER(blufi, CONFIG_LOG_DEFAULT_LEVEL);
 
@@ -82,9 +83,19 @@ static ssize_t p2e_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 	g_recv_seq = (uint8_t)(seq + 1);
 
 	if (fc & BLUFI_FC_ENC) {
-		/* DH/AES-CFB128 unavailable in this toolchain (mbedtls dhm.c absent). */
-		LOG_WRN("rx encrypted frame but no decrypt support; ignoring");
+		/* Non-NEG encrypted payload: AES-128-CFB128 decrypt in place before
+		 * checksum verify (sender: checksum-then-encrypt). */
+#if defined(CONFIG_BLUFI_SECURITY)
+		if (!(type == BLUFI_TYPE_DATA && sub == BLUFI_DATA_NEG) &&
+		    blufi_aes_decrypt(seq, (uint8_t *)b + BLUFI_HDR_LEN,
+				      b[3]) < 0) {
+			LOG_WRN("rx decrypt failed, dropping");
+			return len;
+		}
+#else
+		LOG_WRN("rx encrypted frame but security disabled; ignoring");
 		return len;
+#endif
 	}
 	if ((fc & BLUFI_FC_CHECK) &&
 	    blufi_frame_verify_checksum(b, len) != 0) {
@@ -101,6 +112,20 @@ static ssize_t p2e_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 			g_sec_mode = f.data[0];
 			LOG_INF("blufi: set sec_mode=0x%02x", g_sec_mode);
 		}
+#if defined(CONFIG_BLUFI_SECURITY)
+		/* Key negotiation is handled at the wire layer (not surfaced to the
+		 * app): run DH and reply with the device DH public key (plaintext). */
+		if (type == BLUFI_TYPE_DATA && sub == BLUFI_DATA_NEG) {
+			const uint8_t *out = NULL;
+			uint16_t out_len = 0;
+			if (blufi_negotiate(f.data, f.len, &out, &out_len) == 0 &&
+			    out_len > 0) {
+				blufi_send(BLUFI_TYPE_DATA, BLUFI_DATA_NEG, out,
+					   out_len);
+			}
+			return len;
+		}
+#endif
 		if (g_cb) {
 			g_cb(type, sub, f.data, f.len, g_user);
 		}
@@ -192,6 +217,11 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	LOG_INF("phone connected");
 	g_send_seq = 0;
 	g_recv_seq = 0;
+#if defined(CONFIG_BLUFI_SECURITY)
+	/* Fresh DH/PSK state per connection. */
+	blufi_security_deinit();
+	blufi_security_init();
+#endif
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
@@ -199,6 +229,9 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	LOG_INF("phone disconnected (%u), re-advertising", reason);
 	g_sec_mode = 0;
 	g_recv_seq = 0;
+#if defined(CONFIG_BLUFI_SECURITY)
+	blufi_security_deinit();
+#endif
 	/* Do NOT call bt_le_adv_start() synchronously here: the link/adv buffers
 	 * are still being torn down and it fails with -ENOMEM. Defer to the
 	 * system workqueue with a small delay and retry until it takes. */
@@ -279,6 +312,19 @@ int blufi_send(uint8_t type, uint8_t subtype, const uint8_t *data, uint16_t len)
 		}
 		n = t;
 	}
+#if defined(CONFIG_BLUFI_SECURITY)
+	/* Encrypt the payload when sec_mode asks (mirrors esp: checksum-then-encrypt,
+	 * only the payload is encrypted; appended checksum stays plaintext). */
+	if (type == BLUFI_TYPE_DATA && subtype != BLUFI_DATA_NEG &&
+	    subtype != BLUFI_DATA_ERROR_INFO &&
+	    (g_sec_mode & BLUFI_DATA_SEC_MODE_ENC_MASK)) {
+		if (blufi_aes_encrypt(used_seq, e2p_val + BLUFI_HDR_LEN,
+				      (int)len) < 0) {
+			return -1;
+		}
+		e2p_val[1] |= BLUFI_FC_ENC;
+	}
+#endif
 	e2p_len = n;
 	int ret = bt_gatt_notify(NULL, BLUFI_E2P_ATTR, e2p_val, n);
 	LOG_INF("tx type=%u sub=0x%02x seq=%u len=%u notify_ret=%d",

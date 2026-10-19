@@ -12,5 +12,8 @@
 
 #define MBEDTLS_BIGNUM_C
 #define MBEDTLS_DHM_C
+#define MBEDTLS_AES_C
+#define MBEDTLS_MD5_C
+#define MBEDTLS_CIPHER_MODE_CFB
 
 #endif /* BLUFI_DHM_CONFIG_H_ */
