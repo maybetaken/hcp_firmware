@@ -9,6 +9,9 @@
 
 extern "C" {
 #include "blufi/frame.h"
+#include "blufi/blufi_security.h"
+#include "mbedtls/dhm.h"
+#include "mbedtls/bignum.h"
 #include "mbedtls/aes.h"
 #include "mbedtls/md5.h"
 }

@@ -14,16 +14,36 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef __ZEPHYR__
 #include <zephyr/random/random.h>
 #include <zephyr/sys/util.h>
 #include <zephyr/logging/log.h>
+#else
+/* Host (unit-test) build: stub the few Zephyr facilities used here. */
+#include <stdio.h>
+#ifndef ARG_UNUSED
+#define ARG_UNUSED(x) (void)(x)
+#endif
+#define LOG_ERR(fmt, ...) printf("E: " fmt "\n", ##__VA_ARGS__)
+#define LOG_INF(fmt, ...) printf("I: " fmt "\n", ##__VA_ARGS__)
+static int sys_csrand_get(void *dst, size_t len)
+{
+	unsigned char *d = (unsigned char *)dst;
+	for (size_t i = 0; i < len; i++) {
+		d[i] = (unsigned char)(rand() & 0xff);
+	}
+	return (int)len;
+}
+#endif
 
 #include "mbedtls/dhm.h"
 #include "mbedtls/bignum.h"
 #include "mbedtls/aes.h"
 #include "mbedtls/md5.h"
 
+#ifdef __ZEPHYR__
 LOG_MODULE_DECLARE(blufi, CONFIG_LOG_DEFAULT_LEVEL);
+#endif
 
 #define DH_SELF_PUB_KEY_LEN 256
 #define SHARE_KEY_LEN       256

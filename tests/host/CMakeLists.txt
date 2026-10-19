@@ -88,10 +88,14 @@ add_test(NAME test_modbus COMMAND test_modbus)
 # ---- BluFi frame codec + vendored crypto (module) ----
 set(BF ${HCP_ROOT}/modules/lib/blufi)
 set_source_files_properties(${BF}/sec/vendor/aes.c ${BF}/sec/vendor/md5.c
+                            ${BF}/sec/vendor/dhm.c ${BF}/sec/vendor/bignum.c
                             PROPERTIES COMPILE_FLAGS "-w")
-add_executable(test_blufi ${BF}/frame.c ${BF}/sec/vendor/aes.c
-              ${BF}/sec/vendor/md5.c ${CMAKE_CURRENT_LIST_DIR}/test_blufi.cpp)
+add_executable(test_blufi ${BF}/frame.c
+              ${BF}/sec/blufi_security.c
+              ${BF}/sec/vendor/dhm.c ${BF}/sec/vendor/bignum.c
+              ${BF}/sec/vendor/aes.c ${BF}/sec/vendor/md5.c
+              ${CMAKE_CURRENT_LIST_DIR}/test_blufi.cpp)
 target_include_directories(test_blufi PRIVATE ${BF}/include ${BF}/sec ${BF}/sec/vendor)
-target_compile_definitions(test_blufi PRIVATE MBEDTLS_CONFIG_FILE="blufi_dhm_config.h")
+target_compile_definitions(test_blufi PRIVATE MBEDTLS_CONFIG_FILE="blufi_dhm_config.h" CONFIG_BLUFI_SECURITY=1)
 target_link_libraries(test_blufi PRIVATE GTest::gtest_main)
 add_test(NAME test_blufi COMMAND test_blufi)
