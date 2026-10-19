@@ -101,3 +101,103 @@ int blufi_frame_verify_checksum(const uint8_t *buf, uint16_t buf_len)
 			   ((uint16_t)buf[BLUFI_HDR_LEN + data_len + 1] << 8);
 	return crc == got ? 0 : -EBADMSG;
 }
+
+void blufi_reasm_reset(blufi_reasm *r)
+{
+	r->total = 0;
+	r->off = 0;
+	r->type = 0;
+}
+
+int blufi_reasm_feed(blufi_reasm *r, uint8_t type_subtype, uint8_t fc,
+		     const uint8_t *data, uint16_t data_len, uint8_t *out_type,
+		     uint8_t **out_data, uint16_t *out_len)
+{
+	if (fc & BLUFI_FC_FRAG) {
+		if (r->off == 0) {
+			if (data_len < 2) {
+				return -EINVAL;
+			}
+			r->total = (uint16_t)(data[0] | (data[1] << 8));
+			r->type = type_subtype;
+			if (r->total > sizeof(r->buf)) {
+				return -EMSGSIZE;
+			}
+		}
+		if (data_len < 2 ||
+		    r->off + (uint16_t)(data_len - 2) > r->total) {
+			r->off = 0;
+			return -EINVAL;
+		}
+		memcpy(r->buf + r->off, data + 2, data_len - 2);
+		r->off += data_len - 2;
+		return 0; /* more fragments expected */
+	}
+
+	if (r->off > 0) {
+		/* Final (unflagged) chunk of a fragmented message. */
+		if (r->off + data_len > r->total) {
+			r->off = 0;
+			return -EINVAL;
+		}
+		memcpy(r->buf + r->off, data, data_len);
+		r->off += data_len;
+		if (out_type) {
+			*out_type = r->type;
+		}
+		if (out_data) {
+			*out_data = r->buf;
+		}
+		if (out_len) {
+			*out_len = r->total;
+		}
+		r->off = 0;
+		return 1; /* assembled */
+	}
+
+	/* Single unfragmented frame. */
+	if (out_type) {
+		*out_type = type_subtype;
+	}
+	if (out_data) {
+		*out_data = (uint8_t *)data;
+	}
+	if (out_len) {
+		*out_len = data_len;
+	}
+	return 1;
+}
+
+int blufi_next_fragment(const uint8_t *in, uint16_t in_len, uint16_t *off,
+			uint16_t frag_cap, uint8_t *out, uint16_t *out_len,
+			bool *is_frag)
+{
+	uint16_t remain = (uint16_t)(in_len - *off);
+
+	if (frag_cap < 3 || frag_cap > BLUFI_MAX_DATA_LEN) {
+		return -EINVAL;
+	}
+	if (in_len <= BLUFI_MAX_DATA_LEN) {
+		/* Whole payload in one frame. */
+		memcpy(out, in + *off, remain);
+		*out_len = remain;
+		*is_frag = false;
+		*off = in_len;
+		return 1;
+	}
+	if (remain > (uint16_t)(frag_cap - 2)) {
+		uint16_t chunk = (uint16_t)(frag_cap - 2);
+		out[0] = (uint8_t)(remain & 0xff);
+		out[1] = (uint8_t)(remain >> 8);
+		memcpy(out + 2, in + *off, chunk);
+		*out_len = (uint16_t)(chunk + 2);
+		*is_frag = true;
+		*off = (uint16_t)(*off + chunk);
+		return 0; /* more */
+	}
+	memcpy(out, in + *off, remain);
+	*out_len = remain;
+	*is_frag = false;
+	*off = in_len;
+	return 1;
+}

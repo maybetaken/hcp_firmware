@@ -48,13 +48,8 @@ static uint8_t g_sec_mode;
 /* Expected inbound frame seq (esp validates strictly); reset per connection. */
 static uint8_t g_recv_seq;
 /* Inbound fragment reassembly (esp blufi_env.aggr_buf): large frames (the DH
- * negotiate payload) arrive FC_FRAG-chunked, each chunk carrying a 2-byte
- * total_len prefix. Accumulate until the final (non-FRAG) chunk, then dispatch. */
-#define BLUFI_FRAG_MAX 1024
-static uint8_t g_frag_buf[BLUFI_FRAG_MAX];
-static uint16_t g_frag_total;
-static uint16_t g_frag_off;
-static uint8_t g_frag_type;
+ * negotiate payload) arrive FC_FRAG-chunked. Pure logic lives in frame.c. */
+static blufi_reasm g_reasm;
 
 static K_SEM_DEFINE(bt_enabled_sem, 0, 1);
 
@@ -144,42 +139,20 @@ static ssize_t p2e_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 		type == BLUFI_TYPE_CTRL ? "CTRL" : "DATA", sub, seq, f.len,
 		(f.fc & BLUFI_FC_FRAG) ? " FRAG" : "");
 
-	/* Fragment reassembly (esp aggr_buf): FC_FRAG chunks each carry a 2-byte
-	 * total_len prefix; the final chunk is not flagged. Dispatch once whole. */
-	if (f.fc & BLUFI_FC_FRAG) {
-		if (g_frag_off == 0) {
-			if (f.len < 2) {
-				return len;
-			}
-			g_frag_total = (uint16_t)(f.data[0] | (f.data[1] << 8));
-			g_frag_type = f.type_subtype;
-			if (g_frag_total > sizeof(g_frag_buf)) {
-				LOG_WRN("frag total %u too big", g_frag_total);
-				return len;
-			}
-		}
-		if (g_frag_off + (uint16_t)(f.len - 2) <= g_frag_total) {
-			memcpy(g_frag_buf + g_frag_off, f.data + 2, f.len - 2);
-			g_frag_off += f.len - 2;
-		} else {
-			g_frag_off = 0;
-		}
+	uint8_t out_type;
+	uint8_t *disp;
+	uint16_t disp_len;
+	int rr = blufi_reasm_feed(&g_reasm, f.type_subtype, f.fc, f.data, f.len,
+				  &out_type, &disp, &disp_len);
+	if (rr == 0) {
+		return len; /* mid-fragment, waiting for more */
+	}
+	if (rr < 0) {
+		LOG_WRN("rx reassembly error %d, dropping", rr);
 		return len;
 	}
-	if (g_frag_off > 0) {
-		if (g_frag_off + f.len <= g_frag_total) {
-			memcpy(g_frag_buf + g_frag_off, f.data, f.len);
-			g_frag_off += f.len;
-		}
-		if (g_frag_off == g_frag_total) {
-			handle_decoded(BLUFI_GET_TYPE(g_frag_type),
-				       BLUFI_GET_SUBTYPE(g_frag_type), g_frag_buf,
-				       g_frag_total);
-		}
-		g_frag_off = 0;
-		return len;
-	}
-	handle_decoded(type, sub, f.data, f.len);
+	handle_decoded(BLUFI_GET_TYPE(out_type), BLUFI_GET_SUBTYPE(out_type), disp,
+		       disp_len);
 	return len;
 }
 
@@ -265,7 +238,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	LOG_INF("phone connected");
 	g_send_seq = 0;
 	g_recv_seq = 0;
-	g_frag_off = 0;
+	blufi_reasm_reset(&g_reasm);
 #if defined(CONFIG_BLUFI_SECURITY)
 	/* Fresh DH/PSK state per connection. */
 	blufi_security_deinit();
@@ -336,52 +309,70 @@ int blufi_start(void)
 
 int blufi_send(uint8_t type, uint8_t subtype, const uint8_t *data, uint16_t len)
 {
-	int n = blufi_frame_build(type, subtype, g_send_seq, data, len, e2p_val,
-				  sizeof(e2p_val));
-	if (n < 0) {
-		return n;
-	}
-	/* esp sets direction esp->phone on every outbound frame. */
-	e2p_val[1] |= BLUFI_FC_DIR_E2P;
-	uint8_t used_seq = g_send_seq;
-	g_send_seq = (uint8_t)(g_send_seq + 1);
+	/* esp btc_blufi_send_encap: a payload larger than one frame is split into
+	 * FC_FRAG chunks (each with a 2-byte "remaining length" prefix), the final
+	 * chunk unflagged. Each frame gets its own seq, checksum, and encryption. */
+	uint16_t off = 0;
+	uint8_t body[BLUFI_MAX_DATA_LEN];
+	int ret = 0;
+	int r;
 
-	/* Append the BluFi checksum only when the negotiated sec_mode asks for it
-	 * (esp masks). Default sec_mode=0 -> no change to the plaintext flow. */
-	bool cksum =
-		(type == BLUFI_TYPE_CTRL &&
-		 (g_sec_mode & BLUFI_CTRL_SEC_MODE_CHECK_MASK)) ||
-		(type == BLUFI_TYPE_DATA && subtype != BLUFI_DATA_NEG &&
-		 subtype != BLUFI_DATA_ERROR_INFO &&
-		 (g_sec_mode & BLUFI_DATA_SEC_MODE_CHECK_MASK));
-	if (cksum) {
-		int t = blufi_frame_append_checksum(e2p_val, n, sizeof(e2p_val));
-		if (t < 0) {
-			return t;
+	do {
+		uint16_t blen;
+		bool is_frag;
+		r = blufi_next_fragment(data, len, &off, BLUFI_MAX_DATA_LEN, body,
+				  &blen, &is_frag);
+		if (r < 0) {
+			return r;
 		}
-		n = t;
-	}
+
+		int n = blufi_frame_build(type, subtype, g_send_seq, body, blen,
+					  e2p_val, sizeof(e2p_val));
+		if (n < 0) {
+			return n;
+		}
+		uint8_t used_seq = g_send_seq;
+		g_send_seq = (uint8_t)(g_send_seq + 1);
+		e2p_val[1] |= BLUFI_FC_DIR_E2P;
+		if (is_frag) {
+			e2p_val[1] |= BLUFI_FC_FRAG;
+		}
+
+		bool cksum =
+			(type == BLUFI_TYPE_CTRL &&
+			 (g_sec_mode & BLUFI_CTRL_SEC_MODE_CHECK_MASK)) ||
+			(type == BLUFI_TYPE_DATA && subtype != BLUFI_DATA_NEG &&
+			 subtype != BLUFI_DATA_ERROR_INFO &&
+			 (g_sec_mode & BLUFI_DATA_SEC_MODE_CHECK_MASK));
+		if (cksum) {
+			int t = blufi_frame_append_checksum(e2p_val, n,
+							    sizeof(e2p_val));
+			if (t < 0) {
+				return t;
+			}
+			n = t;
+		}
 #if defined(CONFIG_BLUFI_SECURITY)
-	/* Encrypt the payload when sec_mode asks (mirrors esp: checksum-then-encrypt,
-	 * only the payload is encrypted; appended checksum stays plaintext). */
-	if (type == BLUFI_TYPE_DATA && subtype != BLUFI_DATA_NEG &&
-	    subtype != BLUFI_DATA_ERROR_INFO &&
-	    (g_sec_mode & BLUFI_DATA_SEC_MODE_ENC_MASK)) {
-		if (blufi_aes_encrypt(used_seq, e2p_val + BLUFI_HDR_LEN,
-				      (int)len) < 0) {
-			return -1;
+		if (type == BLUFI_TYPE_DATA && subtype != BLUFI_DATA_NEG &&
+		    subtype != BLUFI_DATA_ERROR_INFO &&
+		    (g_sec_mode & BLUFI_DATA_SEC_MODE_ENC_MASK)) {
+			if (blufi_aes_encrypt(used_seq, e2p_val + BLUFI_HDR_LEN,
+					      (int)blen) < 0) {
+				return -1;
+			}
+			e2p_val[1] |= BLUFI_FC_ENC;
 		}
-		e2p_val[1] |= BLUFI_FC_ENC;
-	}
 #endif
-	e2p_len = n;
-	int ret = bt_gatt_notify(NULL, BLUFI_E2P_ATTR, e2p_val, n);
-	LOG_INF("tx type=%u sub=0x%02x seq=%u len=%u notify_ret=%d",
-		type, subtype, used_seq, n, ret);
-	LOG_HEXDUMP_INF(e2p_val, n, "blufi tx frame");
-	if (ret) {
-		LOG_WRN("notify failed (%d): phone not subscribed to E2P CCC?", ret);
-	}
+		e2p_len = n;
+		ret = bt_gatt_notify(NULL, BLUFI_E2P_ATTR, e2p_val, n);
+		LOG_INF("tx type=%u sub=0x%02x seq=%u len=%u%s notify_ret=%d", type,
+			subtype, used_seq, n, is_frag ? " FRAG" : "", ret);
+		if (ret) {
+			LOG_WRN("notify failed (%d)", ret);
+			return ret;
+		}
+	} while (r == 0);
+
 	return ret;
 }
 

@@ -9,6 +9,7 @@
 #ifndef BLUFI_FRAME_H_
 #define BLUFI_FRAME_H_
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -111,6 +112,49 @@ int blufi_frame_append_checksum(uint8_t *buf, uint16_t len, size_t cap);
  * received length. Returns 0 if the checksum matches, negative errno otherwise.
  */
 int blufi_frame_verify_checksum(const uint8_t *buf, uint16_t buf_len);
+
+/* ---- Inbound fragment reassembly (esp blufi_env.aggr_buf) ---- */
+
+#define BLUFI_FRAG_MAX 1024
+
+typedef struct {
+	uint8_t buf[BLUFI_FRAG_MAX];
+	uint16_t total; /* total assembled length (from first fragment prefix) */
+	uint16_t off;   /* bytes accumulated so far */
+	uint8_t type;   /* type_subtype of the fragmented message */
+} blufi_reasm;
+
+void blufi_reasm_reset(blufi_reasm *r);
+
+/*
+ * Feed one parsed frame. Returns:
+ *   0  = more fragments expected (nothing to dispatch),
+ *   1  = a complete message is ready -> *out_type/*out_data/*out_len set
+ *        (either a whole unfragmented frame, or the reassembled fragments),
+ *  <0  = malformed.
+ */
+int blufi_reasm_feed(blufi_reasm *r, uint8_t type_subtype, uint8_t fc,
+		     const uint8_t *data, uint16_t data_len, uint8_t *out_type,
+		     uint8_t **out_data, uint16_t *out_len);
+
+/* ---- Outbound fragment encoding (esp btc_blufi_send_encap loop) ---- */
+
+/*
+ * Produce the next on-wire frame from a logical payload. For a payload that fits
+ * in one frame (len <= BLUFI_MAX_DATA_LEN) it is emitted whole. Otherwise a
+ * leading 2-byte little-endian "remaining length" is prepended, up to
+ * BLUFI_MAX_DATA_LEN-2 payload bytes are taken per fragment, FC_FRAG is set, and
+ * the final remainder is sent unflagged. Drive it with an offset.
+ *
+ * in/in_len: full logical payload. *off: bytes consumed so far (updated).
+ * frag_cap: max frame payload bytes per fragment (incl the 2-byte prefix), <= 255.
+ * Writes the frame *body* (payload region only, WITHOUT the 4-byte header) to
+ * out (cap >= frag_cap) and sets *out_len + *is_frag. Returns 0 while more
+ * remains, 1 after the last fragment is emitted, negative on error.
+ */
+int blufi_next_fragment(const uint8_t *in, uint16_t in_len, uint16_t *off,
+			uint16_t frag_cap, uint8_t *out, uint16_t *out_len,
+			bool *is_frag);
 
 #ifdef __cplusplus
 }

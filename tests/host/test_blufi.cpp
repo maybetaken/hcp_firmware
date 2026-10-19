@@ -9,7 +9,11 @@
 
 extern "C" {
 #include "blufi/frame.h"
+#include "mbedtls/aes.h"
+#include "mbedtls/md5.h"
 }
+
+#include <vector>
 
 TEST(BlufiFrame, TypeSubtypeEncoding) {
   // DATA / STA_SSID(0x02) -> byte0 = (0x02<<2)|0x01 = 0x09
@@ -103,4 +107,80 @@ TEST(BlufiChecksum, EmptyPayload) {
   int total = blufi_frame_append_checksum(buf, n, sizeof(buf));
   ASSERT_EQ(total, 6);
   EXPECT_EQ(blufi_frame_verify_checksum(buf, total), 0);
+}
+
+// ---- vendored crypto correctness ----
+
+TEST(BlufiSec, Md5KnownVector) {
+  uint8_t out[16];
+  blufimbed_md5(reinterpret_cast<const uint8_t*>("abc"), 3, out);
+  const uint8_t expect[16] = {0x90,0x01,0x50,0x98,0x3c,0xd2,0x4f,0xb0,
+                              0xd6,0x96,0x3f,0x7d,0x28,0xe1,0x7f,0x72};
+  EXPECT_EQ(memcmp(out, expect, 16), 0);
+}
+
+TEST(BlufiSec, AesEcbFips197Vector) {
+  const uint8_t key[16] = {0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,
+                           0x08,0x09,0x0a,0x0b,0x0c,0x0d,0x0e,0x0f};
+  const uint8_t pt[16] = {0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,
+                          0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff};
+  const uint8_t ct[16] = {0x69,0xc4,0xe0,0xd8,0x6a,0x7b,0x04,0x30,
+                          0xd8,0xcd,0xb7,0x80,0x70,0xb4,0xc5,0x5a};
+  blufimbed_aes_context a;
+  blufimbed_aes_init(&a);
+  ASSERT_EQ(blufimbed_aes_setkey_enc(&a, key, 128), 0);
+  uint8_t out[16];
+  blufimbed_aes_encrypt(&a, pt, out);
+  EXPECT_EQ(memcmp(out, ct, 16), 0);
+  blufimbed_aes_free(&a);
+}
+
+TEST(BlufiSec, AesCfb128Roundtrip) {
+  const uint8_t key[16] = {0};
+  uint8_t iv[16] = {0};
+  const uint8_t pt[20] = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20};
+  blufimbed_aes_context a;
+  blufimbed_aes_init(&a);
+  ASSERT_EQ(blufimbed_aes_setkey_enc(&a, key, 128), 0);
+  uint8_t ct[20], back[20];
+  size_t off = 0;
+  blufimbed_aes_crypt_cfb128(&a, MBEDTLS_AES_ENCRYPT, sizeof(pt), &off, iv, pt, ct);
+  off = 0;
+  memset(iv, 0, 16);
+  blufimbed_aes_crypt_cfb128(&a, MBEDTLS_AES_DECRYPT, sizeof(pt), &off, iv, ct, back);
+  EXPECT_EQ(memcmp(back, pt, sizeof(pt)), 0);
+  EXPECT_NE(memcmp(ct, pt, sizeof(pt)), 0);  // actually changed
+  blufimbed_aes_free(&a);
+}
+
+// ---- fragment encode <-> reassemble round-trip (the DH-pubkey path) ----
+
+TEST(BlufiFrag, EncodeReassembleRoundtrip) {
+  std::vector<uint8_t> payload(300);
+  for (size_t i = 0; i < payload.size(); i++) payload[i] = (uint8_t)(i * 7 + 1);
+
+  blufi_reasm r;
+  blufi_reasm_reset(&r);
+  uint16_t off = 0;
+  int fr;
+  uint8_t seq = 0;
+  bool got_complete = false;
+  do {
+    uint16_t blen; bool is_frag; uint8_t body[BLUFI_MAX_DATA_LEN];
+    fr = blufi_next_fragment(payload.data(), (uint16_t)payload.size(), &off,
+                             BLUFI_MAX_DATA_LEN, body, &blen, &is_frag);
+    ASSERT_GE(fr, 0);
+    uint8_t fc = BLUFI_FC_DIR_E2P | (is_frag ? BLUFI_FC_FRAG : 0);
+    uint8_t ot; uint8_t *od; uint16_t ol;
+    int rr = blufi_reasm_feed(&r, BLUFI_BUILD_TYPE(BLUFI_TYPE_DATA, BLUFI_DATA_NEG),
+                              fc, body, blen, &ot, &od, &ol);
+    if (rr == 1) {
+      ASSERT_EQ(ol, payload.size());
+      EXPECT_EQ(memcmp(od, payload.data(), ol), 0);
+      EXPECT_EQ(ot, BLUFI_BUILD_TYPE(BLUFI_TYPE_DATA, BLUFI_DATA_NEG));
+      got_complete = true;
+    }
+    seq++;
+  } while (fr == 0);
+  EXPECT_TRUE(got_complete);
 }
