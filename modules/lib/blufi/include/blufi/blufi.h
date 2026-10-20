@@ -1,7 +1,7 @@
 /*
  * BluFi device-side API (reusable Zephyr module).
  * Brings up a BLE peripheral exposing the ESP BluFi GATT (service 0xFFFF,
- * write char 0xFFF4 phone->esp, notify char 0xFFF5 esp->phone). Received
+ * write char 0xFF01 phone->esp, notify char 0xFF02 esp->phone). Received
  * frames are parsed and surfaced to a callback.
  *
  * SPDX-License-Identifier: Apache-2.0
@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-/* Called (from the BT rx context) for each parsed BluFi frame. */
+/* Called (from the blufi rx work queue) for each parsed BluFi frame. */
 typedef void (*blufi_data_cb_t)(uint8_t type, uint8_t subtype,
 	const uint8_t *data, uint16_t len, void *user);
 

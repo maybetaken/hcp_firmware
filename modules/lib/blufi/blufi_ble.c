@@ -61,25 +61,22 @@ static uint8_t g_recv_seq;
  * negotiate payload) arrive FC_FRAG-chunked. Pure logic lives in frame.c. */
 static blufi_reasm g_reasm;
 
-/* Completed frames are handed to a work item instead of being processed in the
- * GATT write callback. The callback must return promptly so Zephyr sends the
- * ATT Write Response *before* any notification produced while handling the
- * request. Espressif's stack does the same (the BTC task replies after the
- * write has been acknowledged); iOS otherwise can drop a notification that
- * arrives while its Write Request is still outstanding. */
+/* Completed frames are deferred to a work item instead of being handled inside
+ * the GATT write callback, so the ATT Write Response goes out before any
+ * notification produced while processing the request (same ordering as
+ * Espressif's BTC task). Depth covers a phone sending SSID + PASSWD +
+ * CONN_TO_AP back to back. */
 struct blufi_rx_msg {
 	uint8_t type;
 	uint16_t len;
 	uint8_t data[BLUFI_FRAG_MAX];
 };
 
-K_MSGQ_DEFINE(g_rx_q, sizeof(struct blufi_rx_msg), 2, 4);
+K_MSGQ_DEFINE(g_rx_q, sizeof(struct blufi_rx_msg), 4, 4);
 
 /* Frames with BLUFI_FC_REQ_ACK must be answered with a CTRL/ACK frame carrying
- * the received sequence number (esp btc_blufi_send_ack).  The iOS app calls
- * receiveAck: and blocks its serial request queue until this arrives, so a
- * missing ACK freezes provisioning right after SET_WIFI_OPMODE.  Queue it so
- * the ATT Write Response is sent before the ACK notification. */
+ * the received sequence number (esp btc_blufi_send_ack); some apps block their
+ * request queue until it arrives. Queued for the same ordering reason as above. */
 K_MSGQ_DEFINE(g_ack_q, sizeof(uint8_t), 4, 1);
 
 static void ack_work_fn(struct k_work *work)
@@ -194,7 +191,7 @@ static ssize_t p2e_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 			 const void *buf, uint16_t len, uint16_t offset,
 			 uint8_t flags)
 {
-	LOG_HEXDUMP_INF(buf, len, "blufi P2E rx");
+	LOG_HEXDUMP_DBG(buf, len, "blufi P2E rx");
 
 	if (len < BLUFI_HDR_LEN) {
 		LOG_WRN("rx %u bytes: too short", len);
@@ -405,19 +402,6 @@ void blufi_set_callback(blufi_data_cb_t cb, void *user)
 	g_user = user;
 }
 
-static uint8_t attr_dump_cb(const struct bt_gatt_attr *attr, uint16_t handle,
-			    void *user_data)
-{
-	uint16_t *count = user_data;
-	bool is_primary = (attr->uuid != NULL &&
-			   bt_uuid_cmp(attr->uuid, BT_UUID_GATT_PRIMARY) == 0);
-
-	(*count)++;
-	LOG_INF("db attr handle=0x%04x perm=0x%02x%s", handle, attr->perm,
-		is_primary ? "  <== PRIMARY SERVICE" : "");
-	return BT_GATT_ITER_CONTINUE;
-}
-
 int blufi_start(void)
 {
 	k_work_init_delayable(&adv_restart_work, adv_restart_fn);
@@ -444,24 +428,8 @@ int blufi_start(void)
 			LOG_WRN("blufi: bt_id_create failed (%d), using default", id);
 		}
 	}
-	/* Enumerate the DB through the SAME path ATT discovery uses
-	 * (foreach_attr_type covers static + dynamic services). Our BluFi
-	 * PRIMARY SERVICE should appear here with a valid handle. */
-	uint16_t db_count = 0;
-	bt_gatt_foreach_attr_type(0x0001, 0xffff, NULL, NULL, 0,
-				  attr_dump_cb, &db_count);
-	LOG_INF("gatt db total attrs visible to discovery = %u", db_count);
 	adv_start();
 	return 0;
-}
-
-static void notify_sent_cb(struct bt_conn *conn, void *user_data)
-{
-	uint32_t tag = (uint32_t)(uintptr_t)user_data;
-	uint8_t seq = (uint8_t)(tag >> 16);
-
-	ARG_UNUSED(conn);
-	LOG_INF("tx sent seq=%u (controller accepted notification)", seq);
 }
 
 int blufi_send(uint8_t type, uint8_t subtype, const uint8_t *data, uint16_t len)
@@ -474,18 +442,21 @@ int blufi_send(uint8_t type, uint8_t subtype, const uint8_t *data, uint16_t len)
 	int ret = 0;
 	int r;
 
-	/* Outbound fragmentation to the negotiated ATT MTU, matching esp
-	 * btc_blufi_send_encap(): esp uses
-	 *   frag_size = min(att_mtu, 255) - 11
-	 * where 11 = 4-byte blufi header + 2-byte frag length prefix +
-	 * 2-byte checksum + 3-byte ATT header.  Our `frag_cap` is the max body
-	 * (data region) length, i.e. frag_size + 2.  At the default MTU 23 this
-	 * is 14 bytes; after the iOS app negotiates MTU 527 it becomes 246, so
-	 * a 128-byte DH public key fits in one notification exactly like ESP.
-	 * The old hard 14-byte cap turned that reply into 11 notifications,
-	 * exhausted Zephyr's 10-deep TX pools, and made iOS time out with
-	 * "Negotiate security failed: 100". */
-	uint16_t mtu = g_conn ? bt_gatt_get_mtu(g_conn) : 23;
+	/* Async producers (scan results, provisioning timeouts) can outlive the
+	 * link; notifying without a connection just fails with -ENOTCONN. */
+	if (!g_conn) {
+		LOG_DBG("no connection, dropping tx (type=%u sub=0x%02x)", type,
+			subtype);
+		return -ENOTCONN;
+	}
+
+	/* Outbound fragmentation to the negotiated ATT MTU, like esp's
+	 * btc_blufi_send_encap(): frag_size = min(att_mtu, 255) - 11 (4-byte blufi
+	 * header + 2-byte frag prefix + 2-byte checksum + 3-byte ATT header), and
+	 * our frag_cap is the body size, i.e. frag_size + 2. 14 bytes at the default
+	 * MTU 23, 246 once the phone negotiates 527 - so a 128-byte DH public key
+	 * goes out as one notification, exactly like ESP. */
+	uint16_t mtu = bt_gatt_get_mtu(g_conn);
 	uint16_t esp_mtu = (mtu < 255) ? mtu : 255;
 	uint16_t frag_cap = (esp_mtu >= 12) ? (uint16_t)(esp_mtu - 9) : 3;
 
@@ -536,23 +507,11 @@ int blufi_send(uint8_t type, uint8_t subtype, const uint8_t *data, uint16_t len)
 		}
 #endif
 		e2p_len = n;
-		/* The controller's TX pool may be smaller than the fragment count
-		 * (a 128-byte DH key is ~11 notifications at the ESP-compatible
-		 * 14-byte cap). bt_gatt_notify returns -ENOMEM when the pool is
-		 * momentarily exhausted; wait for the controller to drain one and
-		 * retry instead of truncating the reply. */
+		/* The controller TX pool is only a few buffers deep, so a fragmented
+		 * reply can transiently fail with -ENOMEM; wait for it to drain and
+		 * retry rather than truncating the reply. */
 		for (int tries = 0; ; tries++) {
-			struct bt_gatt_notify_params params = {
-				.attr = BLUFI_E2P_ATTR,
-				.data = e2p_val,
-				.len = n,
-				.func = notify_sent_cb,
-				/* seq is enough to correlate with the tx log; the
-				 * type/subtype are already printed before this. */
-				.user_data = (void *)(uintptr_t)((uint32_t)used_seq << 16),
-			};
-
-			ret = bt_gatt_notify_cb(NULL, &params);
+			ret = bt_gatt_notify(NULL, BLUFI_E2P_ATTR, e2p_val, n);
 			if (ret != -ENOMEM && ret != -EAGAIN) {
 				break;
 			}
@@ -564,16 +523,14 @@ int blufi_send(uint8_t type, uint8_t subtype, const uint8_t *data, uint16_t len)
 		LOG_INF("tx type=%u sub=0x%02x seq=%u len=%u%s notify_ret=%d", type,
 			subtype, used_seq, n, is_frag ? " FRAG" : "", ret);
 		if (type == BLUFI_TYPE_DATA && subtype == BLUFI_DATA_NEG) {
-			LOG_HEXDUMP_INF(e2p_val, n, "blufi E2P tx neg");
+			LOG_HEXDUMP_DBG(e2p_val, n, "blufi E2P tx neg");
 		}
 		if (ret) {
 			LOG_WRN("notify failed (%d)", ret);
 			return ret;
 		}
-		/* Pace multi-fragment replies: the controller/ATT pools are often
-		 * only 10 buffers deep, and iOS accepts roughly one notification
-		 * per connection interval. Without this, an 11-fragment DH key
-		 * exhausts the pool and the final fragment is dropped. */
+		/* Pace multi-fragment replies: iOS accepts roughly one notification
+		 * per connection interval, and the pool is shallow. */
 		if (r == 0) {
 			k_sleep(K_MSEC(15));
 		}
