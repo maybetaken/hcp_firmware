@@ -132,10 +132,11 @@ static void LoopbackWorker(void* /*arg*/) {
 #ifdef CONFIG_HCP_NET_DEMO
 static void OnWifi(hcp::net::WifiEvent e, void* /*user*/) {
   using E = hcp::net::WifiEvent;
-  const char* s = (e == E::kConnected)     ? "connected (IP up)"
-                  : (e == E::kConnecting)  ? "connecting"
+  const char* s = (e == E::kConnected)      ? "connected (IP up)"
+                  : (e == E::kConnecting)   ? "connecting"
                   : (e == E::kDisconnected) ? "disconnected"
-                                            : "?";
+                  : (e == E::kConnectFailed) ? "connect failed"
+                                             : "?";
   HCP_LOGI(hcp::log::kDomainWifi, "wifi %s", s);
 }
 
@@ -163,6 +164,12 @@ static void NetWorker(void* /*arg*/) {
 
 static char g_ssid[33];
 static char g_pass[64];
+
+/* Signalled by the Wi-Fi disconnect event so a re-provision can wait for the
+ * old connection to go down before issuing a new connect request. */
+static K_SEM_DEFINE(g_disconn_sem, 0, 1);
+static struct k_work_delayable g_prov_timeout;
+static atomic_t g_prov_active;
 
 // esp_blufi WIFI_REP encodes station connection state (esp_blufi_api.h).
 #define BLUFI_STA_CONN_SUCCESS 0x00
@@ -220,12 +227,44 @@ static void blufi_report_wifi_success() {
   blufi_send(BLUFI_TYPE_DATA, BLUFI_DATA_WIFI_REP, rep, n);
 }
 
+// Final failure report, including the ESP-compatible disconnect-reason TLV.
+static void blufi_report_wifi_fail(uint8_t reason) {
+  uint8_t rep[6] = {BLUFI_OPMODE_STA, BLUFI_STA_CONN_FAIL, 0x00,
+                    BLUFI_DATA_STA_CONN_END_REASON, 1, reason};
+  HCP_LOGW(hcp::log::kDomainWifi, "blufi: report FAIL (reason=%u)", reason);
+  blufi_send(BLUFI_TYPE_DATA, BLUFI_DATA_WIFI_REP, rep, sizeof(rep));
+}
+
+// If the driver never produces an association/DHCP result, still send a final
+// FAIL so the phone UI does not sit in "connecting" forever.
+static void prov_timeout_fn(struct k_work*) {
+  if (!atomic_get(&g_prov_active)) {
+    return;
+  }
+  atomic_set(&g_prov_active, 0);
+  if (!hcp::net::wifi::IsConnected()) {
+    HCP_LOGW(hcp::log::kDomainWifi, "blufi: provisioning timeout");
+    blufi_report_wifi_fail(0x01);
+  }
+}
+
 // Wi-Fi result -> report the final BluFi conn state so the app confirms success
 // instead of timing out waiting for it (then disconnects, reason 19).
 static void on_wifi_for_blufi(hcp::net::WifiEvent e, void*) {
   using E = hcp::net::WifiEvent;
   if (e == E::kConnected) {
+    atomic_set(&g_prov_active, 0);
+    k_work_cancel_delayable(&g_prov_timeout);
     blufi_report_wifi_success();
+    /* Keep this callback alive briefly after queuing the notification so the
+     * BLE stack has time to flush the final SUCCESS report. */
+    k_sleep(K_MSEC(500));
+  } else if (e == E::kConnectFailed) {
+    atomic_set(&g_prov_active, 0);
+    k_work_cancel_delayable(&g_prov_timeout);
+    blufi_report_wifi_fail(0x01);
+  } else if (e == E::kDisconnected) {
+    k_sem_give(&g_disconn_sem);
   }
 }
 
@@ -237,14 +276,23 @@ static void on_wifi_for_blufi(hcp::net::WifiEvent e, void*) {
 static struct k_work g_prov_work;
 static void prov_work_fn(struct k_work *work) {
   ARG_UNUSED(work);
+  /* Wait for the disconnect event instead of racing it: re-provisioning an
+   * already-connected ESP32 with only a fixed 300 ms delay can leave the
+   * driver in a transitional state where the next connect never completes. */
+  k_sem_reset(&g_disconn_sem);
   hcp::net::wifi::Disconnect();
-  k_sleep(K_MSEC(300));
+  if (k_sem_take(&g_disconn_sem, K_SECONDS(1)) != 0) {
+    HCP_LOGW(hcp::log::kDomainWifi,
+             "blufi: disconnect wait timed out, connecting anyway");
+  }
   hcp::net::WifiCredential c{g_ssid, g_pass[0] ? g_pass : nullptr};
   HCP_LOGI(hcp::log::kDomainWifi, "blufi: (re)connecting to \"%s\"", g_ssid);
   bool ok = hcp::net::wifi::Connect(c);
   if (!ok && !hcp::net::wifi::IsConnected()) {
+    atomic_set(&g_prov_active, 0);
+    k_work_cancel_delayable(&g_prov_timeout);
     HCP_LOGW(hcp::log::kDomainWifi, "blufi: connect failed, report FAIL");
-    blufi_report_wifi_state(BLUFI_STA_CONN_FAIL);
+    blufi_report_wifi_fail(0x01);
   }
 }
 
@@ -298,12 +346,14 @@ extern "C" void on_blufi_data(uint8_t type, uint8_t subtype,
         break;
       case BLUFI_CTRL_CONN_TO_AP: {
         HCP_LOGI(hcp::log::kDomainWifi, "blufi: connect to \"%s\"", g_ssid);
-        /* Match esp_blufi_send_wifi_conn_report(): immediately report
-         * CONNECTING, then report SUCCESS/FAIL when the link settles.  The
-         * iOS app uses this intermediate status to keep its provisioning UI
-         * alive; without it the page can look frozen for the 10-15 s DHCP
-         * window and then ignore the final SUCCESS report. */
-        blufi_report_wifi_state(BLUFI_STA_CONNECTING);
+        /* Match the ESP-IDF example's REQ_CONNECT_TO_AP path: it does NOT send
+         * a report there.  Only got-IP sends CONN_SUCCESS (and GET_WIFI_STATUS
+         * can return CONNECTING when polled).  Sending an unsolicited
+         * CONNECTING frame mid-write desyncs the official WeChat
+         * ESP-Config-WeChat mini-program: it shows "Connected: STA" at 85% and
+         * then never processes the real SUCCESS report. */
+        atomic_set(&g_prov_active, 1);
+        k_work_reschedule(&g_prov_timeout, K_SECONDS(30));
         k_work_submit(&g_prov_work);  // connect off the BT RX thread
         break;
       }
@@ -401,6 +451,7 @@ int main(void) {
   hcp::net::wifi::SetCallback(on_wifi_for_blufi, nullptr);
   hcp::net::wifi::Init();
   k_work_init(&g_prov_work, prov_work_fn);
+  k_work_init_delayable(&g_prov_timeout, prov_timeout_fn);
   blufi_set_callback(on_blufi_data, nullptr);
   if (blufi_start() == 0) {
     HCP_LOGI(hcp::log::kDomainWifi, "blufi advertising; waiting for phone app");

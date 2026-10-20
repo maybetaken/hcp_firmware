@@ -70,6 +70,8 @@ enum blufi_data_subtype {
 	BLUFI_DATA_WIFI_LIST      = 0x11,
 	BLUFI_DATA_ERROR_INFO     = 0x12,
 	BLUFI_DATA_CUSTOM_DATA    = 0x13,
+	BLUFI_DATA_STA_CONN_END_REASON = 0x15,
+	BLUFI_DATA_STA_CONN_RSSI  = 0x16,
 };
 
 /* A parsed frame (data points into the caller's buffer). */

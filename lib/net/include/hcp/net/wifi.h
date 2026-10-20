@@ -21,8 +21,9 @@ struct WifiCredential {
 // Connection state reported to the callback.
 enum class WifiEvent {
   kConnecting,
-  kConnected,   // associated + IPv4 acquired
-  kDisconnected,
+  kConnected,      // associated + IPv4 acquired
+  kDisconnected,   // link lost after being up
+  kConnectFailed,  // association/authentication failed
 };
 
 // A Wi-Fi scan result (subset, enough for BluFi AP list + conn report).

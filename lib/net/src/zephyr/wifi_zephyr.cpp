@@ -50,9 +50,21 @@ void WifiHandler(struct net_mgmt_event_callback* cb, uint64_t event,
   ARG_UNUSED(cb);
   ARG_UNUSED(iface);
   if (event == NET_EVENT_WIFI_CONNECT_RESULT) {
-    Report(WifiEvent::kConnecting);
+    const struct wifi_status* st =
+        static_cast<const struct wifi_status*>(cb->info);
+    int status = st ? st->status : -1;
+    if (status == 0) {
+      LOG_INF("Wi-Fi associated, waiting for DHCP");
+      Report(WifiEvent::kConnecting);
+    } else {
+      LOG_WRN("Wi-Fi connect failed: status=%d", status);
+      Report(WifiEvent::kConnectFailed);
+    }
   } else if (event == NET_EVENT_WIFI_DISCONNECT_RESULT) {
+    const struct wifi_status* st =
+        static_cast<const struct wifi_status*>(cb->info);
     g.connected = false;
+    LOG_INF("Wi-Fi disconnected: reason=%d", st ? st->disconn_reason : -1);
     Report(WifiEvent::kDisconnected);
   }
 }

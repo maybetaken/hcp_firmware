@@ -455,6 +455,15 @@ int blufi_start(void)
 	return 0;
 }
 
+static void notify_sent_cb(struct bt_conn *conn, void *user_data)
+{
+	uint32_t tag = (uint32_t)(uintptr_t)user_data;
+	uint8_t seq = (uint8_t)(tag >> 16);
+
+	ARG_UNUSED(conn);
+	LOG_INF("tx sent seq=%u (controller accepted notification)", seq);
+}
+
 int blufi_send(uint8_t type, uint8_t subtype, const uint8_t *data, uint16_t len)
 {
 	/* esp btc_blufi_send_encap: a payload larger than one frame is split into
@@ -533,7 +542,17 @@ int blufi_send(uint8_t type, uint8_t subtype, const uint8_t *data, uint16_t len)
 		 * momentarily exhausted; wait for the controller to drain one and
 		 * retry instead of truncating the reply. */
 		for (int tries = 0; ; tries++) {
-			ret = bt_gatt_notify(NULL, BLUFI_E2P_ATTR, e2p_val, n);
+			struct bt_gatt_notify_params params = {
+				.attr = BLUFI_E2P_ATTR,
+				.data = e2p_val,
+				.len = n,
+				.func = notify_sent_cb,
+				/* seq is enough to correlate with the tx log; the
+				 * type/subtype are already printed before this. */
+				.user_data = (void *)(uintptr_t)((uint32_t)used_seq << 16),
+			};
+
+			ret = bt_gatt_notify_cb(NULL, &params);
 			if (ret != -ENOMEM && ret != -EAGAIN) {
 				break;
 			}
