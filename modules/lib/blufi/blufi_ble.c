@@ -1,8 +1,9 @@
 /*
  * BluFi device side: BLE peripheral + ESP BluFi GATT (service 0xFFFF,
- * write 0xFFF4 phone->esp, notify 0xFFF5 esp->phone). Received frames are
- * parsed and surfaced to the app callback. Phase 1: no encryption yet (we can
- * already observe the app's handshake/control frames).
+ * write 0xFF01 phone->esp, notify 0xFF02 esp->phone). Received frames are
+ * parsed and surfaced to the app callback. With CONFIG_BLUFI_SECURITY the
+ * ESP-compatible DH key negotiation + AES-128-CFB128/CRC-16 layer is wired in
+ * (see blufi_security.c and the FC_ENC/FC_CHECK handling in p2e_write/blufi_send).
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -60,7 +61,101 @@ static uint8_t g_recv_seq;
  * negotiate payload) arrive FC_FRAG-chunked. Pure logic lives in frame.c. */
 static blufi_reasm g_reasm;
 
+/* Completed frames are handed to a work item instead of being processed in the
+ * GATT write callback. The callback must return promptly so Zephyr sends the
+ * ATT Write Response *before* any notification produced while handling the
+ * request. Espressif's stack does the same (the BTC task replies after the
+ * write has been acknowledged); iOS otherwise can drop a notification that
+ * arrives while its Write Request is still outstanding. */
+struct blufi_rx_msg {
+	uint8_t type;
+	uint16_t len;
+	uint8_t data[BLUFI_FRAG_MAX];
+};
+
+K_MSGQ_DEFINE(g_rx_q, sizeof(struct blufi_rx_msg), 2, 4);
+
+/* Frames with BLUFI_FC_REQ_ACK must be answered with a CTRL/ACK frame carrying
+ * the received sequence number (esp btc_blufi_send_ack).  The iOS app calls
+ * receiveAck: and blocks its serial request queue until this arrives, so a
+ * missing ACK freezes provisioning right after SET_WIFI_OPMODE.  Queue it so
+ * the ATT Write Response is sent before the ACK notification. */
+K_MSGQ_DEFINE(g_ack_q, sizeof(uint8_t), 4, 1);
+
+static void ack_work_fn(struct k_work *work)
+{
+	uint8_t seq;
+
+	ARG_UNUSED(work);
+
+	while (k_msgq_get(&g_ack_q, &seq, K_NO_WAIT) == 0) {
+		blufi_send(BLUFI_TYPE_CTRL, BLUFI_CTRL_ACK, &seq, 1);
+	}
+}
+
+K_WORK_DELAYABLE_DEFINE(g_ack_work, ack_work_fn);
+
+static void queue_ack(uint8_t seq)
+{
+	if (k_msgq_put(&g_ack_q, &seq, K_NO_WAIT) != 0) {
+		LOG_WRN("ack queue full, dropping ack %u", seq);
+		return;
+	}
+	k_work_reschedule(&g_ack_work, K_MSEC(20));
+}
+
+static void handle_decoded(uint8_t type, uint8_t sub, const uint8_t *data,
+			   uint16_t len);
+
+static void rx_work_fn(struct k_work *work);
+static K_WORK_DELAYABLE_DEFINE(g_rx_work, rx_work_fn);
+
+static void rx_work_fn(struct k_work *work)
+{
+	struct blufi_rx_msg msg;
+
+	ARG_UNUSED(work);
+
+	while (k_msgq_get(&g_rx_q, &msg, K_NO_WAIT) == 0) {
+		handle_decoded(BLUFI_GET_TYPE(msg.type),
+			       BLUFI_GET_SUBTYPE(msg.type), msg.data, msg.len);
+	}
+}
+
+static void rx_queue_frame(uint8_t type_subtype, const uint8_t *data,
+			   uint16_t len)
+{
+	struct blufi_rx_msg msg;
+
+	if (len > sizeof(msg.data)) {
+		LOG_WRN("rx queue: frame too large (%u)", len);
+		return;
+	}
+	msg.type = type_subtype;
+	msg.len = len;
+	if (len) {
+		memcpy(msg.data, data, len);
+	}
+	if (k_msgq_put(&g_rx_q, &msg, K_NO_WAIT) != 0) {
+		LOG_WRN("rx queue full, dropping frame");
+		return;
+	}
+	/* Give the RX thread time to queue the ATT Write Response before this
+	 * work item can emit the reply notification. */
+	k_work_reschedule(&g_rx_work, K_MSEC(20));
+}
+
 static K_SEM_DEFINE(bt_enabled_sem, 0, 1);
+
+static void att_mtu_updated(struct bt_conn *conn, uint16_t tx, uint16_t rx)
+{
+	ARG_UNUSED(conn);
+	LOG_INF("blufi: ATT MTU updated tx=%u rx=%u", tx, rx);
+}
+
+static struct bt_gatt_cb gatt_cb = {
+	.att_mtu_updated = att_mtu_updated,
+};
 
 static void bt_ready(int err)
 {
@@ -139,6 +234,12 @@ static ssize_t p2e_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 		return len;
 	}
 
+	/* esp answers every frame/fragment that requests an ACK, after checksum
+	 * verification and before fragment reassembly. */
+	if (fc & BLUFI_FC_REQ_ACK) {
+		queue_ack(seq);
+	}
+
 	struct blufi_frame f;
 	if (blufi_frame_parse(b, len, &f) != 0) {
 		LOG_WRN("rx %u bytes (not a complete/valid frame yet)", len);
@@ -160,8 +261,16 @@ static ssize_t p2e_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 		LOG_WRN("rx reassembly error %d, dropping", rr);
 		return len;
 	}
-	handle_decoded(BLUFI_GET_TYPE(out_type), BLUFI_GET_SUBTYPE(out_type), disp,
-		       disp_len);
+	/* SET_SEC_MODE is tiny and must take effect before the peer's next
+	 * (encrypted) write. Everything else is deferred so the ATT response
+	 * leaves before the reply notification. */
+	if (BLUFI_GET_TYPE(out_type) == BLUFI_TYPE_CTRL &&
+	    BLUFI_GET_SUBTYPE(out_type) == BLUFI_CTRL_SET_SEC_MODE) {
+		handle_decoded(BLUFI_GET_TYPE(out_type),
+			       BLUFI_GET_SUBTYPE(out_type), disp, disp_len);
+	} else {
+		rx_queue_frame(out_type, disp, disp_len);
+	}
 	return len;
 }
 
@@ -173,6 +282,12 @@ static ssize_t read_e2p(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 			void *buf, uint16_t len, uint16_t offset)
 {
 	return bt_gatt_attr_read(conn, attr, buf, len, offset, e2p_val, e2p_len);
+}
+
+static void e2p_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value)
+{
+	ARG_UNUSED(attr);
+	LOG_INF("blufi: E2P CCC changed (0x%04x)", value);
 }
 
 /* Static GATT service (canonical Zephyr path, used by every BLE sample).
@@ -188,7 +303,7 @@ BT_GATT_SERVICE_DEFINE(blufi_svc,
 			       BT_GATT_PERM_WRITE, NULL, p2e_write, NULL),
 	BT_GATT_CHARACTERISTIC(BLUFI_E2P_UUID, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY,
 			       BT_GATT_PERM_READ, read_e2p, NULL, e2p_val),
-	BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+	BT_GATT_CCC(e2p_ccc_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
 );
 
 /* attr index of the E2P value characteristic (for bt_gatt_notify): 0=svc,
@@ -250,6 +365,8 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	g_send_seq = 0;
 	g_recv_seq = 0;
 	blufi_reasm_reset(&g_reasm);
+	k_msgq_purge(&g_rx_q);
+	LOG_INF("blufi: ATT MTU now %u", bt_gatt_get_mtu(conn));
 #if defined(CONFIG_BLUFI_SECURITY)
 	/* Fresh DH/PSK state per connection. */
 	blufi_security_deinit();
@@ -266,6 +383,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	}
 	g_sec_mode = 0;
 	g_recv_seq = 0;
+	k_msgq_purge(&g_rx_q);
 #if defined(CONFIG_BLUFI_SECURITY)
 	blufi_security_deinit();
 #endif
@@ -310,6 +428,7 @@ int blufi_start(void)
 	if (err != -EALREADY) {
 		k_sem_take(&bt_enabled_sem, K_SECONDS(10));
 	}
+	bt_gatt_cb_register(&gatt_cb);
 	bt_set_name(BLUFI_ADV_NAME);
 	/* Advertise from a fresh random-static identity so the app negotiates. */
 	{
@@ -346,16 +465,20 @@ int blufi_send(uint8_t type, uint8_t subtype, const uint8_t *data, uint16_t len)
 	int ret = 0;
 	int r;
 
-	/* Outbound fragmentation to the negotiated ATT MTU (like esp frag_size):
-	 * a notification carries at most MTU-3 bytes; frame = 4 hdr + data region,
-	 * so the data region (incl a fragment's 2-byte length prefix) caps at MTU-7.
-	 * Without this a 128-byte DH public-key reply is one big notify the phone
-	 * (small MTU) can't receive -> it re-negotiates and fails. */
+	/* Outbound fragmentation to the negotiated ATT MTU, matching esp
+	 * btc_blufi_send_encap(): esp uses
+	 *   frag_size = min(att_mtu, 255) - 11
+	 * where 11 = 4-byte blufi header + 2-byte frag length prefix +
+	 * 2-byte checksum + 3-byte ATT header.  Our `frag_cap` is the max body
+	 * (data region) length, i.e. frag_size + 2.  At the default MTU 23 this
+	 * is 14 bytes; after the iOS app negotiates MTU 527 it becomes 246, so
+	 * a 128-byte DH public key fits in one notification exactly like ESP.
+	 * The old hard 14-byte cap turned that reply into 11 notifications,
+	 * exhausted Zephyr's 10-deep TX pools, and made iOS time out with
+	 * "Negotiate security failed: 100". */
 	uint16_t mtu = g_conn ? bt_gatt_get_mtu(g_conn) : 23;
-	uint16_t frag_cap = (mtu >= 10) ? (uint16_t)(mtu - 7) : 3;
-	if (frag_cap > BLUFI_MAX_DATA_LEN) {
-		frag_cap = BLUFI_MAX_DATA_LEN;
-	}
+	uint16_t esp_mtu = (mtu < 255) ? mtu : 255;
+	uint16_t frag_cap = (esp_mtu >= 12) ? (uint16_t)(esp_mtu - 9) : 3;
 
 	do {
 		uint16_t blen;
@@ -404,12 +527,36 @@ int blufi_send(uint8_t type, uint8_t subtype, const uint8_t *data, uint16_t len)
 		}
 #endif
 		e2p_len = n;
-		ret = bt_gatt_notify(NULL, BLUFI_E2P_ATTR, e2p_val, n);
+		/* The controller's TX pool may be smaller than the fragment count
+		 * (a 128-byte DH key is ~11 notifications at the ESP-compatible
+		 * 14-byte cap). bt_gatt_notify returns -ENOMEM when the pool is
+		 * momentarily exhausted; wait for the controller to drain one and
+		 * retry instead of truncating the reply. */
+		for (int tries = 0; ; tries++) {
+			ret = bt_gatt_notify(NULL, BLUFI_E2P_ATTR, e2p_val, n);
+			if (ret != -ENOMEM && ret != -EAGAIN) {
+				break;
+			}
+			if (tries >= 400) {
+				break;
+			}
+			k_sleep(K_MSEC(5));
+		}
 		LOG_INF("tx type=%u sub=0x%02x seq=%u len=%u%s notify_ret=%d", type,
 			subtype, used_seq, n, is_frag ? " FRAG" : "", ret);
+		if (type == BLUFI_TYPE_DATA && subtype == BLUFI_DATA_NEG) {
+			LOG_HEXDUMP_INF(e2p_val, n, "blufi E2P tx neg");
+		}
 		if (ret) {
 			LOG_WRN("notify failed (%d)", ret);
 			return ret;
+		}
+		/* Pace multi-fragment replies: the controller/ATT pools are often
+		 * only 10 buffers deep, and iOS accepts roughly one notification
+		 * per connection interval. Without this, an 11-fragment DH key
+		 * exhausts the pool and the final fragment is dropped. */
+		if (r == 0) {
+			k_sleep(K_MSEC(15));
 		}
 	} while (r == 0);
 

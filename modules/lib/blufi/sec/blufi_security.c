@@ -26,13 +26,14 @@
 #endif
 #define LOG_ERR(fmt, ...) printf("E: " fmt "\n", ##__VA_ARGS__)
 #define LOG_INF(fmt, ...) printf("I: " fmt "\n", ##__VA_ARGS__)
+#define LOG_DBG(fmt, ...) do { } while (0)
 static int sys_csrand_get(void *dst, size_t len)
 {
 	unsigned char *d = (unsigned char *)dst;
 	for (size_t i = 0; i < len; i++) {
 		d[i] = (unsigned char)(rand() & 0xff);
 	}
-	return (int)len;
+	return 0;
 }
 #endif
 
@@ -70,8 +71,12 @@ static struct blufi_security *sec;
 
 static int myrand(void *rng_state, unsigned char *output, size_t len)
 {
+	int rc;
+
 	ARG_UNUSED(rng_state);
-	return sys_csrand_get(output, len) == len ? 0 : -1;
+	rc = sys_csrand_get(output, len);
+	LOG_DBG("blufi sec: rng rc=%d len=%u", rc, (unsigned int)len);
+	return rc == 0 ? 0 : -1;
 }
 
 int blufi_security_init(void)
@@ -156,6 +161,12 @@ int blufi_negotiate(const uint8_t *data, uint16_t len, const uint8_t **out,
 			LOG_ERR("blufi sec: make_public failed %d", ret);
 			return -1;
 		}
+		/* The vendored mbedtls 2.4 DHM ignores a failing RNG callback and
+		 * can leave GX == 1. Never hand a degenerate key to the phone. */
+		if (mbedtls_mpi_cmp_int(&sec->dhm.GX, 2) < 0) {
+			LOG_ERR("blufi sec: degenerate DH public key");
+			return -1;
+		}
 		ret = mbedtls_dhm_calc_secret(&sec->dhm, sec->share_key,
 					      SHARE_KEY_LEN, &sec->share_len,
 					      myrand, NULL);
@@ -168,7 +179,7 @@ int blufi_negotiate(const uint8_t *data, uint16_t len, const uint8_t **out,
 
 		*out = sec->self_public_key;
 		*out_len = (uint16_t)dhm_len;
-		LOG_INF("blufi sec: DH done, pub key %d bytes", dhm_len);
+		LOG_DBG("blufi sec: DH done, pub key %d bytes", dhm_len);
 		return 0;
 	}
 

@@ -50,6 +50,17 @@ int blufi_frame_parse(const uint8_t *buf, size_t buf_len, struct blufi_frame *ou
 
 uint16_t blufi_crc16_be(uint16_t crc, const uint8_t *buf, uint32_t len)
 {
+	/*
+	 * Match esp_rom_crc16_be() exactly (see ESP-IDF esp_crc.h): the ROM
+	 * helper inverts both the incoming seed and the final result. Semantics
+	 * are subtle: with the BluFi call site passing seed 0, the inner loop is
+	 * CRC-16/CCITT-FALSE (init 0xFFFF, inner check "123456789" == 0x29B1)
+	 * and the return value is its complement (0xD64E). The EspBlufi apps do
+	 * the same `crc = ~crc ... return ~crc` in BlufiSecurity.crc:data:.
+	 * Do NOT drop the inversions: the checksum of every encrypted frame
+	 * would mismatch and the frame would be dropped.
+	 */
+	crc = (uint16_t)~crc;
 	for (uint32_t i = 0; i < len; i++) {
 		crc ^= (uint16_t)buf[i] << 8;
 		for (int bit = 0; bit < 8; bit++) {
@@ -60,7 +71,7 @@ uint16_t blufi_crc16_be(uint16_t crc, const uint8_t *buf, uint32_t len)
 			}
 		}
 	}
-	return crc;
+	return (uint16_t)~crc;
 }
 
 int blufi_frame_append_checksum(uint8_t *buf, uint16_t len, size_t cap)

@@ -72,11 +72,29 @@ TEST(BlufiFrame, OversizedRejected) {
   EXPECT_LT(n, 0);  // > BLUFI_MAX_DATA_LEN -> caller must fragment
 }
 
-TEST(BlufiCrc16, CcittFalseVector) {
-  // CRC-16/CCITT-FALSE (poly 0x1021, MSB-first, no reflect) over "123456789"
-  // with init 0xFFFF is the well-known 0x29B1. Validates poly/bit-order.
+TEST(BlufiCrc16, EspRomSemantics) {
+  // esp_rom_crc16_be() inverts its seed and result, and EspBlufiForiOS's
+  // BlufiSecurity.crc:buf:length: does exactly the same. BluFi calls it with
+  // seed 0. Verified against an independent implementation of ESP's table loop:
+  //   seed 0x0000 over "123456789" -> 0xD64E
+  //   seed 0xFFFF over "123456789" -> 0xCE3C
   const uint8_t check[] = {'1','2','3','4','5','6','7','8','9'};
-  EXPECT_EQ(blufi_crc16_be(0xFFFF, check, sizeof(check)), 0x29B1);
+  EXPECT_EQ(blufi_crc16_be(0, check, sizeof(check)), 0xD64E);
+  EXPECT_EQ(blufi_crc16_be(0xFFFF, check, sizeof(check)), 0xCE3C);
+}
+
+TEST(BlufiChecksum, IosAppSetSecModeFrame) {
+  // A real EspBlufiForiOS SET_SEC_MODE frame: ctrl(0x04), seq 4, mode 0x03,
+  // sent with checksum=YES (even though ctrlChecksum is negotiated off).
+  // ESP/iOS CRC over [seq=4, len=1, mode=3] with seed 0 is 0xECF1, stored
+  // little-endian on air (F1 EC).
+  uint8_t buf[16] = {0x04, 0x00, 0x04, 0x01, 0x03};
+  int total = blufi_frame_append_checksum(buf, 5, sizeof(buf));
+  ASSERT_EQ(total, 7);
+  EXPECT_EQ(buf[1], BLUFI_FC_CHECK);
+  EXPECT_EQ(buf[5], 0xf1);
+  EXPECT_EQ(buf[6], 0xec);
+  EXPECT_EQ(blufi_frame_verify_checksum(buf, total), 0);
 }
 
 TEST(BlufiChecksum, AppendAndVerifyRoundtrip) {
@@ -188,6 +206,41 @@ TEST(BlufiFrag, EncodeReassembleRoundtrip) {
   EXPECT_TRUE(got_complete);
 }
 
+// The ESP IDF profile always fragments outbound frames with
+// BLUFI_FRAG_DATA_DEFAULT_LEN = 12 data bytes (14 bytes incl the u16 prefix),
+// regardless of the negotiated MTU. Verify a 128-byte DH public key survives
+// that exact on-wire shape (this is what iOS reliably accepts).
+TEST(BlufiFrag, EspDefaultCapDhKeyRoundtrip) {
+  std::vector<uint8_t> payload(128);
+  for (size_t i = 0; i < payload.size(); i++) payload[i] = (uint8_t)(i ^ 0x5a);
+
+  blufi_reasm r;
+  blufi_reasm_reset(&r);
+  uint16_t off = 0;
+  int fr;
+  int frames = 0;
+  bool got_complete = false;
+  do {
+    uint16_t blen; bool is_frag; uint8_t body[14];
+    fr = blufi_next_fragment(payload.data(), (uint16_t)payload.size(), &off,
+                             14, body, &blen, &is_frag);
+    ASSERT_GE(fr, 0);
+    ASSERT_LE(blen, 14);
+    uint8_t fc = BLUFI_FC_DIR_E2P | (is_frag ? BLUFI_FC_FRAG : 0);
+    uint8_t ot; uint8_t *od; uint16_t ol;
+    int rr = blufi_reasm_feed(&r, BLUFI_BUILD_TYPE(BLUFI_TYPE_DATA, BLUFI_DATA_NEG),
+                              fc, body, blen, &ot, &od, &ol);
+    if (rr == 1) {
+      ASSERT_EQ(ol, payload.size());
+      EXPECT_EQ(memcmp(od, payload.data(), ol), 0);
+      got_complete = true;
+    }
+    frames++;
+  } while (fr == 0);
+  EXPECT_TRUE(got_complete);
+  EXPECT_GT(frames, 1);
+}
+
 // ---- full DH + AES-CFB interop: simulate the phone against blufi_security ----
 TEST(BlufiHandshake, DhThenAesCfbInterop) {
   ASSERT_EQ(blufi_security_init(), 0);
@@ -262,5 +315,134 @@ TEST(BlufiHandshake, DhThenAesCfbInterop) {
 
   mbedtls_mpi_free(&P); mbedtls_mpi_free(&G); mbedtls_mpi_free(&X);
   mbedtls_mpi_free(&x);  mbedtls_mpi_free(&Y); mbedtls_mpi_free(&shared);
+  blufi_security_deinit();
+}
+
+/*
+ * End-to-end interop with the real EspBlufiForiOS handshake:
+ *  - the app's fixed 1024-bit P / g=2 / 128-byte public key,
+ *  - its param blob (2-byte length + P, G, K),
+ *  - MD5(shared secret) as the AES-128 key,
+ *  - AES-128-CFB128 with iv[0] = frame seq,
+ *  - CRC-16 checksum over [seq, len, plaintext].
+ * This is the path that was previously dropped because the CRC lacked the
+ * esp_rom_crc16_be seed/final inversions.
+ */
+TEST(BlufiHandshake, IosAppRealGroupAndEncryptedFrame) {
+  // BlufiSecurity.m DH_P (Espressif's 1024-bit BluFi group).
+  static const uint8_t DH_P[128] = {
+    0xcf, 0x5c, 0xf5, 0xc3, 0x84, 0x19, 0xa7, 0x24,
+    0x95, 0x7f, 0xf5, 0xdd, 0x32, 0x3b, 0x9c, 0x45,
+    0xc3, 0xcd, 0xd2, 0x61, 0xeb, 0x74, 0x0f, 0x69,
+    0xaa, 0x94, 0xb8, 0xbb, 0x1a, 0x5c, 0x96, 0x40,
+    0x91, 0x53, 0xbd, 0x76, 0xb2, 0x42, 0x22, 0xd0,
+    0x32, 0x74, 0xe4, 0x72, 0x5a, 0x54, 0x06, 0x09,
+    0x2e, 0x9e, 0x82, 0xe9, 0x13, 0x5c, 0x64, 0x3c,
+    0xae, 0x98, 0x13, 0x2b, 0x0d, 0x95, 0xf7, 0xd6,
+    0x53, 0x47, 0xc6, 0x8a, 0xfc, 0x1e, 0x67, 0x7d,
+    0xa9, 0x0e, 0x51, 0xbb, 0xab, 0x5f, 0x5c, 0xf4,
+    0x29, 0xc2, 0x91, 0xb4, 0xba, 0x39, 0xc6, 0xb2,
+    0xdc, 0x5e, 0x8c, 0x72, 0x31, 0xe4, 0x6a, 0xa7,
+    0x72, 0x8e, 0x87, 0x66, 0x45, 0x32, 0xcd, 0xf5,
+    0x47, 0xbe, 0x20, 0xc9, 0xa3, 0xfa, 0x83, 0x42,
+    0xbe, 0x6e, 0x34, 0x37, 0x1a, 0x27, 0xc0, 0x6f,
+    0x7d, 0xc0, 0xed, 0xdd, 0xd2, 0xf8, 0x63, 0x73,
+  };
+
+  ASSERT_EQ(blufi_security_init(), 0);
+
+  mbedtls_mpi P, G, x, X, Y, shared;
+  mbedtls_mpi_init(&P); mbedtls_mpi_init(&G); mbedtls_mpi_init(&x);
+  mbedtls_mpi_init(&X); mbedtls_mpi_init(&Y); mbedtls_mpi_init(&shared);
+  ASSERT_EQ(mbedtls_mpi_read_binary(&P, DH_P, sizeof(DH_P)), 0);
+  ASSERT_EQ(mbedtls_mpi_lset(&G, 2), 0);
+  ASSERT_EQ(mbedtls_mpi_read_string(&x, 16, "0123456789ABCDEF0123456789ABCDEF"), 0);
+  ASSERT_EQ(mbedtls_mpi_exp_mod(&X, &G, &x, &P, nullptr), 0);
+
+  auto be = [](const mbedtls_mpi *m) {
+    size_t n = mbedtls_mpi_size(m);
+    std::vector<uint8_t> r(n);
+    mbedtls_mpi_write_binary(m, r.data(), n);
+    return r;
+  };
+  auto len16 = [](size_t n) {
+    return std::vector<uint8_t>{(uint8_t)(n >> 8), (uint8_t)(n & 0xff)};
+  };
+
+  // iOS postNegotiateSecurity(): length frame, then [type=1][pLen][P][gLen][G][kLen][K].
+  std::vector<uint8_t> blob;
+  for (auto v : {be(&P), be(&G), be(&X)}) {
+    auto l = len16(v.size());
+    blob.insert(blob.end(), l.begin(), l.end());
+    blob.insert(blob.end(), v.begin(), v.end());
+  }
+  uint8_t lenf[3] = {SEC_TYPE_DH_PARAM_LEN, (uint8_t)(blob.size() >> 8),
+                     (uint8_t)(blob.size() & 0xff)};
+  const uint8_t *tmp = nullptr;
+  uint16_t tl = 0;
+  ASSERT_EQ(blufi_negotiate(lenf, sizeof(lenf), &tmp, &tl), 0);
+
+  std::vector<uint8_t> f;
+  f.push_back(SEC_TYPE_DH_PARAM_DATA);
+  f.insert(f.end(), blob.begin(), blob.end());
+  const uint8_t *dev_pub = nullptr;
+  uint16_t dev_pub_len = 0;
+  ASSERT_EQ(blufi_negotiate(f.data(), (uint16_t)f.size(), &dev_pub, &dev_pub_len), 0);
+  ASSERT_EQ(dev_pub_len, 128u);  // exactly what the app expects (DH_size)
+
+  // A broken RNG shows up as G^0 mod P == 1 (128-byte buffer full of zeros
+  // with a trailing 0x01). That still yields matching MD5 keys on both sides
+  // because both compute 1, so explicitly require a nontrivial public key.
+  ASSERT_EQ(mbedtls_mpi_read_binary(&Y, dev_pub, dev_pub_len), 0);
+  EXPECT_GT(mbedtls_mpi_cmp_int(&Y, 2), 0);
+  EXPECT_LT(mbedtls_mpi_cmp_mpi(&Y, &P), 0);
+
+  // Phone side: shared = Y^x mod P, strip leading zeros, MD5 -> AES-128 key.
+  ASSERT_EQ(mbedtls_mpi_read_binary(&Y, dev_pub, dev_pub_len), 0);
+  ASSERT_EQ(mbedtls_mpi_exp_mod(&shared, &Y, &x, &P, nullptr), 0);
+  auto ss = be(&shared);
+  uint8_t psk[16];
+  blufimbed_md5(ss.data(), ss.size(), psk);
+
+  // The SET_SEC_MODE control frame the app posts (checksum=YES, seq 4).
+  uint8_t ctrl[16] = {0x04, 0x00, 0x04, 0x01, 0x03};
+  int ctrl_len = blufi_frame_append_checksum(ctrl, 5, sizeof(ctrl));
+  ASSERT_EQ(ctrl_len, 7);
+  ASSERT_EQ(blufi_frame_verify_checksum(ctrl, ctrl_len), 0);
+  EXPECT_EQ(ctrl[1] & BLUFI_FC_CHECK, BLUFI_FC_CHECK);
+
+  // An encrypted+checksummed STA_SSID data frame, seq 5 (app _encrypted/_checksum).
+  const uint8_t seq = 5;
+  const char *ssid = "MyHomeAP";
+  const size_t slen = strlen(ssid);
+  uint8_t frame[64];
+  int n = blufi_frame_build(BLUFI_TYPE_DATA, BLUFI_DATA_STA_SSID, seq,
+                            reinterpret_cast<const uint8_t *>(ssid),
+                            (uint16_t)slen, frame, sizeof(frame));
+  ASSERT_EQ(n, 4 + (int)slen);
+  n = blufi_frame_append_checksum(frame, (uint16_t)n, sizeof(frame));
+  ASSERT_GT(n, 0);
+
+  // Encrypt only the payload, exactly like getPostPacket: (crc, then encrypt).
+  uint8_t iv[16] = {0};
+  iv[0] = seq;
+  blufimbed_aes_context aes;
+  blufimbed_aes_init(&aes);
+  ASSERT_EQ(blufimbed_aes_setkey_enc(&aes, psk, 128), 0);
+  size_t off = 0;
+  ASSERT_EQ(blufimbed_aes_crypt_cfb128(&aes, MBEDTLS_AES_ENCRYPT, slen, &off, iv,
+                                       frame + BLUFI_HDR_LEN,
+                                       frame + BLUFI_HDR_LEN), 0);
+  blufimbed_aes_free(&aes);
+  frame[1] |= BLUFI_FC_ENC | BLUFI_FC_CHECK;
+  EXPECT_NE(memcmp(frame + BLUFI_HDR_LEN, ssid, slen), 0);
+
+  // Device receive path: decrypt payload, then verify checksum.
+  ASSERT_EQ(blufi_aes_decrypt(seq, frame + BLUFI_HDR_LEN, (int)slen), (int)slen);
+  ASSERT_EQ(memcmp(frame + BLUFI_HDR_LEN, ssid, slen), 0);
+  EXPECT_EQ(blufi_frame_verify_checksum(frame, (uint16_t)n), 0);
+
+  mbedtls_mpi_free(&P); mbedtls_mpi_free(&G); mbedtls_mpi_free(&x);
+  mbedtls_mpi_free(&X); mbedtls_mpi_free(&Y); mbedtls_mpi_free(&shared);
   blufi_security_deinit();
 }

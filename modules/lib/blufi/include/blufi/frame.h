@@ -92,9 +92,13 @@ int blufi_frame_build(uint8_t type, uint8_t subtype, uint8_t seq,
 int blufi_frame_parse(const uint8_t *buf, size_t buf_len, struct blufi_frame *out);
 
 /*
- * esp_crc16_be: CRC-16 with polynomial 0x1021, processed MSB-first, no input/output
- * reflection and no final xor (i.e. CRC-16/CCITT-FALSE with a caller-supplied init).
- * BluFi uses init = 0. Matches Espressif esp_crc16_be / blufi_security checksum.
+ * esp_crc16_be: identical semantics to ESP-IDF's esp_rom_crc16_be() — poly 0x1021,
+ * MSB-first, no reflection, with the seed/result inverted internally (the ROM
+ * helper does `crc = ~crc` on entry and returns `~crc`). BluFi passes seed 0:
+ * the inner loop is CRC-16/CCITT-FALSE and the returned value is its complement
+ * (0xD64E for the "123456789" check string). This matches EspBlufiForiOS's
+ * BlufiSecurity.crc and the ESP device checksum. Pass the previous result only
+ * when chaining multiple calls.
  */
 uint16_t blufi_crc16_be(uint16_t crc, const uint8_t *buf, uint32_t len);
 
@@ -129,7 +133,7 @@ void blufi_reasm_reset(blufi_reasm *r);
 /*
  * Feed one parsed frame. Returns:
  *   0  = more fragments expected (nothing to dispatch),
- *   1  = a complete message is ready -> *out_type/*out_data/*out_len set
+ *   1  = a complete message is ready -> out_type/out_data/out_len set
  *        (either a whole unfragmented frame, or the reassembled fragments),
  *  <0  = malformed.
  */
