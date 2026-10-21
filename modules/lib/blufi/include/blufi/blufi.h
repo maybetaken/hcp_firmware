@@ -35,6 +35,12 @@ int blufi_send(uint8_t type, uint8_t subtype, const uint8_t *data, uint16_t len)
  * Advertising resumes from the disconnected() callback. Returns 0/neg errno. */
 int blufi_disconnect(void);
 
+/* Shut BluFi down for good: stop advertising, close the link if one is up, then
+ * power the controller off (bt_disable) from a work item once the disconnect has
+ * settled. Called after provisioning succeeds - the device should not keep
+ * broadcasting. blufi_start() brings it back (e.g. credentials later fail). */
+int blufi_stop(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -48,6 +48,12 @@ static struct bt_conn *g_conn;
  * because bt_le_adv_start can transiently fail with -ENOMEM during teardown. */
 static struct k_work_delayable adv_restart_work;
 static uint8_t g_adv_retries;
+/* Set by blufi_stop(): keep the link down and the radio off until blufi_start()
+ * runs again. The controller is powered down from a work item after the
+ * disconnect has completed, because bt_disable() while a connection is still
+ * being torn down is not something the stack expects. */
+static bool g_want_off;
+static struct k_work_delayable bt_off_work;
 /* BluFi outbound frame sequence number. The client validates that the seq of
  * frames it receives increments strictly from 0 per connection (esp blufi
  * send_seq++), so we must too; reset on each new connection. */
@@ -349,6 +355,20 @@ static void adv_restart_fn(struct k_work *work)
 	}
 }
 
+static void bt_off_fn(struct k_work *work)
+{
+	ARG_UNUSED(work);
+	int err = bt_disable();
+	if (err) {
+		/* Advertising is already stopped and g_want_off keeps it stopped, so
+		 * the phone can no longer see us even if this controller build has no
+		 * .disable implementation - we just do not get the RAM back. */
+		LOG_WRN("bt_disable failed (%d); BLE silent but still powered", err);
+	} else {
+		LOG_INF("Bluetooth disabled after provisioning");
+	}
+}
+
 static void connected(struct bt_conn *conn, uint8_t err)
 {
 	if (err) {
@@ -388,6 +408,11 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	/* Do NOT call bt_le_adv_start() synchronously here: the link/adv buffers
 	 * are still being torn down and it fails with -ENOMEM. Defer to the
 	 * system workqueue with a small delay and retry until it takes. */
+	if (g_want_off) {
+		LOG_INF("provisioning closed; not re-advertising");
+		k_work_reschedule(&bt_off_work, K_MSEC(200));
+		return;
+	}
 	g_adv_retries = 0;
 	k_work_reschedule(&adv_restart_work, K_MSEC(100));
 }
@@ -406,6 +431,8 @@ void blufi_set_callback(blufi_data_cb_t cb, void *user)
 int blufi_start(void)
 {
 	k_work_init_delayable(&adv_restart_work, adv_restart_fn);
+	k_work_init_delayable(&bt_off_work, bt_off_fn);
+	g_want_off = false;
 	int err = bt_enable(bt_ready);
 	if (err && err != -EALREADY) {
 		return err;
@@ -415,8 +442,11 @@ int blufi_start(void)
 	}
 	bt_gatt_cb_register(&gatt_cb);
 	bt_set_name(BLUFI_ADV_NAME);
-	/* Advertise from a fresh random-static identity so the app negotiates. */
-	{
+	/* Advertise from a fresh random-static identity so the app negotiates. Reuse
+	 * it if blufi_start() runs again after a bt_disable(): the identity table
+	 * survives the radio power cycle, and re-creating it would burn the next
+	 * BT_ID_MAX slot (and then silently fall back to the default identity). */
+	if (g_adv_id == BT_ID_DEFAULT) {
 		bt_addr_le_t raddr;
 		sys_csrand_get(raddr.a.val, sizeof(raddr.a.val));
 		raddr.a.val[5] |= 0xC0; /* random static: top 2 bits = 11 */
@@ -428,6 +458,8 @@ int blufi_start(void)
 		} else {
 			LOG_WRN("blufi: bt_id_create failed (%d), using default", id);
 		}
+	} else {
+		LOG_INF("blufi: reusing identity %d", g_adv_id);
 	}
 	adv_start();
 	return 0;
@@ -550,6 +582,24 @@ int blufi_disconnect(void)
 	 * The BluFi frame that triggered this is handled on the rx work queue, never
 	 * in the ATT callback, so tearing the link down from here is safe. */
 	return bt_conn_disconnect(g_conn, BT_HCI_ERR_LOCALHOST_TERM_CONN);
+}
+
+int blufi_stop(void)
+{
+	if (!g_want_off) {
+		g_want_off = true;
+		k_work_cancel_delayable(&adv_restart_work);
+		if (bt_le_adv_stop() == 0) {
+			g_adv_running = false;
+		}
+		LOG_INF("blufi stopped (advertising off)");
+	}
+	if (g_conn) {
+		/* disconnected() finishes the job and powers the radio down. */
+		return bt_conn_disconnect(g_conn, BT_HCI_ERR_LOCALHOST_TERM_CONN);
+	}
+	k_work_reschedule(&bt_off_work, K_MSEC(50));
+	return 0;
 }
 
 #endif /* CONFIG_BLUFI && CONFIG_BT_PERIPHERAL */

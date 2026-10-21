@@ -51,6 +51,8 @@ bool Button::Init(Callback cb, void* arg) {
   return true;
 }
 
+bool Button::Pressed() { return g_debouncer.stable(); }
+
 }  // namespace input
 }  // namespace hcp
 

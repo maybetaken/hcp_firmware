@@ -128,7 +128,11 @@ bool Store::Open(const char* /*root*/) {
   if (impl_->open) {
     return true;
   }
-  memset(g_cache, 0, sizeof(g_cache));
+  // Entry has default member initializers, so reset it by assignment rather
+  // than memset() (which warns for non-trivial types).
+  for (auto& e : g_cache) {
+    e = Entry{};
+  }
   if (settings_subsys_init() != 0) {
     return false;
   }

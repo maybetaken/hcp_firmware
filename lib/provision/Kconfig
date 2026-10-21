@@ -1,0 +1,14 @@
+# hcp::provision module Kconfig
+# SPDX-License-Identifier: Apache-2.0
+
+menuconfig HCP_PROVISION
+	bool "HCP provisioning state machine (credentials, LED, button)"
+	default y
+	depends on BLUFI && HCP_NET && HCP_STORAGE && HCP_INPUT
+	help
+	  Owns the boot policy around connectivity: try the credentials saved in
+	  hcp::storage, fall back to BluFi when they do not work, persist what the
+	  phone provisions, close BLE after success, show the state on the status LED
+	  and act on the user button (short press = reboot, long press = forget
+	  credentials). The transition logic (lib/provision/src/fsm.cpp) is pure and
+	  covered by the host tests.

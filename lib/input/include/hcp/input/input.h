@@ -42,8 +42,44 @@ class Button {
  public:
   using Callback = void (*)(bool pressed, void* arg);
   static bool Init(Callback cb, void* arg);
+  // Current settled level (false before Init or when no button is defined).
+  static bool Pressed();
 };
 #endif  // CONFIG_HCP_INPUT
+
+// Pure short/long press classifier. Feed it the settled level on every tick (the
+// app already runs one for the LED animation) - it needs repeat calls, because a
+// long press must be reported while the button is still held, not on release.
+//
+//   * held >= long_ms          -> kLong, emitted once, immediately
+//   * released before long_ms:
+//       duration <= short_max_ms -> kShort
+//       otherwise                -> kAborted (deliberate no-man's-land release)
+//
+// Keeping the thresholds in the constructor lets the policy live in the caller and
+// the timing logic stay host-testable.
+class PressClassifier {
+ public:
+  enum Action {
+    kNone = 0,
+    kShort,
+    kLong,
+    kAborted,
+  };
+
+  PressClassifier(uint32_t long_ms, uint32_t short_max_ms)
+      : long_ms_(long_ms), short_max_ms_(short_max_ms) {}
+
+  Action Update(bool pressed, uint64_t now_ms);
+  bool held() const { return held_; }
+
+ private:
+  uint32_t long_ms_;
+  uint32_t short_max_ms_;
+  bool held_ = false;
+  bool long_fired_ = false;
+  uint64_t start_ms_ = 0;
+};
 
 }  // namespace input
 }  // namespace hcp

@@ -20,6 +20,10 @@
 		zephyr,shell-uart = &usb_serial;
 		zephyr,flash = &flash0;
 		zephyr,code-partition = &slot0_partition;
+		/* Persistent KV (hcp::storage -> settings -> NVS) uses the 192 KB
+		 * "storage" slot of Espressif's default partition table, so provisioned
+		 * Wi-Fi credentials survive a power cycle without a new partition per board. */
+		zephyr,storage = &storage_partition;
 	};
 
 	aliases {

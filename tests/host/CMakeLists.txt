@@ -99,3 +99,11 @@ target_include_directories(test_blufi PRIVATE ${BF}/include ${BF}/sec ${BF}/sec/
 target_compile_definitions(test_blufi PRIVATE MBEDTLS_CONFIG_FILE="blufi_dhm_config.h" CONFIG_BLUFI_SECURITY=1)
 target_link_libraries(test_blufi PRIVATE GTest::gtest_main)
 add_test(NAME test_blufi COMMAND test_blufi)
+
+# ---- hcp::provision state machine ----
+set(PV ${HCP_ROOT}/lib/provision)
+add_executable(test_provision ${PV}/src/fsm.cpp
+              ${CMAKE_CURRENT_LIST_DIR}/test_provision.cpp)
+target_include_directories(test_provision PRIVATE ${PV}/include)
+target_link_libraries(test_provision PRIVATE GTest::gtest_main)
+add_test(NAME test_provision COMMAND test_provision)

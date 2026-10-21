@@ -1,0 +1,93 @@
+/*
+ * hcp::provision — provisioning/connectivity state machine (pure logic).
+ *
+ * Policy lives here so it is host-testable and free of Zephyr/Wi-Fi/LED
+ * dependencies: the caller feeds events (boot, Wi-Fi state changes, credentials
+ * from the phone, a long-press reset) and executes the returned actions.
+ *
+ * Shape of the flow the product wants:
+ *   boot with saved credentials -> try Wi-Fi (bounded retries), BLE stays off
+ *   credentials unusable        -> open BluFi so the phone can re-provision
+ *   phone supplied credentials  -> save them; close BLE a moment after success
+ *   link lost while online      -> reconnect from saved credentials, then fall
+ *                                  back to provisioning
+ *   long press                  -> erase credentials, back to provisioning
+ *
+ * Google C++ Style naming. SPDX-License-Identifier: Apache-2.0
+ */
+#pragma once
+
+#include <cstdint>
+
+namespace hcp {
+namespace provision {
+
+class Fsm {
+ public:
+  static constexpr int kMaxActions = 4;
+
+  enum class State {
+    kIdle,          // not started yet
+    kProvisioning,  // BLE open, waiting for the phone
+    kWifiTry,       // connecting with credentials, BLE closed
+    kOnline,        // Wi-Fi up
+  };
+
+  // Steady LED pattern for a state.
+  enum class Pattern { kOff, kBlueSlow, kBlueFast, kGreenSolid };
+
+  // One-shot blink sequence layered on top of the steady pattern.
+  enum class Alert { kNone, kRed3, kPurple3 };
+
+  enum class Action {
+    kNone,
+    kEnableBle,        // blufi_start()
+    kDisableBle,       // blufi_stop()
+    kCloseBleDelayed,  // blufi_stop() after the grace period (let the phone get
+                       // the final report first - mini-programs are slow)
+    kConnectWifi,      // connect using the credentials we hold
+    kSaveCreds,        // persist SSID/passphrase
+    kEraseCreds,       // remove them
+  };
+
+  struct Output {
+    State state = State::kIdle;
+    Pattern pattern = Pattern::kOff;
+    Alert alert = Alert::kNone;
+    Action actions[kMaxActions] = {Action::kNone};
+    int num_actions = 0;
+  };
+
+  explicit Fsm(int wifi_attempts = 3) : wifi_attempts_(wifi_attempts) {}
+
+  // Entry point. `have_creds` = stored credentials exist and are worth trying.
+  Output Start(bool have_creds);
+
+  Output OnPhoneCreds();          // the phone just supplied SSID+pass and is
+                                  // driving the connect itself
+  Output OnWifiConnected();
+  Output OnWifiConnectFailed();   // one attempt failed
+  Output OnWifiLost();            // link dropped while we were online
+  Output OnResetRequested();      // long press: forget credentials
+
+  State state() const { return state_; }
+  Pattern pattern() const { return pattern_; }
+  int attempts() const { return attempts_; }
+  bool ble_open() const { return ble_open_; }
+
+ private:
+  Output Make(State s, Pattern p, Alert a);
+  static void Push(Output& o, Action act);
+
+  State state_ = State::kIdle;
+  Pattern pattern_ = Pattern::kOff;
+  int attempts_ = 0;
+  int wifi_attempts_;
+  bool ble_open_ = false;
+  // Credentials came from the phone in this session: on success, shut BLE down
+  // (delayed) and persist; on failure, stay reachable over BLE.
+  bool from_phone_ = false;
+};
+
+}  // namespace provision
+}  // namespace hcp

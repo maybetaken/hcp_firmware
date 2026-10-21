@@ -27,6 +27,9 @@ extern "C" {
 #include "blufi/blufi.h"
 }
 #endif
+#ifdef CONFIG_HCP_PROVISION
+#include "hcp/provision/provision.h"
+#endif
 
 using namespace hcp::kernel;
 
@@ -44,14 +47,17 @@ static void Heartbeat(void* /*arg*/) {
   HCP_LOGD(hcp::log::kDomainDevice, "tick");
 }
 
+#ifndef CONFIG_HCP_PROVISION  // hcp::provision owns the button when enabled
 static void OnButton(bool pressed, void* /*arg*/) {
   HCP_LOGI(hcp::log::kDomainDevice, "button %s",
            pressed ? "pressed" : "released");
 }
+#endif
 
 #ifdef CONFIG_HCP_LED
-// Optional addressable-LED demo; only built when CONFIG_HCP_LED is enabled AND
-// the ws2812-spi overlay is applied (see lib/led/ws2812-spi.{conf,overlay}).
+// Optional addressable-LED demo. hcp::provision owns the LED when it is enabled
+// (it reflects the connectivity state instead of cycling colors).
+#ifndef CONFIG_HCP_PROVISION
 static void LedWorker(void* /*arg*/) {
   hcp::led::Strip s(1);
   if (!s.Open()) {
@@ -69,6 +75,7 @@ static void LedWorker(void* /*arg*/) {
     time::DelayMs(1200);
   }
 }
+#endif  // !CONFIG_HCP_PROVISION
 #endif  // CONFIG_HCP_LED
 
 #ifdef CONFIG_HCP_MODBUS_DEMO
@@ -277,6 +284,10 @@ static void prov_timeout_fn(struct k_work*) {
 // instead of timing out waiting for it (then disconnects, reason 19).
 static void on_wifi_for_blufi(hcp::net::WifiEvent e, void*) {
   using E = hcp::net::WifiEvent;
+#ifdef CONFIG_HCP_PROVISION
+  // The state machine drives retry / BLE fallback / LED from the same events.
+  hcp::provision::NotifyWifiEvent(e);
+#endif
   if (e == E::kConnected) {
     atomic_set(&g_prov_active, 0);
     k_work_cancel_delayable(&g_prov_timeout);
@@ -449,6 +460,11 @@ extern "C" void on_blufi_data(uint8_t type, uint8_t subtype,
         atomic_set(&g_prov_active, 1);
         atomic_set(&g_succ_sent, 0);
         k_work_reschedule(&g_prov_timeout, K_SECONDS(30));
+#ifdef CONFIG_HCP_PROVISION
+        /* Persist what the phone gave us and arm "close BLE after success"; the
+         * connect below stays in this path so the BluFi reports stay accurate. */
+        hcp::provision::NotifyPhoneCredentials(g_ssid, g_pass);
+#endif
         k_work_submit(&g_prov_work);  // connect off the BT RX thread
         break;
       }
@@ -542,13 +558,17 @@ int main(void) {
   HCP_LOGI(hcp::log::kDomainDevice, "bring-up done");
 
   // Bind the board user button (devicetree alias sw0) via hcp::input.
+#ifndef CONFIG_HCP_PROVISION
   if (!hcp::input::Button::Init(OnButton, nullptr)) {
     HCP_LOGW(hcp::log::kDomainDevice, "button init failed (no sw0?)");
   }
+#endif
 
 #ifdef CONFIG_HCP_LED
+#ifndef CONFIG_HCP_PROVISION
   Thread led(LedWorker, nullptr, "led");
   led.Start();
+#endif
 #endif
 
 #ifdef CONFIG_HCP_MODBUS_DEMO
@@ -573,11 +593,18 @@ int main(void) {
   k_work_init(&g_prov_work, prov_work_fn);
   k_work_init_delayable(&g_prov_timeout, prov_timeout_fn);
   blufi_set_callback(on_blufi_data, nullptr);
+#ifdef CONFIG_HCP_PROVISION
+  /* The state machine decides: credentials in storage -> join the network with
+   * BLE off, otherwise (or after retries fail) -> open BluFi. It also owns the
+   * status LED and the button from here on. */
+  hcp::provision::Start();
+#else
   if (blufi_start() == 0) {
     HCP_LOGI(hcp::log::kDomainWifi, "blufi advertising; waiting for phone app");
   } else {
     HCP_LOGE(hcp::log::kDomainWifi, "blufi start failed");
   }
+#endif
 #endif
 
   // Continuous heartbeat so the ignition loop is observable at any time
