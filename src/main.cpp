@@ -190,6 +190,9 @@ static atomic_t g_succ_sent;
 
 // Send a 3-byte WIFI_REP [opmode][sta_state][softap_conn_num] like esp.
 static void blufi_report_wifi_state(uint8_t sta_state) {
+  if (!blufi_is_connected()) {
+    return;  // no phone on the link: building a report would be pointless
+  }
   uint8_t rep[3] = {BLUFI_OPMODE_STA, sta_state, 0x00};
   blufi_send(BLUFI_TYPE_DATA, BLUFI_DATA_WIFI_REP, rep, sizeof(rep));
 }
@@ -218,6 +221,9 @@ static const ApRec* find_ap(const char* ssid) {
 // + BSSID(0x01,len=6) + SSID(0x02,len). Mirrors the ESP-IDF got-IP report.
 static void blufi_report_wifi_success() {
   uint8_t rep[3 + 2 + 6 + 2 + 32];
+  if (!blufi_is_connected()) {
+    return;  // boot-time connect with provisioning closed: nothing to report
+  }
   int n = 0;
   rep[n++] = BLUFI_OPMODE_STA;
   rep[n++] = BLUFI_STA_CONN_SUCCESS;
@@ -242,6 +248,9 @@ static void blufi_report_wifi_success() {
 
 // Final failure report, including the ESP-compatible disconnect-reason TLV.
 static void blufi_report_wifi_fail(uint8_t reason) {
+  if (!blufi_is_connected()) {
+    return;
+  }
   uint8_t rep[6] = {BLUFI_OPMODE_STA, BLUFI_STA_CONN_FAIL, 0x00,
                     BLUFI_DATA_STA_CONN_END_REASON, 1, reason};
   HCP_LOGW(hcp::log::kDomainWifi, "blufi: report FAIL (reason=%u)", reason);

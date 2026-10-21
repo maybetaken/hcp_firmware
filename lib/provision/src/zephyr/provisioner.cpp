@@ -39,6 +39,15 @@ constexpr uint32_t kShortPressMaxMs = 1000;
  * ESP32 driver returns -EALREADY while it is still in CONNECTING/CONNECTED, and
  * IsConnected() (IP based) cannot see the transitional state. */
 constexpr int kDisconnectWaitMs = 1000;
+/* Deadline for a single Wi-Fi attempt. The ESP32 driver never reports a failed
+ * association that happens after esp_wifi_connect() returns (no CONNECT_RESULT),
+ * so without a deadline a bad credential set leaves the machine in kWifiTry:
+ * LED blinking, BLE closed, device unreachable. The first attempt gets the long
+ * budget (a healthy AP + DHCP took ~12 s on our board); retries only need to
+ * cover "AP not found", so they are shorter. Worst case before BluFi opens:
+ * 20 + 10 + 10 = 40 s. */
+constexpr uint32_t kFirstAttemptTimeoutMs = 20000;
+constexpr uint32_t kRetryAttemptTimeoutMs = 10000;
 
 constexpr char kKeySsid[] = "prov/ssid";
 constexpr char kKeyPass[] = "prov/pass";
@@ -76,9 +85,15 @@ static K_SEM_DEFINE(g_wifi_kick, 0, 1);
 
 struct k_work_delayable g_tick_work;
 struct k_work_delayable g_ble_close_work;
+struct k_work_delayable g_attempt_work;
 static K_SEM_DEFINE(g_disconn_sem, 0, 1);
 
 void Apply(const Fsm::Output& out);  // defined below
+
+void AttemptTimeoutFn(struct k_work*) {
+  HCP_LOGW(hcp::log::kDomainWifi, "provision: attempt timed out");
+  Apply(g_fsm.OnAttemptTimeout());
+}
 
 void Reboot() {
   HCP_LOGI(hcp::log::kDomainDevice, "provision: short press -> reboot");
@@ -130,6 +145,8 @@ void ConnectNow() {
   if (!g_have_creds) {
     return;
   }
+  HCP_LOGI(hcp::log::kDomainWifi, "provision: connecting to \"%s\" (try %d)",
+           g_ssid, g_fsm.attempts());
   // Force a clean slate: re-provisioning an ESP32 whose state is still
   // CONNECTING returns -EALREADY, and IP-based IsConnected() cannot see it.
   k_sem_reset(&g_disconn_sem);
@@ -138,8 +155,6 @@ void ConnectNow() {
     HCP_LOGD(hcp::log::kDomainWifi, "provision: no disconnect event, connecting");
   }
 
-  HCP_LOGI(hcp::log::kDomainWifi, "provision: connecting to \"%s\" (try %d)",
-           g_ssid, g_fsm.attempts());
   net::WifiCredential c{g_ssid, g_pass[0] ? g_pass : nullptr};
   if (!net::wifi::Connect(c) && !net::wifi::IsConnected()) {
     // The request could not even be submitted (driver down/busy). Count it as a
@@ -161,11 +176,51 @@ void BleCloseFn(struct k_work*) {
   blufi_stop();
 }
 
+const char* StateName(Fsm::State s) {
+  switch (s) {
+    case Fsm::State::kProvisioning:
+      return "provisioning";
+    case Fsm::State::kWifiTry:
+      return "wifi-try";
+    case Fsm::State::kOnline:
+      return "online";
+    default:
+      return "idle";
+  }
+}
+
+const char* PatternName(Fsm::Pattern p) {
+  switch (p) {
+    case Fsm::Pattern::kBlueSlow:
+      return "blue-slow";
+    case Fsm::Pattern::kBlueFast:
+      return "blue-fast";
+    case Fsm::Pattern::kGreenSolid:
+      return "green";
+    default:
+      return "off";
+  }
+}
+
 void Apply(const Fsm::Output& out) {
   g_pattern = out.pattern;
   g_alert = out.alert;
   // 3 blinks, 4 ticks (200 ms) per blink.
   g_alert_ticks = (out.alert == Fsm::Alert::kNone) ? 0 : 12;
+
+  // One readable line per transition: this is what tells you on the console
+  // which state the box is in when the LED alone is ambiguous.
+  HCP_LOGI(hcp::log::kDomainWifi, "provision: state=%s led=%s attempt=%d",
+           StateName(out.state), PatternName(out.pattern), g_fsm.attempts());
+
+  // Every stay in kWifiTry gets a deadline; leaving it cancels the pending one.
+  if (out.state == Fsm::State::kWifiTry) {
+    uint32_t ms = (g_fsm.attempts() <= 1) ? kFirstAttemptTimeoutMs
+                                          : kRetryAttemptTimeoutMs;
+    k_work_reschedule(&g_attempt_work, K_MSEC(ms));
+  } else {
+    k_work_cancel_delayable(&g_attempt_work);
+  }
 
   for (int i = 0; i < out.num_actions; i++) {
     switch (out.actions[i]) {
@@ -274,6 +329,7 @@ void TickFn(struct k_work*) {
 void Start() {
   k_work_init_delayable(&g_tick_work, TickFn);
   k_work_init_delayable(&g_ble_close_work, BleCloseFn);
+  k_work_init_delayable(&g_attempt_work, AttemptTimeoutFn);
   k_thread_create(&g_wifi_thread, g_wifi_thread_stack,
                   K_THREAD_STACK_SIZEOF(g_wifi_thread_stack), WifiThread,
                   nullptr, nullptr, nullptr, K_LOWEST_APPLICATION_THREAD_PRIO, 0,
@@ -312,7 +368,7 @@ void NotifyWifiEvent(net::WifiEvent e) {
       Apply(g_fsm.OnWifiConnectFailed());
       break;
     case net::WifiEvent::kDisconnected:
-      Apply(g_fsm.OnWifiLost());
+      Apply(g_fsm.OnWifiDisconnected());
       break;
     default:
       break;

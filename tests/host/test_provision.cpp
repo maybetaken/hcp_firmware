@@ -53,28 +53,35 @@ TEST(ProvisionFsm, BootWithCredsTriesWifiAndKeepsBleClosed) {
 // ---- saved-credentials retry budget ----
 
 TEST(ProvisionFsm, SavedCredsRetryThenFallbackToBle) {
-  Fsm fsm(3);
+  Fsm fsm(3);  // three tries in total
   fsm.Start(true);
+  EXPECT_EQ(fsm.attempts(), 1);
 
   Fsm::Output first = fsm.OnWifiConnectFailed();
   EXPECT_EQ(first.state, Fsm::State::kWifiTry);
   EXPECT_TRUE(Has(first, Fsm::Action::kConnectWifi));
   EXPECT_FALSE(Has(first, Fsm::Action::kEnableBle));
+  EXPECT_EQ(fsm.attempts(), 2);
 
   Fsm::Output second = fsm.OnWifiConnectFailed();
-  EXPECT_EQ(second.state, Fsm::State::kProvisioning);
-  EXPECT_TRUE(Has(second, Fsm::Action::kEnableBle));
-  EXPECT_EQ(second.alert, Fsm::Alert::kRed3);
-  EXPECT_EQ(second.pattern, Fsm::Pattern::kBlueSlow);
+  EXPECT_EQ(second.state, Fsm::State::kWifiTry);
+  EXPECT_TRUE(Has(second, Fsm::Action::kConnectWifi));
+  EXPECT_EQ(fsm.attempts(), 3);
 
-  // No further retries once we are provisioning.
   Fsm::Output third = fsm.OnWifiConnectFailed();
   EXPECT_EQ(third.state, Fsm::State::kProvisioning);
-  EXPECT_EQ(third.num_actions, 0);
+  EXPECT_TRUE(Has(third, Fsm::Action::kEnableBle));
+  EXPECT_EQ(third.alert, Fsm::Alert::kRed3);
+  EXPECT_EQ(third.pattern, Fsm::Pattern::kBlueSlow);
+
+  // No further retries once we are provisioning.
+  Fsm::Output extra = fsm.OnWifiConnectFailed();
+  EXPECT_EQ(extra.state, Fsm::State::kProvisioning);
+  EXPECT_EQ(extra.num_actions, 0);
 }
 
 TEST(ProvisionFsm, AttemptsAreCountedAndResetOnFallback) {
-  Fsm fsm(3);
+  Fsm fsm(2);
   fsm.Start(true);
   EXPECT_EQ(fsm.attempts(), 1);
 
@@ -82,7 +89,7 @@ TEST(ProvisionFsm, AttemptsAreCountedAndResetOnFallback) {
   EXPECT_EQ(fsm.attempts(), 2);
   EXPECT_EQ(fsm.state(), Fsm::State::kWifiTry);
 
-  fsm.OnWifiConnectFailed();  // third failure exhausts the budget
+  fsm.OnWifiConnectFailed();  // second failure exhausts the budget
   EXPECT_EQ(fsm.state(), Fsm::State::kProvisioning);
   EXPECT_EQ(fsm.attempts(), 0);  // fresh budget the next time we try Wi-Fi
 }
@@ -145,7 +152,7 @@ TEST(ProvisionFsm, LinkLostWhileOnlineReconnects) {
   fsm.Start(true);
   fsm.OnWifiConnected();
 
-  Fsm::Output o = fsm.OnWifiLost();
+  Fsm::Output o = fsm.OnWifiDisconnected();
   EXPECT_EQ(o.state, Fsm::State::kWifiTry);
   EXPECT_TRUE(Has(o, Fsm::Action::kConnectWifi));
   EXPECT_EQ(o.pattern, Fsm::Pattern::kBlueFast);
@@ -154,19 +161,67 @@ TEST(ProvisionFsm, LinkLostWhileOnlineReconnects) {
 TEST(ProvisionFsm, LinkLostIgnoredWhenNotOnline) {
   Fsm fsm(3);
   fsm.Start(false);
-  Fsm::Output o = fsm.OnWifiLost();
+  Fsm::Output o = fsm.OnWifiDisconnected();
   EXPECT_EQ(o.state, Fsm::State::kProvisioning);
   EXPECT_EQ(o.num_actions, 0);
+}
+
+TEST(ProvisionFsm, DisconnectWhileTryingIsNotAFailedAttempt) {
+  // Our own pre-connect Disconnect() reports a disconnect; consuming the retry
+  // budget for it would fall back to BluFi prematurely.
+  Fsm fsm(3);
+  fsm.Start(true);
+  Fsm::Output o = fsm.OnWifiDisconnected();
+  EXPECT_EQ(o.state, Fsm::State::kWifiTry);
+  EXPECT_EQ(o.num_actions, 0);
+  EXPECT_EQ(fsm.attempts(), 1);  // budget untouched
 }
 
 TEST(ProvisionFsm, LostThenAllRetriesFailOpensBleAgain) {
   Fsm fsm(2);
   fsm.Start(true);
   fsm.OnWifiConnected();
-  fsm.OnWifiLost();               // attempt 1
+  fsm.OnWifiDisconnected();       // attempt 1 of the reconnect cycle
+  fsm.OnWifiConnectFailed();      // -> attempt 2
   Fsm::Output o = fsm.OnWifiConnectFailed();
   EXPECT_EQ(o.state, Fsm::State::kProvisioning);
   EXPECT_TRUE(Has(o, Fsm::Action::kEnableBle));
+}
+
+// ---- per-attempt deadline (the ESP32 driver is silent on failed association) ----
+
+TEST(ProvisionFsm, AttemptTimeoutRetriesThenFallsBackToBle) {
+  Fsm fsm(2);
+  fsm.Start(true);
+
+  Fsm::Output first = fsm.OnAttemptTimeout();
+  EXPECT_EQ(first.state, Fsm::State::kWifiTry);
+  EXPECT_TRUE(Has(first, Fsm::Action::kConnectWifi));
+
+  Fsm::Output second = fsm.OnAttemptTimeout();
+  EXPECT_EQ(second.state, Fsm::State::kProvisioning);
+  EXPECT_TRUE(Has(second, Fsm::Action::kEnableBle));
+  EXPECT_EQ(second.alert, Fsm::Alert::kRed3);
+}
+
+TEST(ProvisionFsm, AttemptTimeoutIgnoredWhenNotTrying) {
+  Fsm fsm(3);
+  fsm.Start(false);  // provisioning: no attempt in flight
+  Fsm::Output o = fsm.OnAttemptTimeout();
+  EXPECT_EQ(o.state, Fsm::State::kProvisioning);
+  EXPECT_EQ(o.num_actions, 0);
+}
+
+TEST(ProvisionFsm, LateSuccessAfterPhoneFailureStillClosesBle) {
+  // Slow DHCP: the attempt times out (red3) but the connection lands later - the
+  // phone-provisioning intent must survive so BLE still gets closed.
+  Fsm fsm(3);
+  fsm.Start(false);
+  fsm.OnPhoneCreds();
+  fsm.OnAttemptTimeout();
+  Fsm::Output o = fsm.OnWifiConnected();
+  EXPECT_EQ(o.state, Fsm::State::kOnline);
+  EXPECT_TRUE(Has(o, Fsm::Action::kCloseBleDelayed));
 }
 
 // ---- button: long press resets configuration ----

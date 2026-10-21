@@ -572,6 +572,11 @@ int blufi_send(uint8_t type, uint8_t subtype, const uint8_t *data, uint16_t len)
 	return ret;
 }
 
+bool blufi_is_connected(void)
+{
+	return g_conn != NULL;
+}
+
 int blufi_disconnect(void)
 {
 	if (!g_conn) {

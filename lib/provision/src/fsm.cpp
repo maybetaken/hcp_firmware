@@ -24,6 +24,13 @@ Fsm::Output Fsm::Make(State s, Pattern p, Alert a) {
   return o;
 }
 
+Fsm::Output Fsm::NoChange() const {
+  Output o;
+  o.state = state_;
+  o.pattern = pattern_;
+  return o;
+}
+
 Fsm::Output Fsm::Start(bool have_creds) {
   from_phone_ = false;
   if (have_creds) {
@@ -67,21 +74,21 @@ Fsm::Output Fsm::OnWifiConnected() {
 
 Fsm::Output Fsm::OnWifiConnectFailed() {
   if (state_ != State::kWifiTry) {
-    Output o;
-    o.state = state_;
-    o.pattern = pattern_;
-    return o;
+    return NoChange();
   }
 
   if (from_phone_) {
     // Stay reachable: the phone is still there and can retry with other
     // credentials. The BluFi layer already sent the FAIL conn report.
-    from_phone_ = false;
+    // from_phone_ deliberately stays true: if a later attempt succeeds (slow
+    // DHCP is common), BLE must still be closed behind it.
     return Make(State::kProvisioning, Pattern::kBlueSlow, Alert::kRed3);
   }
 
-  attempts_++;
+  // attempts_ is the number of attempts issued so far (Start issued the first
+  // one), so a retry is allowed while we are still below the budget.
   if (attempts_ < wifi_attempts_) {
+    attempts_++;
     Output o = Make(State::kWifiTry, Pattern::kBlueFast, Alert::kNone);
     Push(o, Action::kConnectWifi);
     return o;
@@ -97,17 +104,24 @@ Fsm::Output Fsm::OnWifiConnectFailed() {
   return o;
 }
 
-Fsm::Output Fsm::OnWifiLost() {
+Fsm::Output Fsm::OnWifiDisconnected() {
+  // A disconnect while an attempt is in flight is almost always our own
+  // pre-connect Disconnect() (the ESP32 driver only raises DISCONNECT_RESULT for
+  // an explicit request), so it must not consume the retry budget. Silent
+  // failures are handled by the per-attempt deadline instead.
   if (state_ != State::kOnline) {
-    Output o;
-    o.state = state_;
-    o.pattern = pattern_;
-    return o;
+    return NoChange();
   }
   attempts_ = 1;
   Output o = Make(State::kWifiTry, Pattern::kBlueFast, Alert::kNone);
   Push(o, Action::kConnectWifi);
   return o;
+}
+
+Fsm::Output Fsm::OnAttemptTimeout() {
+  // Deadline for one attempt; OnWifiConnectFailed already ignores every state
+  // but kWifiTry, so a late timer expiring is harmless.
+  return OnWifiConnectFailed();
 }
 
 Fsm::Output Fsm::OnResetRequested() {

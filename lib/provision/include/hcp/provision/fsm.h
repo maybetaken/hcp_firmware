@@ -67,7 +67,16 @@ class Fsm {
                                   // driving the connect itself
   Output OnWifiConnected();
   Output OnWifiConnectFailed();   // one attempt failed
-  Output OnWifiLost();            // link dropped while we were online
+  // A disconnect notification. Only meaningful while online (link lost ->
+  // reconnect from storage). While an attempt is in flight it is almost always
+  // our own pre-connect Disconnect(), so it must not consume the retry budget.
+  Output OnWifiDisconnected();
+  // Backstop for the case where the driver reports nothing at all: the ESP32
+  // driver raises no CONNECT_RESULT for association failures that happen after
+  // the connect call returned, so an attempt that never completes is failed by
+  // its deadline - otherwise the machine would blink in kWifiTry forever with
+  // BLE closed and the device would be unreachable.
+  Output OnAttemptTimeout();
   Output OnResetRequested();      // long press: forget credentials
 
   State state() const { return state_; }
@@ -77,6 +86,7 @@ class Fsm {
 
  private:
   Output Make(State s, Pattern p, Alert a);
+  Output NoChange() const;  // state/pattern only, no actions
   static void Push(Output& o, Action act);
 
   State state_ = State::kIdle;
