@@ -170,6 +170,10 @@ static char g_pass[64];
 static K_SEM_DEFINE(g_disconn_sem, 0, 1);
 static struct k_work_delayable g_prov_timeout;
 static atomic_t g_prov_active;
+/* Set once a SUCCESS report has actually gone out for the current provisioning
+ * attempt; lets the timeout recover the case where the got-IP net-mgmt event was
+ * dropped and the phone would otherwise hang below 100%. */
+static atomic_t g_succ_sent;
 
 // esp_blufi WIFI_REP encodes station connection state (esp_blufi_api.h).
 #define BLUFI_STA_CONN_SUCCESS 0x00
@@ -225,6 +229,7 @@ static void blufi_report_wifi_success() {
   }
   HCP_LOGI(hcp::log::kDomainWifi, "blufi: report SUCCESS (%d bytes, bssid=%s)",
            n, ap ? "yes" : "no");
+  atomic_set(&g_succ_sent, 1);
   blufi_send(BLUFI_TYPE_DATA, BLUFI_DATA_WIFI_REP, rep, n);
 }
 
@@ -258,6 +263,13 @@ static void prov_timeout_fn(struct k_work*) {
   if (!hcp::net::wifi::IsConnected()) {
     HCP_LOGW(hcp::log::kDomainWifi, "blufi: provisioning timeout");
     blufi_report_wifi_fail(0x01);
+  } else if (!atomic_get(&g_succ_sent)) {
+    /* Connected but the phone was never told: the got-IP event was likely lost
+     * (net-mgmt event queue overflow) - deliver the final report now so the
+     * client does not sit at 85% while the link is actually up. */
+    HCP_LOGW(hcp::log::kDomainWifi,
+             "blufi: connected but no SUCCESS sent, recovering");
+    blufi_report_wifi_success();
   }
 }
 
@@ -314,7 +326,7 @@ static void prov_work_fn(struct k_work *work) {
 // run one more pass and union the results by BSSID before replying.
 #define BLUFI_SCAN_PASSES 2
 #define BLUFI_SCAN_MIN_APS 4
-static uint8_t g_wlist[1024];
+static uint8_t g_wlist[BLUFI_MAX_DATA_LEN];
 static uint16_t g_wlist_len;
 static int g_scan_pass;
 static void on_scan(const hcp::net::ScanResult* r, void*) {
@@ -332,11 +344,28 @@ static void on_scan(const hcp::net::ScanResult* r, void*) {
       }
     }
 
-    // Rebuild the BluFi list from the deduplicated union of all passes.
+    // esp_wifi hands its records strongest-first; our union over scan passes is
+    // in arrival order, so sort here - the phone should see the usable APs first.
+    for (int i = 1; i < g_ap_count; i++) {
+      ApRec key = g_aps[i];
+      int j = i - 1;
+      while (j >= 0 && g_aps[j].rssi < key.rssi) {
+        g_aps[j + 1] = g_aps[j];
+        j--;
+      }
+      g_aps[j + 1] = key;
+    }
+
+    // Rebuild the BluFi list from the deduplicated union of all passes, keeping it
+    // inside ONE BluFi frame (255 B). Fragmenting it is legal per the protocol, but
+    // a client that does not reassemble inbound FC_FRAG shows a truncated list -
+    // which reads as "the device only found a few networks".
     g_wlist_len = 0;
     for (int i = 0; i < g_ap_count; i++) {
       uint8_t slen = (uint8_t)strlen(g_aps[i].ssid);
       if (g_wlist_len + 2u + slen > sizeof(g_wlist)) {
+        HCP_LOGI(hcp::log::kDomainWifi,
+                 "blufi: list full after %d of %d APs", i, g_ap_count);
         break;
       }
       // esp btc_blufi_send_wifi_list record layout:
@@ -350,8 +379,12 @@ static void on_scan(const hcp::net::ScanResult* r, void*) {
     HCP_LOGI(hcp::log::kDomainWifi,
              "blufi: sending wifi list (%u bytes, %d APs)",
              (unsigned)g_wlist_len, g_ap_count);
+    /* Per-AP detail is debug-level on purpose: with LOG_MODE_IMMEDIATE every line
+     * costs several ms of 115200 UART on the net-mgmt event thread - the very
+     * thread that is still delivering scan results, which then overflow the
+     * event queue and silently lose APs. */
     for (int i = 0; i < g_ap_count; i++) {
-      HCP_LOGI(hcp::log::kDomainWifi,
+      HCP_LOGD(hcp::log::kDomainWifi,
                "  ap[%d] \"%s\" rssi=%d ch=%u bssid=%02x:%02x:%02x:%02x:%02x:%02x",
                i, g_aps[i].ssid, g_aps[i].rssi, g_aps[i].channel,
                g_aps[i].bssid[0], g_aps[i].bssid[1], g_aps[i].bssid[2],
@@ -414,6 +447,7 @@ extern "C" void on_blufi_data(uint8_t type, uint8_t subtype,
          * ESP-Config-WeChat mini-program: it shows "Connected: STA" at 85% and
          * then never processes the real SUCCESS report. */
         atomic_set(&g_prov_active, 1);
+        atomic_set(&g_succ_sent, 0);
         k_work_reschedule(&g_prov_timeout, K_SECONDS(30));
         k_work_submit(&g_prov_work);  // connect off the BT RX thread
         break;

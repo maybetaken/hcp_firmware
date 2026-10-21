@@ -134,11 +134,11 @@ bool Scan(ScanCallback cb, void* user) {
   g.scan_user_cb = cb;
   g.scan_user = user;
   struct wifi_scan_params params = {};
-  // The ESP32 Wi-Fi driver forwards scan_type verbatim to esp_wifi, whose values are
-  // 0=WIFI_FAST_SCAN (stops early, few APs) / 1=WIFI_ALL_CHANNEL_SCAN. Zephyr names
-  // these ACTIVE(0)/PASSIVE(1). Pick the second so esp does an all-channel scan ->
-  // complete AP list for the BluFi wifi list.
-  params.scan_type = WIFI_SCAN_TYPE_PASSIVE;
+  // Zephyr's scan_type is active/passive, not ESP-IDF's fast/all-channel
+  // method.  Active scan sends probe requests and finds far more APs than a
+  // passive beacon-only scan.  No SSID filter is set, so the ESP32 driver
+  // scans every 2.4 GHz channel.
+  params.scan_type = WIFI_SCAN_TYPE_ACTIVE;
   int ret = net_mgmt(NET_REQUEST_WIFI_SCAN, g.iface, &params, sizeof(params));
   return ret == 0;
 }
