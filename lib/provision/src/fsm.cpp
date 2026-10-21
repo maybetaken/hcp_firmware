@@ -17,6 +17,11 @@ void Fsm::Push(Output& o, Action act) {
 Fsm::Output Fsm::Make(State s, Pattern p, Alert a) {
   state_ = s;
   pattern_ = p;
+  // Leaving kOnline always invalidates the service session: MQTT has to come up
+  // again before the LED may go green.
+  if (s != State::kOnline) {
+    service_up_ = false;
+  }
   Output o;
   o.state = s;
   o.pattern = p;
@@ -61,7 +66,10 @@ Fsm::Output Fsm::OnPhoneCreds() {
 
 Fsm::Output Fsm::OnWifiConnected() {
   attempts_ = 0;
-  Output o = Make(State::kOnline, Pattern::kGreenSolid, Alert::kNone);
+  // Wi-Fi alone is not "online" for the product: MQTT still has to connect, so
+  // the steady pattern is amber-slow until OnServiceReady().
+  service_up_ = false;
+  Output o = Make(State::kOnline, Pattern::kAmberSlow, Alert::kNone);
   if (from_phone_) {
     // Give the mini-program a grace window to receive the final SUCCESS report
     // before the link and the radio go away (it never re-polls after that).
@@ -122,6 +130,14 @@ Fsm::Output Fsm::OnAttemptTimeout() {
   // Deadline for one attempt; OnWifiConnectFailed already ignores every state
   // but kWifiTry, so a late timer expiring is harmless.
   return OnWifiConnectFailed();
+}
+
+Fsm::Output Fsm::OnServiceReady() {
+  if (state_ != State::kOnline) {
+    return NoChange();
+  }
+  service_up_ = true;
+  return Make(State::kOnline, Pattern::kGreenSolid, Alert::kNone);
 }
 
 Fsm::Output Fsm::OnResetRequested() {

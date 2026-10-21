@@ -39,6 +39,12 @@ void NoteOwnDisconnect();
 // the phone must consult it, or a routine teardown looks like a Wi-Fi failure.
 bool InOwnDisconnectWindow();
 
+// Report that the service session (MQTT) is up on top of the Wi-Fi link: this is
+// what moves the LED from amber-slow (Wi-Fi only) to solid light green. Nothing
+// calls it until the MQTT client lands, so a provisioned device sits at amber.
+
+void NotifyServiceReady();
+
 // Current state, for logging/diagnostics.
 Fsm::State state();
 

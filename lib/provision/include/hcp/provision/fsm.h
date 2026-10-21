@@ -33,8 +33,11 @@ class Fsm {
     kOnline,        // Wi-Fi up
   };
 
-  // Steady LED pattern for a state.
-  enum class Pattern { kOff, kBlueSlow, kBlueFast, kGreenSolid };
+  // Steady LED pattern for a state. Light blue blinks while the network link is
+  // down (slow = waiting for provisioning, fast = an attempt is running), amber
+  // slow once Wi-Fi is up but the service session (MQTT) is not, light green
+  // solid when everything the product needs is connected.
+  enum class Pattern { kOff, kBlueSlow, kBlueFast, kAmberSlow, kGreenSolid };
 
   // One-shot blink sequence layered on top of the steady pattern.
   enum class Alert { kNone, kRed3, kPurple3 };
@@ -79,6 +82,10 @@ class Fsm {
   Output OnAttemptTimeout();
   Output OnResetRequested();      // long press: forget credentials
 
+  // The service session (MQTT) came up on top of the Wi-Fi link: this is what
+  // turns the LED from amber to green. Ignored unless we are online.
+  Output OnServiceReady();
+
   State state() const { return state_; }
   Pattern pattern() const { return pattern_; }
   int attempts() const { return attempts_; }
@@ -94,6 +101,8 @@ class Fsm {
   int attempts_ = 0;
   int wifi_attempts_;
   bool ble_open_ = false;
+  // Wi-Fi is up *and* the service session (MQTT) is established.
+  bool service_up_ = false;
   // Credentials came from the phone in this session: on success, shut BLE down
   // (delayed) and persist; on failure, stay reachable over BLE.
   bool from_phone_ = false;

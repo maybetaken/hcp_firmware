@@ -117,7 +117,8 @@ TEST(ProvisionFsm, PhoneProvisioningSuccessClosesBleDelayed) {
 
   Fsm::Output o = fsm.OnWifiConnected();
   EXPECT_EQ(o.state, Fsm::State::kOnline);
-  EXPECT_EQ(o.pattern, Fsm::Pattern::kGreenSolid);
+  // Wi-Fi alone is not "online" for the product: amber until MQTT is up.
+  EXPECT_EQ(o.pattern, Fsm::Pattern::kAmberSlow);
   EXPECT_TRUE(Has(o, Fsm::Action::kCloseBleDelayed));
   EXPECT_FALSE(Has(o, Fsm::Action::kDisableBle));  // exactly one close request
   EXPECT_EQ(Count(o, Fsm::Action::kCloseBleDelayed), 1);
@@ -254,4 +255,37 @@ TEST(ProvisionFsm, ResetClearsThePhonePendingFlag) {
   Fsm::Output o = fsm.OnWifiConnected();
   EXPECT_EQ(o.state, Fsm::State::kOnline);
   EXPECT_FALSE(Has(o, Fsm::Action::kCloseBleDelayed));
+}
+
+// ---- service session (MQTT) on top of the Wi-Fi link ----
+
+TEST(ProvisionFsm, ServiceReadyTurnsLedGreen) {
+  Fsm fsm(3);
+  fsm.Start(true);
+  EXPECT_EQ(fsm.OnWifiConnected().pattern, Fsm::Pattern::kAmberSlow);
+
+  Fsm::Output o = fsm.OnServiceReady();
+  EXPECT_EQ(o.state, Fsm::State::kOnline);
+  EXPECT_EQ(o.pattern, Fsm::Pattern::kGreenSolid);
+  EXPECT_EQ(o.num_actions, 0);  // purely an indication
+}
+
+TEST(ProvisionFsm, ServiceReadyIgnoredBeforeWifiIsUp) {
+  Fsm fsm(3);
+  fsm.Start(true);
+  Fsm::Output o = fsm.OnServiceReady();
+  EXPECT_EQ(o.state, Fsm::State::kWifiTry);
+  EXPECT_EQ(o.pattern, Fsm::Pattern::kBlueFast);
+}
+
+TEST(ProvisionFsm, ReconnectGoesBackToAmberUntilServiceReturns) {
+  Fsm fsm(3);
+  fsm.Start(true);
+  fsm.OnWifiConnected();
+  fsm.OnServiceReady();
+
+  fsm.OnWifiDisconnected();  // link dropped -> kWifiTry clears the service flag
+  Fsm::Output up = fsm.OnWifiConnected();
+  EXPECT_EQ(up.pattern, Fsm::Pattern::kAmberSlow);
+  EXPECT_EQ(fsm.OnServiceReady().pattern, Fsm::Pattern::kGreenSolid);
 }

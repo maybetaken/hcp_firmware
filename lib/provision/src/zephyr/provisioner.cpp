@@ -201,6 +201,8 @@ const char* PatternName(Fsm::Pattern p) {
       return "blue-fast";
     case Fsm::Pattern::kGreenSolid:
       return "green";
+    case Fsm::Pattern::kAmberSlow:
+      return "amber-slow";
     default:
       return "off";
   }
@@ -259,15 +261,23 @@ void Apply(const Fsm::Output& out) {
 using led::Color;
 
 constexpr Color kLedOff{0, 0, 0};
-constexpr Color kLedBlue{0, 0, 60};
-constexpr Color kLedGreen{0, 60, 0};
-constexpr Color kLedRed{60, 0, 0};
-constexpr Color kLedPurple{40, 0, 40};
+// Light blue (sky): pale it with a little red, blue+green carry the hue.
+constexpr Color kLedBlue{30, 80, 110};
+// Light green: everything the product needs is up.
+constexpr Color kLedGreen{40, 110, 40};
+// Amber: Wi-Fi is up, the service session (MQTT) still is not.
+constexpr Color kLedAmber{110, 55, 0};
+constexpr Color kLedRed{120, 0, 0};
+constexpr Color kLedPurple{80, 0, 90};
 
 Color SteadyColor() {
   switch (g_pattern) {
     case Fsm::Pattern::kGreenSolid:
       return kLedGreen;
+    case Fsm::Pattern::kAmberSlow:
+      // 0.5 Hz amber, same cadence as the provisioning blink: slow means
+      // "nothing is being attempted, this is the steady wait".
+      return (g_tick_count % 40) < 20 ? kLedAmber : kLedOff;
     case Fsm::Pattern::kBlueFast:
       // 2 Hz: 250 ms on, 250 ms off (5 ticks each at 50 ms)
       return (g_tick_count % 10) < 5 ? kLedBlue : kLedOff;
@@ -391,6 +401,12 @@ void NoteOwnDisconnect() {
 
 bool InOwnDisconnectWindow() {
   return k_uptime_get() < g_own_disconnect_until_ms;
+}
+
+void NotifyServiceReady() {
+  // Called by the MQTT client once its session is up; until then the LED stays
+  // amber, because "online" for the product means Wi-Fi *and* the service.
+  Apply(g_fsm.OnServiceReady());
 }
 
 void NotifyPhoneCredentials(const char* ssid, const char* pass) {
