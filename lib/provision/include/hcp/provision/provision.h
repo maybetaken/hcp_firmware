@@ -29,6 +29,16 @@ void NotifyWifiEvent(net::WifiEvent e);
 // own; the credentials are persisted here and BLE is closed after success.
 void NotifyPhoneCredentials(const char* ssid, const char* pass);
 
+// Call immediately before deliberately dropping the link to retry. The driver
+// reports a disconnect during CONNECTING as an association failure, so without
+// this the self-inflicted drop would consume the retry budget.
+void NoteOwnDisconnect();
+
+// True while a link drop should be attributed to our own pre-connect
+// Disconnect() rather than to a failed attempt. Callers that report failures to
+// the phone must consult it, or a routine teardown looks like a Wi-Fi failure.
+bool InOwnDisconnectWindow();
+
 // Current state, for logging/diagnostics.
 Fsm::State state();
 

@@ -39,15 +39,17 @@ constexpr uint32_t kShortPressMaxMs = 1000;
  * ESP32 driver returns -EALREADY while it is still in CONNECTING/CONNECTED, and
  * IsConnected() (IP based) cannot see the transitional state. */
 constexpr int kDisconnectWaitMs = 1000;
-/* Deadline for a single Wi-Fi attempt. The ESP32 driver never reports a failed
- * association that happens after esp_wifi_connect() returns (no CONNECT_RESULT),
- * so without a deadline a bad credential set leaves the machine in kWifiTry:
- * LED blinking, BLE closed, device unreachable. The first attempt gets the long
- * budget (a healthy AP + DHCP took ~12 s on our board); retries only need to
- * cover "AP not found", so they are shorter. Worst case before BluFi opens:
- * 20 + 10 + 10 = 40 s. */
+// Deadline for a single Wi-Fi attempt. The ESP32 driver never reports a failed
+// association that happens after esp_wifi_connect() returns (no CONNECT_RESULT),
+// so without a deadline a bad credential set leaves the machine in kWifiTry:
+// LED blinking, BLE closed, device unreachable. Real failures now arrive as
+// kConnectFailed and retry immediately - this is the backstop. The first attempt
+// gets the long budget (healthy AP + DHCP measured ~12 s here).
 constexpr uint32_t kFirstAttemptTimeoutMs = 20000;
 constexpr uint32_t kRetryAttemptTimeoutMs = 10000;
+/* Window during which a link drop is attributed to our own pre-connect
+ * Disconnect() instead of a failed attempt. */
+constexpr int kOwnDisconnectMs = 1500;
 
 constexpr char kKeySsid[] = "prov/ssid";
 constexpr char kKeyPass[] = "prov/pass";
@@ -75,6 +77,7 @@ Fsm::Pattern g_pattern = Fsm::Pattern::kOff;
 Fsm::Alert g_alert = Fsm::Alert::kNone;
 int g_alert_ticks;  // remaining ticks of the current blink sequence
 uint32_t g_tick_count;
+int64_t g_own_disconnect_until_ms;
 
 /* Connecting blocks in net_mgmt until the driver settles, so it runs on its own
  * thread: the 50 ms LED tick and the BluFi rx work live on the system workqueue
@@ -149,6 +152,7 @@ void ConnectNow() {
            g_ssid, g_fsm.attempts());
   // Force a clean slate: re-provisioning an ESP32 whose state is still
   // CONNECTING returns -EALREADY, and IP-based IsConnected() cannot see it.
+  NoteOwnDisconnect();
   k_sem_reset(&g_disconn_sem);
   net::wifi::Disconnect();
   if (k_sem_take(&g_disconn_sem, K_MSEC(kDisconnectWaitMs)) != 0) {
@@ -360,6 +364,12 @@ void NotifyWifiEvent(net::WifiEvent e) {
   if (e == net::WifiEvent::kDisconnected) {
     k_sem_give(&g_disconn_sem);
   }
+  // A link drop right after our own Disconnect() is not a failed attempt.
+  if ((e == net::WifiEvent::kDisconnected || e == net::WifiEvent::kConnectFailed) &&
+      InOwnDisconnectWindow()) {
+    HCP_LOGD(hcp::log::kDomainWifi, "provision: ignoring self-inflicted drop");
+    return;
+  }
   switch (e) {
     case net::WifiEvent::kConnected:
       Apply(g_fsm.OnWifiConnected());
@@ -373,6 +383,14 @@ void NotifyWifiEvent(net::WifiEvent e) {
     default:
       break;
   }
+}
+
+void NoteOwnDisconnect() {
+  g_own_disconnect_until_ms = k_uptime_get() + kOwnDisconnectMs;
+}
+
+bool InOwnDisconnectWindow() {
+  return k_uptime_get() < g_own_disconnect_until_ms;
 }
 
 void NotifyPhoneCredentials(const char* ssid, const char* pass) {

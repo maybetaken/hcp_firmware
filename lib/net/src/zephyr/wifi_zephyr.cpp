@@ -63,9 +63,22 @@ void WifiHandler(struct net_mgmt_event_callback* cb, uint64_t event,
   } else if (event == NET_EVENT_WIFI_DISCONNECT_RESULT) {
     const struct wifi_status* st =
         static_cast<const struct wifi_status*>(cb->info);
+    int status = st ? st->status : -1;
     g.connected = false;
-    LOG_INF("Wi-Fi disconnected: reason=%d", st ? st->disconn_reason : -1);
-    Report(WifiEvent::kDisconnected);
+    /* The esp32 driver raises DISCONNECT_RESULT with status 0 only when the link
+     * was actually up (ESP32_STA_CONNECTED), and with -1 when it dropped while
+     * still CONNECTING - i.e. an association failure (wrong passphrase, AP not
+     * found). struct wifi_status is a union, so that code also shows up in
+     * disconn_reason; it must not be read as an esp reason. Mapping the -1 case
+     * to kDisconnected would make retries invisible and the caller could only
+     * notice the failure via a timeout. */
+    if (status == 0) {
+      LOG_INF("Wi-Fi disconnected");
+      Report(WifiEvent::kDisconnected);
+    } else {
+      LOG_WRN("Wi-Fi association failed (status=%d)", status);
+      Report(WifiEvent::kConnectFailed);
+    }
   }
 }
 

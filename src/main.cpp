@@ -302,6 +302,15 @@ static void on_wifi_for_blufi(hcp::net::WifiEvent e, void*) {
     k_work_cancel_delayable(&g_prov_timeout);
     k_work_reschedule(&g_succ_work, K_MSEC(500));
   } else if (e == E::kConnectFailed) {
+#ifdef CONFIG_HCP_PROVISION
+    /* The esp32 driver reports "dropped while CONNECTING" as an association
+     * failure, which our own pre-connect Disconnect() also triggers. Do not tell
+     * the phone it failed when we are the ones who just tore the link down. */
+    if (hcp::provision::InOwnDisconnectWindow()) {
+      HCP_LOGD(hcp::log::kDomainWifi, "blufi: self-inflicted drop, not reporting FAIL");
+      return;
+    }
+#endif
     atomic_set(&g_prov_active, 0);
     k_work_cancel_delayable(&g_prov_timeout);
     blufi_report_wifi_fail(0x01);
@@ -322,6 +331,9 @@ static void prov_work_fn(struct k_work *work) {
    * already-connected ESP32 with only a fixed 300 ms delay can leave the
    * driver in a transitional state where the next connect never completes. */
   k_sem_reset(&g_disconn_sem);
+#ifdef CONFIG_HCP_PROVISION
+  hcp::provision::NoteOwnDisconnect();
+#endif
   hcp::net::wifi::Disconnect();
   if (k_sem_take(&g_disconn_sem, K_SECONDS(1)) != 0) {
     HCP_LOGW(hcp::log::kDomainWifi,
