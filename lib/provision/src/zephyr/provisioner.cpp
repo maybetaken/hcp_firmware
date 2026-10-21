@@ -51,6 +51,10 @@ constexpr uint32_t kRetryAttemptTimeoutMs = 10000;
  * Disconnect() instead of a failed attempt. */
 constexpr int kOwnDisconnectMs = 1500;
 
+#ifndef CONFIG_HCP_PROVISION_LED_BRIGHTNESS
+#define CONFIG_HCP_PROVISION_LED_BRIGHTNESS 10
+#endif
+
 constexpr char kKeySsid[] = "prov/ssid";
 constexpr char kKeyPass[] = "prov/pass";
 
@@ -265,14 +269,19 @@ void Apply(const Fsm::Output& out) {
 using led::Color;
 
 constexpr Color kLedOff{0, 0, 0};
-// Light blue (sky): pale it with a little red, blue+green carry the hue.
-constexpr Color kLedBlue{30, 80, 110};
-// Light green: everything the product needs is up.
-constexpr Color kLedGreen{40, 110, 40};
-// Amber: Wi-Fi is up, the service session (MQTT) still is not.
-constexpr Color kLedAmber{110, 55, 0};
-constexpr Color kLedRed{120, 0, 0};
-constexpr Color kLedPurple{80, 0, 90};
+/* Palette authored at full 8-bit scale with soft hues; CONFIG_HCP_PROVISION_LED_BRIGHTNESS
+ * dims everything with one knob. To match a reference device, change these values
+ * only - the cadence and the state mapping live elsewhere on purpose.
+ * (ws2812_spi applies the devicetree color-mapping, so these are logical RGB.) */
+// Sky blue: waiting for provisioning, or an attempt is running.
+constexpr Color kLedBlue{60, 150, 255};
+// Warm amber: Wi-Fi is up, the service session (MQTT) is not.
+constexpr Color kLedAmber{255, 130, 0};
+// Pale green: everything the product needs is connected.
+constexpr Color kLedGreen{80, 255, 120};
+// Alerts: three blinks, then back to the steady pattern.
+constexpr Color kLedRed{255, 30, 20};
+constexpr Color kLedPurple{150, 40, 255};
 
 Color SteadyColor() {
   switch (g_pattern) {
@@ -360,7 +369,7 @@ void Start() {
   LoadCreds();
 
   if (g_strip.Open()) {
-    g_strip.SetBrightness(35);
+    g_strip.SetBrightness(CONFIG_HCP_PROVISION_LED_BRIGHTNESS);
   } else {
     HCP_LOGW(hcp::log::kDomainDevice, "provision: LED unavailable");
   }

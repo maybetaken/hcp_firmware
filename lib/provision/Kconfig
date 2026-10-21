@@ -12,3 +12,17 @@ menuconfig HCP_PROVISION
 	  and act on the user button (short press = reboot, long press = forget
 	  credentials). The transition logic (lib/provision/src/fsm.cpp) is pure and
 	  covered by the host tests.
+
+if HCP_PROVISION
+
+config HCP_PROVISION_LED_BRIGHTNESS
+	int "status LED brightness (percent)"
+	range 1 100
+	default 10
+	help
+	  Global scale applied to the status palette by hcp::led::Strip::SetBrightness().
+	  The palette itself is authored at full 8-bit scale, so this single knob dims
+	  every state. The LED sits on for half of each blink cycle, so 10 is already
+	  clearly visible in a normal room; raise it for a panel-mounted enclosure.
+
+endif
