@@ -209,6 +209,29 @@ bool Disconnect() {
 
 bool IsConnected() { return g.connected; }
 
+bool LinkActive() {
+  if (g.iface == nullptr) {
+    return false;
+  }
+  struct wifi_iface_status status = {};
+  if (net_mgmt(NET_REQUEST_WIFI_IFACE_STATUS, g.iface, &status, sizeof(status)) != 0) {
+    // Conservative: pretend there is a link so the caller still does the
+    // (slower but always correct) disconnect-then-connect sequence.
+    LOG_WRN("WIFI_IFACE_STATUS req failed: errno=%d", errno);
+    return true;
+  }
+  switch (status.state) {
+    case WIFI_STATE_INACTIVE:
+    case WIFI_STATE_DISCONNECTED:
+      return false;
+    default:
+      /* The esp32 driver maps its internal CONNECTING to WIFI_STATE_SCANNING and
+       * CONNECTED to WIFI_STATE_COMPLETED; everything else (authenticating,
+       * associating, handshakes) is also "in the middle of a link". */
+      return true;
+  }
+}
+
 }  // namespace wifi
 }  // namespace net
 }  // namespace hcp

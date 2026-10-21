@@ -57,6 +57,13 @@ bool Scan(ScanCallback cb, void* user = nullptr);
 bool Disconnect();
 bool IsConnected();
 
+// True when the driver already holds a link or is in the middle of one
+// (connecting / associated / handshaking). Callers use it to decide whether a
+// Disconnect() - plus waiting for its event - is needed at all: dropping a link
+// that never existed just fails inside the driver and the caller ends up burning
+// its whole timeout for nothing.
+bool LinkActive();
+
 }  // namespace wifi
 }  // namespace net
 }  // namespace hcp

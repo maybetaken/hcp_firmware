@@ -150,13 +150,17 @@ void ConnectNow() {
   }
   HCP_LOGI(hcp::log::kDomainWifi, "provision: connecting to \"%s\" (try %d)",
            g_ssid, g_fsm.attempts());
-  // Force a clean slate: re-provisioning an ESP32 whose state is still
-  // CONNECTING returns -EALREADY, and IP-based IsConnected() cannot see it.
-  NoteOwnDisconnect();
-  k_sem_reset(&g_disconn_sem);
-  net::wifi::Disconnect();
-  if (k_sem_take(&g_disconn_sem, K_MSEC(kDisconnectWaitMs)) != 0) {
-    HCP_LOGD(hcp::log::kDomainWifi, "provision: no disconnect event, connecting");
+  /* Force a clean slate only when there is something to clean: the ESP32 driver
+   * rejects -EALREADY while still CONNECTING/CONNECTED, but Disconnect() on an
+   * idle radio just fails and the event we wait for never arrives, which used to
+   * cost a full second per attempt (measured at boot). */
+  if (net::wifi::LinkActive()) {
+    NoteOwnDisconnect();
+    k_sem_reset(&g_disconn_sem);
+    net::wifi::Disconnect();
+    if (k_sem_take(&g_disconn_sem, K_MSEC(kDisconnectWaitMs)) != 0) {
+      HCP_LOGD(hcp::log::kDomainWifi, "provision: no disconnect event, connecting");
+    }
   }
 
   net::WifiCredential c{g_ssid, g_pass[0] ? g_pass : nullptr};
