@@ -4,6 +4,10 @@
 menuconfig HCP_MQTT
 	bool "HCP MQTT service session"
 	depends on HCP_NET
+	# MQTT runs over TCP. The rest of HCP needs no TCP at all (Modbus is serial,
+	# DNS/mDNS are UDP), so the stack is not enabled anywhere else - without this
+	# select, zsock_connect simply fails and every connection attempt errors out.
+	select NET_TCP
 	# imply, not select: MQTT_LIB selects NET_SOCKETS, so a select/imply from a
 	# symbol that itself depends on NET_SOCKETS would be a dependency loop. This
 	# way MQTT_LIB pulls NET_SOCKETS in for us.
@@ -29,10 +33,6 @@ config HCP_MQTT_PORT
 	int "default broker port"
 	default 1883
 
-config HCP_MQTT_CLIENT_ID
-	string "client identifier"
-	default "hcp"
-
 config HCP_MQTT_USER
 	string "broker username (empty = connect without credentials)"
 	help
@@ -43,12 +43,20 @@ config HCP_MQTT_PASS
 	string "broker password"
 
 config HCP_MQTT_TOPIC_STATE
-	string "topic the device publishes to"
-	default "hcp/state"
+	string "state/telemetry topic suffix (published as <sn>/<this>)"
+	default "state"
 
 config HCP_MQTT_TOPIC_CMD
-	string "topic the device subscribes to"
-	default "hcp/cmd"
+	string "command topic suffix (subscribed as <sn>/<this>)"
+	default "cmd"
+
+config HCP_MQTT_TOPIC_ONLINE
+	string "online topic suffix (published once per connect)"
+	default "online"
+
+config HCP_MQTT_FW_VERSION
+	string "firmware version reported on the online topic"
+	default "0.1.0"
 
 config HCP_MQTT_KEEPALIVE_SEC
 	int "keepalive interval (seconds)"

@@ -27,6 +27,12 @@ namespace mqtt {
 constexpr size_t kMaxTopicLen = 64;
 constexpr size_t kMaxPayloadLen = 256;
 
+// Device identity, used as the client id and as the topic prefix: every topic is
+// "<sn>/<suffix>" ("<sn>/online", "<sn>/cmd", ...), like the reference firmware, so
+// the broker/HA side can address one device out of many. Derived from the station
+// MAC on first boot and then kept in storage.
+const char* serial_number();
+
 // Learn or change the broker endpoint (host is a dotted-IPv4 string or a
 // hostname). Persisted so a reboot keeps it; empty host means "not known yet"
 // and the client keeps waiting instead of retrying forever.

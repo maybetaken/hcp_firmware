@@ -1,0 +1,23 @@
+# hcp::ssdp module Kconfig
+# SPDX-License-Identifier: Apache-2.0
+
+menuconfig HCP_SSDP
+	bool "HCP SSDP listener (Home Assistant broker discovery)"
+	depends on HCP_NET && NET_SOCKETS && HCP_MQTT
+	# Without IGMP, joining 239.255.255.250 fails with -ENOSYS (net_ipv4_igmp_join
+	# is a stub), so multicast is simply unavailable. It also pulls in the IPv4
+	# header-option support IGMP's Router Alert needs.
+	select NET_IPV4_IGMP
+	default y
+	help
+	  Listens on 239.255.255.250:1900 for the Home Assistant announcement
+	  ("maybetaken: mqtt://<host>") and hands the broker address to hcp::mqtt, so the
+	  MQTT session needs no compiled-in host.
+
+if HCP_SSDP
+
+config HCP_SSDP_STACK_SIZE
+	int "listener thread stack size"
+	default 4096
+
+endif

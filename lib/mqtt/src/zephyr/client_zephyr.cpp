@@ -28,6 +28,7 @@
 
 #include "hcp/log/log.h"
 #include "hcp/mqtt/backoff.h"
+#include "hcp/net/wifi.h"
 #include "hcp/provision/provision.h"
 #include "hcp/storage/store.h"
 
@@ -44,6 +45,7 @@ namespace {
 
 constexpr char kKeyHost[] = "svc/host";
 constexpr char kKeyPort[] = "svc/port";
+constexpr char kKeySnr[] = "dev/snr";
 constexpr size_t kHostMax = 64;
 constexpr int kTxQueueDepth = 4;
 constexpr int kPollMs = 500;
@@ -59,6 +61,7 @@ struct mqtt_client cli;
 struct sockaddr_in broker_addr;
 
 char host[kHostMax];
+char sn[kMaxTopicLen];
 uint16_t port;
 uint16_t message_id = 1;
 volatile bool connected;
@@ -79,6 +82,37 @@ mqtt_utf8 Utf8(const char* s) {
   u.utf8 = reinterpret_cast<const uint8_t*>(s);
   u.size = static_cast<uint32_t>(strlen(s));
   return u;
+}
+
+/* Identity: a stored serial number wins, otherwise derive one from the station
+ * MAC and keep it, so broker-side topics stay stable across reflashes. */
+void EnsureSerialNumber() {
+  if (sn[0] != '\0') {
+    return;
+  }
+  if (store.GetString(kKeySnr, sn, sizeof(sn)) && sn[0] != '\0') {
+    return;
+  }
+  uint8_t mac[6];
+  if (net::wifi::GetHwAddr(mac)) {
+    snprintk(sn, sizeof(sn), "hcp-%02x%02x%02x%02x%02x%02x", mac[0], mac[1],
+             mac[2], mac[3], mac[4], mac[5]);
+    store.SetString(kKeySnr, sn);
+    MQTT_LOGI("device identity %s", sn);
+    return;
+  }
+  // Interface not ready; use a placeholder and try to derive again next boot.
+  strncpy(sn, "hcp-pending", sizeof(sn) - 1);
+  sn[sizeof(sn) - 1] = '\0';
+}
+
+/* Every topic is "<sn>/<suffix>", like the reference firmware. */
+bool FullTopic(const char* suffix, char* out, size_t cap) {
+  if (sn[0] == '\0' || suffix == nullptr) {
+    return false;
+  }
+  const int n = snprintk(out, cap, "%s/%s", sn, suffix);
+  return n > 0 && static_cast<size_t>(n) < cap;
 }
 
 /* Broker address: storage (learned at runtime) wins, then the build-time
@@ -129,8 +163,13 @@ bool ResolveBroker() {
 
 void Subscribe() {
   static mqtt_topic cmd_topic;
+  static char cmd_name[kMaxTopicLen];
   static mqtt_subscription_list list;
-  cmd_topic.topic = Utf8(CONFIG_HCP_MQTT_TOPIC_CMD);
+  if (!FullTopic(CONFIG_HCP_MQTT_TOPIC_CMD, cmd_name, sizeof(cmd_name))) {
+    MQTT_LOGW("command topic too long");
+    return;
+  }
+  cmd_topic.topic = Utf8(cmd_name);
   cmd_topic.qos = MQTT_QOS_0_AT_MOST_ONCE;
   list.list = &cmd_topic;
   list.list_count = 1;
@@ -138,6 +177,25 @@ void Subscribe() {
   int rc = mqtt_subscribe(&cli, &list);
   if (rc != 0) {
     MQTT_LOGW("subscribe failed (%d)", rc);
+  }
+}
+
+/* Announce ourselves once per session, the way the reference firmware does. */
+void PublishOnline() {
+  char topic[kMaxTopicLen];
+  if (!FullTopic(CONFIG_HCP_MQTT_TOPIC_ONLINE, topic, sizeof(topic))) {
+    return;
+  }
+  const mqtt_publish_param param = {};
+  mqtt_publish_param p = param;
+  p.message.topic.topic = Utf8(topic);
+  p.message.topic.qos = MQTT_QOS_0_AT_MOST_ONCE;
+  p.message.payload.data = reinterpret_cast<uint8_t*>(
+      const_cast<char*>(CONFIG_HCP_MQTT_FW_VERSION));
+  p.message.payload.len = sizeof(CONFIG_HCP_MQTT_FW_VERSION) - 1;
+  p.message_id = message_id++;
+  if (mqtt_publish(&cli, &p) != 0) {
+    MQTT_LOGW("online announcement failed");
   }
 }
 
@@ -162,11 +220,15 @@ void HandleInbound(const mqtt_publish_param& pub) {
 /* Sends everything queued by other threads. Only called from the session thread,
  * which is the only one allowed to touch the client. */
 void DrainTxQueue() {
+  char topic[kMaxTopicLen];
+  if (!FullTopic(CONFIG_HCP_MQTT_TOPIC_STATE, topic, sizeof(topic))) {
+    return;
+  }
   TxItem item;
   while (k_msgq_get(&tx_queue, &item, K_NO_WAIT) == 0) {
     const mqtt_publish_param param = {};
     mqtt_publish_param p = param;
-    p.message.topic.topic = Utf8(CONFIG_HCP_MQTT_TOPIC_STATE);
+    p.message.topic.topic = Utf8(topic);
     p.message.topic.qos = MQTT_QOS_0_AT_MOST_ONCE;
     p.message.payload.data = item.payload;
     p.message.payload.len = item.len;
@@ -187,6 +249,7 @@ void OnEvent(struct mqtt_client* /*client*/, const struct mqtt_evt* evt) {
         backoff.Reset();
         MQTT_LOGI("session up with %s:%u", host, static_cast<unsigned>(port));
         Subscribe();
+        PublishOnline();
         provision::NotifyServiceReady();
       } else {
         /* A rejected CONNACK is usually a wrong account or a client-id clash -
@@ -223,7 +286,7 @@ void InitClient() {
 
   cli.broker = &broker_addr;
   cli.evt_cb = OnEvent;
-  cli.client_id = Utf8(CONFIG_HCP_MQTT_CLIENT_ID);
+  cli.client_id = Utf8(sn);
   cli.user_name = user.size > 0 ? &user : nullptr;
   cli.password = pass.size > 0 ? &pass : nullptr;
   cli.keepalive = CONFIG_HCP_MQTT_KEEPALIVE_SEC;
@@ -288,7 +351,9 @@ void ConnectAndServe() {
   InitClient();
   connected = false;
   if (mqtt_connect(&cli) != 0) {
-    MQTT_LOGW("connect request failed (%d)", errno);
+    const int err = errno;
+    MQTT_LOGW("connect request to %s:%u failed (errno %d)", host,
+              static_cast<unsigned>(port), err);
     mqtt_abort(&cli);
     return;
   }
@@ -369,6 +434,7 @@ bool Start() {
   if (!store.Open()) {
     MQTT_LOGW("storage unavailable, broker address will not persist");
   }
+  EnsureSerialNumber();
   LoadBroker();
   started = true;
   k_thread_create(&session_thread, session_stack,
@@ -379,6 +445,8 @@ bool Start() {
 }
 
 bool IsConnected() { return connected; }
+
+const char* serial_number() { return sn; }
 
 bool PublishTopic(const char* /*topic*/, const void* payload, size_t len) {
   if (payload == nullptr || len == 0 || len > kMaxPayloadLen || !connected) {

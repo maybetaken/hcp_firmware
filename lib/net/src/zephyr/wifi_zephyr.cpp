@@ -209,6 +209,18 @@ bool Disconnect() {
 
 bool IsConnected() { return g.connected; }
 
+bool GetHwAddr(uint8_t out[6]) {
+  if (g.iface == nullptr || out == nullptr) {
+    return false;
+  }
+  const struct net_linkaddr* la = net_if_get_link_addr(g.iface);
+  if (la == nullptr || la->len < 6) {
+    return false;
+  }
+  memcpy(out, la->addr, 6);
+  return true;
+}
+
 bool LinkActive() {
   if (g.iface == nullptr) {
     return false;

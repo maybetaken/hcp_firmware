@@ -115,3 +115,11 @@ add_executable(test_mqtt ${MQ}/src/backoff.cpp
 target_include_directories(test_mqtt PRIVATE ${MQ}/include)
 target_link_libraries(test_mqtt PRIVATE GTest::gtest_main)
 add_test(NAME test_mqtt COMMAND test_mqtt)
+
+# ---- hcp::ssdp announcement parsing (pure logic) ----
+set(SD ${HCP_ROOT}/lib/ssdp)
+add_executable(test_ssdp ${SD}/src/discovery.cpp
+              ${CMAKE_CURRENT_LIST_DIR}/test_ssdp.cpp)
+target_include_directories(test_ssdp PRIVATE ${SD}/include)
+target_link_libraries(test_ssdp PRIVATE GTest::gtest_main)
+add_test(NAME test_ssdp COMMAND test_ssdp)

@@ -33,6 +33,9 @@ extern "C" {
 #ifdef CONFIG_HCP_MQTT
 #include "hcp/mqtt/client.h"
 #endif
+#ifdef CONFIG_HCP_SSDP
+#include "hcp/ssdp/discovery.h"
+#endif
 
 using namespace hcp::kernel;
 
@@ -629,6 +632,11 @@ int main(void) {
   /* Service session on top of the link: it brings the LED from violet to green
    * once the broker accepts us, and backs off while it does not. */
   hcp::mqtt::Start();
+#endif
+#ifdef CONFIG_HCP_SSDP
+  /* Home Assistant announces its broker every 5 s on 239.255.255.250:1900; this
+   * feeds hcp::mqtt so no broker address has to be compiled in. */
+  hcp::ssdp::Start();
 #endif
 #else
   if (blufi_start() == 0) {

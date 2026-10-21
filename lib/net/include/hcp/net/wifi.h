@@ -64,6 +64,11 @@ bool IsConnected();
 // its whole timeout for nothing.
 bool LinkActive();
 
+// Station interface MAC (6 bytes). Used as the device identity seed (MQTT client
+// id / topic prefix) before a serial number is provisioned. False when the
+// interface is not up yet.
+bool GetHwAddr(uint8_t out[6]);
+
 }  // namespace wifi
 }  // namespace net
 }  // namespace hcp

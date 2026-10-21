@@ -15,5 +15,6 @@ rsource "lib/led/Kconfig"
 rsource "lib/net/Kconfig"
 rsource "lib/provision/Kconfig"
 rsource "lib/mqtt/Kconfig"
+rsource "lib/ssdp/Kconfig"
 
 source "Kconfig.zephyr"
