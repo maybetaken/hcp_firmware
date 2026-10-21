@@ -289,3 +289,27 @@ TEST(ProvisionFsm, ReconnectGoesBackToVioletUntilServiceReturns) {
   EXPECT_EQ(up.pattern, Fsm::Pattern::kVioletSlow);
   EXPECT_EQ(fsm.OnServiceReady().pattern, Fsm::Pattern::kGreenSolid);
 }
+
+TEST(ProvisionFsm, ServiceLostFallsBackToViolet) {
+  Fsm fsm(3);
+  fsm.Start(true);
+  fsm.OnWifiConnected();
+  fsm.OnServiceReady();
+
+  Fsm::Output o = fsm.OnServiceLost();
+  EXPECT_EQ(o.state, Fsm::State::kOnline);   // Wi-Fi is still up
+  EXPECT_EQ(o.pattern, Fsm::Pattern::kVioletSlow);
+  EXPECT_EQ(o.num_actions, 0);
+}
+
+TEST(ProvisionFsm, ServiceLostIsANoOpWhenServiceWasNotUp) {
+  Fsm fsm(3);
+  fsm.Start(true);
+  EXPECT_EQ(fsm.OnServiceLost().state, Fsm::State::kWifiTry);
+  EXPECT_EQ(fsm.OnServiceLost().num_actions, 0);
+
+  fsm.OnWifiConnected();
+  Fsm::Output o = fsm.OnServiceLost();  // ready never reported
+  EXPECT_EQ(o.state, Fsm::State::kOnline);
+  EXPECT_EQ(o.pattern, Fsm::Pattern::kVioletSlow);
+}

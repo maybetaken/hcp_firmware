@@ -89,6 +89,10 @@ class Fsm {
   // turns the LED from violet to green. Ignored unless we are online.
   Output OnServiceReady();
 
+  // The service session dropped while Wi-Fi stayed up: go back to waiting
+  // (violet), which is also what tells the user the broker is unreachable.
+  Output OnServiceLost();
+
   State state() const { return state_; }
   Pattern pattern() const { return pattern_; }
   int attempts() const { return attempts_; }

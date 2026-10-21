@@ -22,6 +22,7 @@ add_subdirectory(lib/switch)
 add_subdirectory(lib/led)
 add_subdirectory(lib/net)
 add_subdirectory(lib/provision)
+add_subdirectory(lib/mqtt)
 
 # Application sources.
 target_sources(app PRIVATE src/main.cpp)

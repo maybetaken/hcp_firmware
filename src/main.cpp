@@ -30,6 +30,9 @@ extern "C" {
 #ifdef CONFIG_HCP_PROVISION
 #include "hcp/provision/provision.h"
 #endif
+#ifdef CONFIG_HCP_MQTT
+#include "hcp/mqtt/client.h"
+#endif
 
 using namespace hcp::kernel;
 
@@ -622,6 +625,11 @@ int main(void) {
    * BLE off, otherwise (or after retries fail) -> open BluFi. It also owns the
    * status LED and the button from here on. */
   hcp::provision::Start();
+#ifdef CONFIG_HCP_MQTT
+  /* Service session on top of the link: it brings the LED from violet to green
+   * once the broker accepts us, and backs off while it does not. */
+  hcp::mqtt::Start();
+#endif
 #else
   if (blufi_start() == 0) {
     HCP_LOGI(hcp::log::kDomainWifi, "blufi advertising; waiting for phone app");

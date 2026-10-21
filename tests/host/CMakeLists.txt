@@ -107,3 +107,11 @@ add_executable(test_provision ${PV}/src/fsm.cpp
 target_include_directories(test_provision PRIVATE ${PV}/include)
 target_link_libraries(test_provision PRIVATE GTest::gtest_main)
 add_test(NAME test_provision COMMAND test_provision)
+
+# ---- hcp::mqtt reconnect backoff (pure logic) ----
+set(MQ ${HCP_ROOT}/lib/mqtt)
+add_executable(test_mqtt ${MQ}/src/backoff.cpp
+              ${CMAKE_CURRENT_LIST_DIR}/test_mqtt.cpp)
+target_include_directories(test_mqtt PRIVATE ${MQ}/include)
+target_link_libraries(test_mqtt PRIVATE GTest::gtest_main)
+add_test(NAME test_mqtt COMMAND test_mqtt)

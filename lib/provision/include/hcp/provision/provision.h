@@ -39,13 +39,15 @@ void NoteOwnDisconnect();
 // the phone must consult it, or a routine teardown looks like a Wi-Fi failure.
 bool InOwnDisconnectWindow();
 
-// Report that the service session (MQTT) is up on top of the Wi-Fi link: this is
-// what moves the LED from violet-slow (Wi-Fi only) to solid light green. Nothing
-// calls it until the MQTT client lands, so a provisioned device sits at violet.
-
+// Report that the service session (MQTT) came up on top of the Wi-Fi link: this
+// is what moves the LED from violet-slow (Wi-Fi only) to solid light green.
 void NotifyServiceReady();
 
-// Current state, for logging/diagnostics.
+// Report the opposite: the service session dropped while Wi-Fi stayed up, so the
+// LED goes back to violet-slow.
+void NotifyServiceLost();
+
+// Current state, for logging/diagnostics (the MQTT session waits for kOnline).
 Fsm::State state();
 
 }  // namespace provision

@@ -140,6 +140,14 @@ Fsm::Output Fsm::OnServiceReady() {
   return Make(State::kOnline, Pattern::kGreenSolid, Alert::kNone);
 }
 
+Fsm::Output Fsm::OnServiceLost() {
+  if (state_ != State::kOnline || !service_up_) {
+    return NoChange();
+  }
+  service_up_ = false;
+  return Make(State::kOnline, Pattern::kVioletSlow, Alert::kNone);
+}
+
 Fsm::Output Fsm::OnResetRequested() {
   from_phone_ = false;
   attempts_ = 0;

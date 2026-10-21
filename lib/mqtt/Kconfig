@@ -1,0 +1,77 @@
+# hcp::mqtt module Kconfig
+# SPDX-License-Identifier: Apache-2.0
+
+menuconfig HCP_MQTT
+	bool "HCP MQTT service session"
+	depends on HCP_NET
+	# imply, not select: MQTT_LIB selects NET_SOCKETS, so a select/imply from a
+	# symbol that itself depends on NET_SOCKETS would be a dependency loop. This
+	# way MQTT_LIB pulls NET_SOCKETS in for us.
+	imply MQTT_LIB
+	default y
+	help
+	  Keeps one MQTT connection alive on top of the Wi-Fi station link and reports
+	  the session to hcp::provision, so the status LED can tell "Wi-Fi up but the
+	  broker is not" (violet) from "everything up" (green). Built on Zephyr's own
+	  socket MQTT library - no extra third-party dependency.
+
+if HCP_MQTT
+
+config HCP_MQTT_HOST
+	string "default broker host (empty = wait for it to be learned at runtime)"
+	default ""
+	help
+	  Dotted IPv4 or a hostname. The discovery layer (SSDP) overrides this at
+	  runtime through hcp::mqtt::SetBroker() and it is then kept in storage, so
+	  leave this empty unless the broker address is fixed.
+
+config HCP_MQTT_PORT
+	int "default broker port"
+	default 1883
+
+config HCP_MQTT_CLIENT_ID
+	string "client identifier"
+	default "hcp"
+
+config HCP_MQTT_USER
+	string "broker username (empty = connect without credentials)"
+	help
+	  Compiled in on purpose: the account is created by the user on their own
+	  broker, so it is not provisioned over the air.
+
+config HCP_MQTT_PASS
+	string "broker password"
+
+config HCP_MQTT_TOPIC_STATE
+	string "topic the device publishes to"
+	default "hcp/state"
+
+config HCP_MQTT_TOPIC_CMD
+	string "topic the device subscribes to"
+	default "hcp/cmd"
+
+config HCP_MQTT_KEEPALIVE_SEC
+	int "keepalive interval (seconds)"
+	default 30
+
+config HCP_MQTT_CONNECT_TIMEOUT_MS
+	int "how long to wait for CONNACK"
+	default 10000
+
+config HCP_MQTT_RETRY_BASE_MS
+	int "first reconnect backoff step (ms)"
+	default 1000
+
+config HCP_MQTT_RETRY_CAP_MS
+	int "reconnect backoff ceiling (ms)"
+	default 30000
+
+config HCP_MQTT_BUF_SIZE
+	int "MQTT rx/tx buffer size (bytes)"
+	default 512
+
+config HCP_MQTT_STACK_SIZE
+	int "session thread stack size"
+	default 4096
+
+endif

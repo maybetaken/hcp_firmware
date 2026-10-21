@@ -427,6 +427,8 @@ void NotifyServiceReady() {
   Apply(g_fsm.OnServiceReady());
 }
 
+void NotifyServiceLost() { Apply(g_fsm.OnServiceLost()); }
+
 void NotifyPhoneCredentials(const char* ssid, const char* pass) {
   if (ssid == nullptr) {
     return;
