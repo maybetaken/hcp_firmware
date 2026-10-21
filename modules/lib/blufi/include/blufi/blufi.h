@@ -30,6 +30,11 @@ int blufi_start(void);
 /* Send a data frame to the phone (E2P notify): returns 0/neg errno. */
 int blufi_send(uint8_t type, uint8_t subtype, const uint8_t *data, uint16_t len);
 
+/* Tear down the current BLE link (the phone asked us to, via
+ * CTRL/DISCONNECT_BLE - the ESP-IDF example calls esp_blufi_disconnect() there).
+ * Advertising resumes from the disconnected() callback. Returns 0/neg errno. */
+int blufi_disconnect(void);
+
 #ifdef __cplusplus
 }
 #endif

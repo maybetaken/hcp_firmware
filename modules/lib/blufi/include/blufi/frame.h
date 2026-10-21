@@ -68,7 +68,13 @@ enum blufi_data_subtype {
 	BLUFI_DATA_WIFI_REP       = 0x0f,
 	BLUFI_DATA_REPLY_VERSION  = 0x10,
 	BLUFI_DATA_WIFI_LIST      = 0x11,
+	/* esp btc_blufi_send_error_info(): payload is exactly 1 byte, the esp
+	 * error state. It is an app-initiated push - the ESP-IDF blufi example
+	 * never sends it on its own - so a device should not add it to the
+	 * failure path unless the client asks for it. */
 	BLUFI_DATA_ERROR_INFO     = 0x12,
+	/* Opaque application channel; the ESP-IDF example only logs what arrives
+	 * (no echo), so replies stay a product decision. */
 	BLUFI_DATA_CUSTOM_DATA    = 0x13,
 	BLUFI_DATA_STA_CONN_END_REASON = 0x15,
 	BLUFI_DATA_STA_CONN_RSSI  = 0x16,

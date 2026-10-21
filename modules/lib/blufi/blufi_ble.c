@@ -17,6 +17,7 @@
 #include <zephyr/bluetooth/addr.h>
 #include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/gatt.h>
+#include <zephyr/bluetooth/hci.h>
 #include <zephyr/bluetooth/uuid.h>
 
 #include "blufi/blufi.h"
@@ -537,6 +538,18 @@ int blufi_send(uint8_t type, uint8_t subtype, const uint8_t *data, uint16_t len)
 	} while (r == 0);
 
 	return ret;
+}
+
+int blufi_disconnect(void)
+{
+	if (!g_conn) {
+		return -ENOTCONN;
+	}
+	/* Local-initiated teardown; disconnected() drops the reference, resets the
+	 * per-link state and re-advertises, so nothing else has to be cleaned here.
+	 * The BluFi frame that triggered this is handled on the rx work queue, never
+	 * in the ATT callback, so tearing the link down from here is safe. */
+	return bt_conn_disconnect(g_conn, BT_HCI_ERR_LOCALHOST_TERM_CONN);
 }
 
 #endif /* CONFIG_BLUFI && CONFIG_BT_PERIPHERAL */

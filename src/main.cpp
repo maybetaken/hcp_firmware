@@ -190,8 +190,9 @@ struct ApRec {
   char ssid[33];
   uint8_t bssid[6];
   uint8_t channel;
+  int8_t rssi;
 };
-#define BLUFI_MAX_APS 8
+#define BLUFI_MAX_APS 32
 static ApRec g_aps[BLUFI_MAX_APS];
 static int g_ap_count;
 
@@ -235,6 +236,18 @@ static void blufi_report_wifi_fail(uint8_t reason) {
   blufi_send(BLUFI_TYPE_DATA, BLUFI_DATA_WIFI_REP, rep, sizeof(rep));
 }
 
+/* The got-IP SUCCESS report is emitted from a work item instead of the net-mgmt
+ * event thread.  It used to sleep 500 ms inline, which stalled *every* later
+ * Wi-Fi/IP event (scan results included) for that whole delay.  Keeping the
+ * delay but applying it before the notification preserves the original intent -
+ * give the phone's BluFi stack time to finish the frame it is still processing,
+ * otherwise the trailing SUCCESS can be missed - without blocking events.
+ * If the link is already gone, blufi_send() returns -ENOTCONN. */
+static void succ_report_fn(struct k_work*) {
+  blufi_report_wifi_success();
+}
+static K_WORK_DELAYABLE_DEFINE(g_succ_work, succ_report_fn);
+
 // If the driver never produces an association/DHCP result, still send a final
 // FAIL so the phone UI does not sit in "connecting" forever.
 static void prov_timeout_fn(struct k_work*) {
@@ -255,10 +268,7 @@ static void on_wifi_for_blufi(hcp::net::WifiEvent e, void*) {
   if (e == E::kConnected) {
     atomic_set(&g_prov_active, 0);
     k_work_cancel_delayable(&g_prov_timeout);
-    blufi_report_wifi_success();
-    /* Keep this callback alive briefly after queuing the notification so the
-     * BLE stack has time to flush the final SUCCESS report. */
-    k_sleep(K_MSEC(500));
+    k_work_reschedule(&g_succ_work, K_MSEC(500));
   } else if (e == E::kConnectFailed) {
     atomic_set(&g_prov_active, 0);
     k_work_cancel_delayable(&g_prov_timeout);
@@ -297,31 +307,81 @@ static void prov_work_fn(struct k_work *work) {
 }
 
 // Accumulate a Wi-Fi scan into a BluFi WIFI_LIST payload.
-static uint8_t g_wlist[512];
+//
+// A single ESP32-C6 scan is a snapshot: weak APs flicker in and out between
+// scans while the BLE link and Wi-Fi radio share the antenna.  If the first
+// pass finds only a couple of APs (the common "why does it only show 2" case),
+// run one more pass and union the results by BSSID before replying.
+#define BLUFI_SCAN_PASSES 2
+#define BLUFI_SCAN_MIN_APS 4
+static uint8_t g_wlist[1024];
 static uint16_t g_wlist_len;
+static int g_scan_pass;
 static void on_scan(const hcp::net::ScanResult* r, void*) {
   if (r == nullptr) {
-    HCP_LOGI(hcp::log::kDomainWifi, "blufi: sending wifi list (%u bytes)",
-             (unsigned)g_wlist_len);
+    HCP_LOGI(hcp::log::kDomainWifi, "blufi: scan pass %d found %d APs",
+             g_scan_pass, g_ap_count);
+    if (g_ap_count < BLUFI_SCAN_MIN_APS &&
+        g_scan_pass + 1 < BLUFI_SCAN_PASSES) {
+      g_scan_pass++;
+      HCP_LOGI(hcp::log::kDomainWifi,
+               "blufi: only %d APs, scanning again (pass %d/%d)", g_ap_count,
+               g_scan_pass + 1, BLUFI_SCAN_PASSES);
+      if (hcp::net::wifi::Scan(on_scan, nullptr)) {
+        return;
+      }
+    }
+
+    // Rebuild the BluFi list from the deduplicated union of all passes.
+    g_wlist_len = 0;
+    for (int i = 0; i < g_ap_count; i++) {
+      uint8_t slen = (uint8_t)strlen(g_aps[i].ssid);
+      if (g_wlist_len + 2u + slen > sizeof(g_wlist)) {
+        break;
+      }
+      // esp btc_blufi_send_wifi_list record layout:
+      // [slen+1][rssi(int8)][ssid...]
+      g_wlist[g_wlist_len++] = slen + 1;  // length of (rssi + ssid)
+      g_wlist[g_wlist_len++] = (uint8_t)(int8_t)g_aps[i].rssi;
+      memcpy(&g_wlist[g_wlist_len], g_aps[i].ssid, slen);
+      g_wlist_len += slen;
+    }
+
+    HCP_LOGI(hcp::log::kDomainWifi,
+             "blufi: sending wifi list (%u bytes, %d APs)",
+             (unsigned)g_wlist_len, g_ap_count);
+    for (int i = 0; i < g_ap_count; i++) {
+      HCP_LOGI(hcp::log::kDomainWifi,
+               "  ap[%d] \"%s\" rssi=%d ch=%u bssid=%02x:%02x:%02x:%02x:%02x:%02x",
+               i, g_aps[i].ssid, g_aps[i].rssi, g_aps[i].channel,
+               g_aps[i].bssid[0], g_aps[i].bssid[1], g_aps[i].bssid[2],
+               g_aps[i].bssid[3], g_aps[i].bssid[4], g_aps[i].bssid[5]);
+    }
     blufi_send(BLUFI_TYPE_DATA, BLUFI_DATA_WIFI_LIST, g_wlist, g_wlist_len);
+    g_scan_pass = 0;
     return;
   }
-  uint8_t slen = (uint8_t)strlen(r->ssid);
-  // esp btc_blufi_send_wifi_list record layout: [slen+1][rssi(int8)][ssid...]
-  // i.e. the length byte counts ssid+rssi (rssi comes BEFORE the ssid).
-  if (g_wlist_len + 2u + slen <= BLUFI_MAX_DATA_LEN) {
-    g_wlist[g_wlist_len++] = slen + 1;          // length of (rssi + ssid)
-    g_wlist[g_wlist_len++] = (uint8_t)(int8_t)r->rssi;
-    memcpy(&g_wlist[g_wlist_len], r->ssid, slen);
-    g_wlist_len += slen;
+
+  // Same BSSID seen in an earlier pass: keep the strongest RSSI.
+  for (int i = 0; i < g_ap_count; i++) {
+    if (memcmp(g_aps[i].bssid, r->bssid, 6) == 0) {
+      if (r->rssi > g_aps[i].rssi) {
+        g_aps[i].rssi = r->rssi;
+      }
+      return;
+    }
   }
-  // Remember the AP (ssid -> bssid/channel) for the success conn report.
+
+  uint8_t slen = (uint8_t)strlen(r->ssid);
+  // Remember the AP (ssid -> bssid/channel) for the success conn report and
+  // for the deduplicated Wi-Fi list.
   if (g_ap_count < BLUFI_MAX_APS && slen < sizeof(g_aps[0].ssid)) {
     ApRec& a = g_aps[g_ap_count++];
     memcpy(a.ssid, r->ssid, slen);
     a.ssid[slen] = '\0';
     memcpy(a.bssid, r->bssid, 6);
     a.channel = r->channel;
+    a.rssi = r->rssi;
   }
 }
 
@@ -341,6 +401,7 @@ extern "C" void on_blufi_data(uint8_t type, uint8_t subtype,
       case BLUFI_CTRL_GET_WIFI_LIST:
         HCP_LOGI(hcp::log::kDomainWifi, "blufi: wifi scan requested");
         g_wlist_len = 0;
+        g_scan_pass = 0;
         g_ap_count = 0;
         hcp::net::wifi::Scan(on_scan, nullptr);
         break;
@@ -372,6 +433,26 @@ extern "C" void on_blufi_data(uint8_t type, uint8_t subtype,
         HCP_LOGI(hcp::log::kDomainWifi, "blufi: set wifi opmode %u",
                  len ? data[0] : 0);
         break;
+      case BLUFI_CTRL_DISCONN_FROM_AP:
+        // ESP-IDF example: esp_wifi_disconnect() and nothing else - the driver's
+        // own disconnect event ends the flow, no conn report is invented here.
+        HCP_LOGI(hcp::log::kDomainWifi, "blufi: disconnect from AP");
+        atomic_set(&g_prov_active, 0);
+        k_work_cancel_delayable(&g_prov_timeout);
+        k_work_cancel_delayable(&g_succ_work);
+        hcp::net::wifi::Disconnect();
+        break;
+      case BLUFI_CTRL_DISCONNECT_BLE:
+        // ESP-IDF example closes the GATT link here; our disconnected() callback
+        // resets per-link state and re-advertises.
+        HCP_LOGI(hcp::log::kDomainWifi, "blufi: phone asked to close BLE link");
+        blufi_disconnect();
+        break;
+      case BLUFI_CTRL_DEAUTHENTICATE:
+        // SoftAP-only command (kick a associated station). HCP runs STA-only
+        // BluFi, and the ESP-IDF example leaves this unimplemented as well.
+        HCP_LOGI(hcp::log::kDomainWifi, "blufi: deauthenticate ignored (no softap)");
+        break;
       default:
         HCP_LOGI(hcp::log::kDomainWifi, "blufi ctrl subtype=0x%02x len=%u",
                  subtype, (unsigned)len);
@@ -389,6 +470,11 @@ extern "C" void on_blufi_data(uint8_t type, uint8_t subtype,
       g_pass[n] = '\0';
       HCP_LOGI(hcp::log::kDomainWifi, "blufi STA_PASSWD: (%u bytes)",
                (unsigned)len);
+    } else if (subtype == BLUFI_DATA_CUSTOM_DATA) {
+      // App-level channel: the ESP-IDF example only logs it (no echo), so we keep
+      // the bytes for the application instead of inventing a reply frame.
+      HCP_LOGI(hcp::log::kDomainWifi, "blufi custom data (%u bytes): %.*s",
+               (unsigned)len, (int)(len > 32 ? 32 : len), (const char*)data);
     } else {
       HCP_LOGI(hcp::log::kDomainWifi, "blufi data subtype=0x%02x len=%u", subtype,
                (unsigned)len);
