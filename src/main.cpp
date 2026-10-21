@@ -330,18 +330,17 @@ static void prov_work_fn(struct k_work *work) {
   /* Wait for the disconnect event instead of racing it: re-provisioning an
    * already-connected ESP32 with only a fixed 300 ms delay can leave the
    * driver in a transitional state where the next connect never completes.
-   * Only do this when a link actually exists - Disconnect() on an idle radio
-   * fails and the event never comes, so the wait would always expire (1 s). */
-  if (hcp::net::wifi::LinkActive()) {
-    k_sem_reset(&g_disconn_sem);
+   * Always done on the phone path (it can re-provision back-to-back while the
+   * driver is still CONNECTING); unlike the boot path this is not latency
+   * critical. */
+  k_sem_reset(&g_disconn_sem);
 #ifdef CONFIG_HCP_PROVISION
-    hcp::provision::NoteOwnDisconnect();
+  hcp::provision::NoteOwnDisconnect();
 #endif
-    hcp::net::wifi::Disconnect();
-    if (k_sem_take(&g_disconn_sem, K_SECONDS(1)) != 0) {
-      HCP_LOGW(hcp::log::kDomainWifi,
-               "blufi: disconnect wait timed out, connecting anyway");
-    }
+  hcp::net::wifi::Disconnect();
+  if (k_sem_take(&g_disconn_sem, K_SECONDS(1)) != 0) {
+    HCP_LOGW(hcp::log::kDomainWifi,
+             "blufi: disconnect wait timed out, connecting anyway");
   }
   hcp::net::WifiCredential c{g_ssid, g_pass[0] ? g_pass : nullptr};
   HCP_LOGI(hcp::log::kDomainWifi, "blufi: (re)connecting to \"%s\"", g_ssid);

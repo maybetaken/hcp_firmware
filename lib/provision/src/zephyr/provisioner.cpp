@@ -154,11 +154,13 @@ void ConnectNow() {
   }
   HCP_LOGI(hcp::log::kDomainWifi, "provision: connecting to \"%s\" (try %d)",
            g_ssid, g_fsm.attempts());
-  /* Force a clean slate only when there is something to clean: the ESP32 driver
-   * rejects -EALREADY while still CONNECTING/CONNECTED, but Disconnect() on an
-   * idle radio just fails and the event we wait for never arrives, which used to
-   * cost a full second per attempt (measured at boot). */
-  if (net::wifi::LinkActive()) {
+  /* Cold boot has no link to drop, so skip straight to connecting (that used to
+   * cost a wasted second per attempt). Retries must still tear the previous
+   * attempt down first: the ESP32 driver rejects Connect() with -EALREADY while
+   * it is still CONNECTING, and without the Disconnect the retry bounces back
+   * within milliseconds and burns the budget on no-ops (observed: attempt 2 -> 3
+   * in 18 ms). */
+  if (g_fsm.attempts() > 1 || net::wifi::LinkActive()) {
     NoteOwnDisconnect();
     k_sem_reset(&g_disconn_sem);
     net::wifi::Disconnect();
@@ -209,8 +211,8 @@ const char* PatternName(Fsm::Pattern p) {
       return "blue-fast";
     case Fsm::Pattern::kGreenSolid:
       return "green";
-    case Fsm::Pattern::kAmberSlow:
-      return "amber-slow";
+    case Fsm::Pattern::kVioletSlow:
+      return "violet-slow";
     default:
       return "off";
   }
@@ -275,22 +277,25 @@ constexpr Color kLedOff{0, 0, 0};
  * (ws2812_spi applies the devicetree color-mapping, so these are logical RGB.) */
 // Sky blue: waiting for provisioning, or an attempt is running.
 constexpr Color kLedBlue{60, 150, 255};
-// Warm amber: Wi-Fi is up, the service session (MQTT) is not.
-constexpr Color kLedAmber{255, 130, 0};
+// Purple: Wi-Fi is up, the service session (MQTT) is not. Keep the green channel
+// near zero - a balanced R+G+B reads white on a WS2812 once dimmed, which is what
+// {170,130,255} did here before.
+constexpr Color kLedViolet{170, 0, 255};
 // Pale green: everything the product needs is connected.
 constexpr Color kLedGreen{80, 255, 120};
-// Alerts: three blinks, then back to the steady pattern.
+// Alerts: three blinks, then back to the steady pattern. The erase alert is
+// white rather than violet so it still reads on top of the violet wait state.
 constexpr Color kLedRed{255, 30, 20};
-constexpr Color kLedPurple{150, 40, 255};
+constexpr Color kLedWhite{255, 255, 255};
 
 Color SteadyColor() {
   switch (g_pattern) {
     case Fsm::Pattern::kGreenSolid:
       return kLedGreen;
-    case Fsm::Pattern::kAmberSlow:
-      // 0.5 Hz amber, same cadence as the provisioning blink: slow means
+    case Fsm::Pattern::kVioletSlow:
+      // 0.5 Hz violet, same cadence as the provisioning blink: slow means
       // "nothing is being attempted, this is the steady wait".
-      return (g_tick_count % 40) < 20 ? kLedAmber : kLedOff;
+      return (g_tick_count % 40) < 20 ? kLedViolet : kLedOff;
     case Fsm::Pattern::kBlueFast:
       // 2 Hz: 250 ms on, 250 ms off (5 ticks each at 50 ms)
       return (g_tick_count % 10) < 5 ? kLedBlue : kLedOff;
@@ -304,7 +309,7 @@ Color SteadyColor() {
 }
 
 Color AlertColor() {
-  Color c = (g_alert == Fsm::Alert::kPurple3) ? kLedPurple : kLedRed;
+  Color c = (g_alert == Fsm::Alert::kErased3) ? kLedWhite : kLedRed;
   return ((12 - g_alert_ticks) % 4) < 2 ? c : kLedOff;
 }
 
@@ -418,7 +423,7 @@ bool InOwnDisconnectWindow() {
 
 void NotifyServiceReady() {
   // Called by the MQTT client once its session is up; until then the LED stays
-  // amber, because "online" for the product means Wi-Fi *and* the service.
+  // violet, because "online" for the product means Wi-Fi *and* the service.
   Apply(g_fsm.OnServiceReady());
 }
 

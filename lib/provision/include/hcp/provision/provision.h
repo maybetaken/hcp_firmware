@@ -40,8 +40,8 @@ void NoteOwnDisconnect();
 bool InOwnDisconnectWindow();
 
 // Report that the service session (MQTT) is up on top of the Wi-Fi link: this is
-// what moves the LED from amber-slow (Wi-Fi only) to solid light green. Nothing
-// calls it until the MQTT client lands, so a provisioned device sits at amber.
+// what moves the LED from violet-slow (Wi-Fi only) to solid light green. Nothing
+// calls it until the MQTT client lands, so a provisioned device sits at violet.
 
 void NotifyServiceReady();
 

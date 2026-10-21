@@ -34,13 +34,16 @@ class Fsm {
   };
 
   // Steady LED pattern for a state. Light blue blinks while the network link is
-  // down (slow = waiting for provisioning, fast = an attempt is running), amber
-  // slow once Wi-Fi is up but the service session (MQTT) is not, light green
-  // solid when everything the product needs is connected.
-  enum class Pattern { kOff, kBlueSlow, kBlueFast, kAmberSlow, kGreenSolid };
+  // down (slow = waiting for provisioning, fast = an attempt is running), light
+  // violet slow once Wi-Fi is up but the service session (MQTT) is not, light
+  // green solid when everything the product needs is connected.
+  enum class Pattern { kOff, kBlueSlow, kBlueFast, kVioletSlow, kGreenSolid };
 
-  // One-shot blink sequence layered on top of the steady pattern.
-  enum class Alert { kNone, kRed3, kPurple3 };
+  // One-shot blink sequence layered on top of the steady pattern. The names say
+  // what happened, not what colour it is - the executor picks hues, and renders
+  // kErased3 as white so it stays visible on top of a violet or blue steady
+  // pattern.
+  enum class Alert { kNone, kFailed3, kErased3 };
 
   enum class Action {
     kNone,
@@ -83,7 +86,7 @@ class Fsm {
   Output OnResetRequested();      // long press: forget credentials
 
   // The service session (MQTT) came up on top of the Wi-Fi link: this is what
-  // turns the LED from amber to green. Ignored unless we are online.
+  // turns the LED from violet to green. Ignored unless we are online.
   Output OnServiceReady();
 
   State state() const { return state_; }

@@ -71,7 +71,7 @@ TEST(ProvisionFsm, SavedCredsRetryThenFallbackToBle) {
   Fsm::Output third = fsm.OnWifiConnectFailed();
   EXPECT_EQ(third.state, Fsm::State::kProvisioning);
   EXPECT_TRUE(Has(third, Fsm::Action::kEnableBle));
-  EXPECT_EQ(third.alert, Fsm::Alert::kRed3);
+  EXPECT_EQ(third.alert, Fsm::Alert::kFailed3);
   EXPECT_EQ(third.pattern, Fsm::Pattern::kBlueSlow);
 
   // No further retries once we are provisioning.
@@ -117,8 +117,8 @@ TEST(ProvisionFsm, PhoneProvisioningSuccessClosesBleDelayed) {
 
   Fsm::Output o = fsm.OnWifiConnected();
   EXPECT_EQ(o.state, Fsm::State::kOnline);
-  // Wi-Fi alone is not "online" for the product: amber until MQTT is up.
-  EXPECT_EQ(o.pattern, Fsm::Pattern::kAmberSlow);
+  // Wi-Fi alone is not "online" for the product: violet until MQTT is up.
+  EXPECT_EQ(o.pattern, Fsm::Pattern::kVioletSlow);
   EXPECT_TRUE(Has(o, Fsm::Action::kCloseBleDelayed));
   EXPECT_FALSE(Has(o, Fsm::Action::kDisableBle));  // exactly one close request
   EXPECT_EQ(Count(o, Fsm::Action::kCloseBleDelayed), 1);
@@ -140,7 +140,7 @@ TEST(ProvisionFsm, PhoneProvisioningFailureKeepsBleOpen) {
 
   Fsm::Output o = fsm.OnWifiConnectFailed();
   EXPECT_EQ(o.state, Fsm::State::kProvisioning);
-  EXPECT_EQ(o.alert, Fsm::Alert::kRed3);
+  EXPECT_EQ(o.alert, Fsm::Alert::kFailed3);
   // BLE is already open; re-opening would tear the link down for nothing.
   EXPECT_FALSE(Has(o, Fsm::Action::kEnableBle));
   EXPECT_TRUE(fsm.ble_open());
@@ -202,7 +202,7 @@ TEST(ProvisionFsm, AttemptTimeoutRetriesThenFallsBackToBle) {
   Fsm::Output second = fsm.OnAttemptTimeout();
   EXPECT_EQ(second.state, Fsm::State::kProvisioning);
   EXPECT_TRUE(Has(second, Fsm::Action::kEnableBle));
-  EXPECT_EQ(second.alert, Fsm::Alert::kRed3);
+  EXPECT_EQ(second.alert, Fsm::Alert::kFailed3);
 }
 
 TEST(ProvisionFsm, AttemptTimeoutIgnoredWhenNotTrying) {
@@ -234,7 +234,7 @@ TEST(ProvisionFsm, ResetErasesCredsAndOpensBle) {
   EXPECT_EQ(o.state, Fsm::State::kProvisioning);
   EXPECT_TRUE(Has(o, Fsm::Action::kEraseCreds));
   EXPECT_TRUE(Has(o, Fsm::Action::kEnableBle));
-  EXPECT_EQ(o.alert, Fsm::Alert::kPurple3);
+  EXPECT_EQ(o.alert, Fsm::Alert::kErased3);
 }
 
 TEST(ProvisionFsm, ResetWhileProvisioningDoesNotReopenBle) {
@@ -262,7 +262,7 @@ TEST(ProvisionFsm, ResetClearsThePhonePendingFlag) {
 TEST(ProvisionFsm, ServiceReadyTurnsLedGreen) {
   Fsm fsm(3);
   fsm.Start(true);
-  EXPECT_EQ(fsm.OnWifiConnected().pattern, Fsm::Pattern::kAmberSlow);
+  EXPECT_EQ(fsm.OnWifiConnected().pattern, Fsm::Pattern::kVioletSlow);
 
   Fsm::Output o = fsm.OnServiceReady();
   EXPECT_EQ(o.state, Fsm::State::kOnline);
@@ -278,7 +278,7 @@ TEST(ProvisionFsm, ServiceReadyIgnoredBeforeWifiIsUp) {
   EXPECT_EQ(o.pattern, Fsm::Pattern::kBlueFast);
 }
 
-TEST(ProvisionFsm, ReconnectGoesBackToAmberUntilServiceReturns) {
+TEST(ProvisionFsm, ReconnectGoesBackToVioletUntilServiceReturns) {
   Fsm fsm(3);
   fsm.Start(true);
   fsm.OnWifiConnected();
@@ -286,6 +286,6 @@ TEST(ProvisionFsm, ReconnectGoesBackToAmberUntilServiceReturns) {
 
   fsm.OnWifiDisconnected();  // link dropped -> kWifiTry clears the service flag
   Fsm::Output up = fsm.OnWifiConnected();
-  EXPECT_EQ(up.pattern, Fsm::Pattern::kAmberSlow);
+  EXPECT_EQ(up.pattern, Fsm::Pattern::kVioletSlow);
   EXPECT_EQ(fsm.OnServiceReady().pattern, Fsm::Pattern::kGreenSolid);
 }

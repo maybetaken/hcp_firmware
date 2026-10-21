@@ -67,9 +67,9 @@ Fsm::Output Fsm::OnPhoneCreds() {
 Fsm::Output Fsm::OnWifiConnected() {
   attempts_ = 0;
   // Wi-Fi alone is not "online" for the product: MQTT still has to connect, so
-  // the steady pattern is amber-slow until OnServiceReady().
+  // the steady pattern is violet-slow until OnServiceReady().
   service_up_ = false;
-  Output o = Make(State::kOnline, Pattern::kAmberSlow, Alert::kNone);
+  Output o = Make(State::kOnline, Pattern::kVioletSlow, Alert::kNone);
   if (from_phone_) {
     // Give the mini-program a grace window to receive the final SUCCESS report
     // before the link and the radio go away (it never re-polls after that).
@@ -90,7 +90,7 @@ Fsm::Output Fsm::OnWifiConnectFailed() {
     // credentials. The BluFi layer already sent the FAIL conn report.
     // from_phone_ deliberately stays true: if a later attempt succeeds (slow
     // DHCP is common), BLE must still be closed behind it.
-    return Make(State::kProvisioning, Pattern::kBlueSlow, Alert::kRed3);
+    return Make(State::kProvisioning, Pattern::kBlueSlow, Alert::kFailed3);
   }
 
   // attempts_ is the number of attempts issued so far (Start issued the first
@@ -107,7 +107,7 @@ Fsm::Output Fsm::OnWifiConnectFailed() {
   // forever.
   attempts_ = 0;
   ble_open_ = true;
-  Output o = Make(State::kProvisioning, Pattern::kBlueSlow, Alert::kRed3);
+  Output o = Make(State::kProvisioning, Pattern::kBlueSlow, Alert::kFailed3);
   Push(o, Action::kEnableBle);
   return o;
 }
@@ -143,7 +143,7 @@ Fsm::Output Fsm::OnServiceReady() {
 Fsm::Output Fsm::OnResetRequested() {
   from_phone_ = false;
   attempts_ = 0;
-  Output o = Make(State::kProvisioning, Pattern::kBlueSlow, Alert::kPurple3);
+  Output o = Make(State::kProvisioning, Pattern::kBlueSlow, Alert::kErased3);
   Push(o, Action::kEraseCreds);
   if (!ble_open_) {
     ble_open_ = true;
