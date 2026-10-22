@@ -51,6 +51,12 @@ bool IsConnected();
 bool Publish(const void* payload, size_t len);
 bool PublishTopic(const char* topic, const void* payload, size_t len);
 
+// Same, but with the MQTT retain flag: the broker keeps the last value, so a
+// client that subscribes later (Home Assistant restart, a debug panel hitting
+// "listen") sees the current state immediately instead of waiting for the next
+// event. Used for the availability topic.
+bool PublishRetainedTopic(const char* topic, const void* payload, size_t len);
+
 // Command topic callback. Runs on the session thread: keep it short, and do not
 // block on networking from here.
 using CommandHandler = void (*)(const uint8_t* payload, size_t len, void* user);

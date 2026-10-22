@@ -53,6 +53,7 @@ constexpr int kPollMs = 500;
 struct TxItem {
   char topic[kMaxTopicLen];  // fully prefixed ("<sn>/..."), built at enqueue time
   uint16_t len;
+  uint8_t retain;
   uint8_t payload[kMaxPayloadLen];
 };
 
@@ -181,7 +182,9 @@ void Subscribe() {
   }
 }
 
-/* Announce ourselves once per session, the way the reference firmware does. */
+/* Announce ourselves once per session. Retained, and paired with the last-will
+ * message below, so the broker always knows whether this device is up - even if
+ * we vanish without a clean disconnect. */
 void PublishOnline() {
   char topic[kMaxTopicLen];
   if (!FullTopic(CONFIG_HCP_MQTT_TOPIC_ONLINE, topic, sizeof(topic))) {
@@ -194,10 +197,42 @@ void PublishOnline() {
   p.message.payload.data = reinterpret_cast<uint8_t*>(
       const_cast<char*>(CONFIG_HCP_MQTT_FW_VERSION));
   p.message.payload.len = sizeof(CONFIG_HCP_MQTT_FW_VERSION) - 1;
+  p.retain_flag = 1U;
   p.message_id = message_id++;
   if (mqtt_publish(&cli, &p) != 0) {
     MQTT_LOGW("online announcement failed");
   }
+}
+
+/* Liveness signal for the broker/Home Assistant: without a periodic message the
+ * device is silent between events and a debug subscriber sees nothing. */
+void PublishStateHeartbeat() {
+  static char payload[64];
+  const int n = snprintk(payload, sizeof(payload), "{\"up\":%u,\"fw\":\"%s\"}",
+                          static_cast<unsigned>(k_uptime_get() / 1000),
+                          CONFIG_HCP_MQTT_FW_VERSION);
+  if (n > 0) {
+    PublishTopic(CONFIG_HCP_MQTT_TOPIC_STATE, payload, static_cast<size_t>(n));
+  }
+}
+
+/* Queue a publish for the session thread; only that thread may touch the client. */
+bool Enqueue(const char* topic, const void* payload, size_t len, bool retain) {
+  if (topic == nullptr || payload == nullptr || len == 0 ||
+      len > kMaxPayloadLen || !connected) {
+    return false;
+  }
+  TxItem item;
+  if (!FullTopic(topic, item.topic, sizeof(item.topic))) {
+    MQTT_LOGW("topic too long: %s", topic);
+    return false;
+  }
+  item.len = static_cast<uint16_t>(len);
+  item.retain = retain ? 1U : 0U;
+  memcpy(item.payload, payload, len);
+  /* Drop when the queue is full instead of blocking: callers are the collection
+   * loop and command handlers, not the MQTT path itself. */
+  return k_msgq_put(&tx_queue, &item, K_NO_WAIT) == 0;
 }
 
 void HandleInbound(const mqtt_publish_param& pub) {
@@ -229,6 +264,7 @@ void DrainTxQueue() {
     p.message.topic.qos = MQTT_QOS_0_AT_MOST_ONCE;
     p.message.payload.data = item.payload;
     p.message.payload.len = item.len;
+    p.retain_flag = item.retain ? 1U : 0U;
     p.message_id = message_id++;
     int rc = mqtt_publish(&cli, &p);
     if (rc != 0) {
@@ -280,6 +316,20 @@ void InitClient() {
   static mqtt_utf8 pass;
   user = Utf8(CONFIG_HCP_MQTT_USER);
   pass = Utf8(CONFIG_HCP_MQTT_PASS);
+
+  /* Last will: if the link dies without a DISCONNECT, the broker publishes
+   * "offline" on the same retained availability topic. */
+  static mqtt_topic will_topic;
+  static mqtt_utf8 will_message;
+  static char will_name[kMaxTopicLen];
+  if (FullTopic(CONFIG_HCP_MQTT_TOPIC_ONLINE, will_name, sizeof(will_name))) {
+    will_topic.topic = Utf8(will_name);
+    will_topic.qos = MQTT_QOS_0_AT_MOST_ONCE;
+    will_message = Utf8("offline");
+    cli.will_topic = &will_topic;
+    cli.will_message = &will_message;
+    cli.will_retain = 1U;
+  }
 
   cli.broker = &broker_addr;
   cli.evt_cb = OnEvent;
@@ -336,6 +386,14 @@ bool Pump() {
   }
   if (connected) {
     DrainTxQueue();
+#if CONFIG_HCP_MQTT_STATE_INTERVAL_SEC > 0
+    static int64_t last_state_ms;
+    const int64_t now = k_uptime_get();
+    if (now - last_state_ms >= CONFIG_HCP_MQTT_STATE_INTERVAL_SEC * 1000) {
+      last_state_ms = now;
+      PublishStateHeartbeat();
+    }
+#endif
   }
   int rc = mqtt_live(&cli);
   return rc == 0 || rc == -EAGAIN;
@@ -446,20 +504,11 @@ bool IsConnected() { return connected; }
 const char* serial_number() { return sn; }
 
 bool PublishTopic(const char* topic, const void* payload, size_t len) {
-  if (topic == nullptr || payload == nullptr || len == 0 ||
-      len > kMaxPayloadLen || !connected) {
-    return false;
-  }
-  TxItem item;
-  if (!FullTopic(topic, item.topic, sizeof(item.topic))) {
-    MQTT_LOGW("topic too long: %s", topic);
-    return false;
-  }
-  item.len = static_cast<uint16_t>(len);
-  memcpy(item.payload, payload, len);
-  /* Drop when the queue is full instead of blocking: callers are the collection
-   * loop and command handlers, not the MQTT path itself. */
-  return k_msgq_put(&tx_queue, &item, K_NO_WAIT) == 0;
+  return Enqueue(topic, payload, len, false);
+}
+
+bool PublishRetainedTopic(const char* topic, const void* payload, size_t len) {
+  return Enqueue(topic, payload, len, true);
 }
 
 bool Publish(const void* payload, size_t len) {
