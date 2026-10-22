@@ -3,7 +3,8 @@
 
 menuconfig HCP_MQTT
 	bool "HCP MQTT service session"
-	depends on HCP_NET
+	# The client-id and every topic prefix come from the device serial number.
+	depends on HCP_NET && HCP_IDENTITY
 	# MQTT runs over TCP. The rest of HCP needs no TCP at all (Modbus is serial,
 	# DNS/mDNS are UDP), so the stack is not enabled anywhere else - without this
 	# select, zsock_connect simply fails and every connection attempt errors out.
@@ -56,7 +57,11 @@ config HCP_MQTT_TOPIC_ONLINE
 
 config HCP_MQTT_FW_VERSION
 	string "firmware version reported on the online topic"
-	default "0.1.0"
+	default APP_VERSION
+	help
+	  Defaults to the build's single version knob (CONFIG_APP_VERSION) so the
+	  broker, the OTA check and the image header can never disagree; overriding
+	  this separately would be a footgun.
 
 config HCP_MQTT_KEEPALIVE_SEC
 	int "keepalive interval (seconds)"

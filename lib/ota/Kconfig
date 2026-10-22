@@ -1,0 +1,62 @@
+# hcp::ota module Kconfig
+# SPDX-License-Identifier: Apache-2.0
+
+menuconfig HCP_OTA
+	bool "HCP firmware update (OTA over HTTP, MCUboot trial swap)"
+	depends on HCP_NET && HCP_MQTT && HCP_SSDP
+	# One knob for the whole update path: the reusable module then pulls in the
+	# HTTP source, the MCUboot sink, BOOTLOADER_MCUBOOT and the image manager.
+	select OTA_CLIENT
+	#
+	# Default on, except on ESP32-C5, where it does not fit - measured, not
+	# guessed: with CONFIG_BOOTLOADER_MCUBOOT the C5 image overflows SRAM by
+	# 8592 bytes even with hcp::ota itself switched off (20480 with it), because
+	# bootutil, the image manager and the download buffers are all static.
+	# Enabling it there needs a RAM budget decision (smaller net buffers, a
+	# smaller heap or the download running on an existing stack), not a toggle.
+	default y if !SOC_ESP32C5
+	default n
+	help
+	  Puts the reusable ota_client module to work: a worker thread downloads
+	  version.txt + firmware.bin from the Home Assistant box that hcp::ssdp
+	  discovers, stages the image in the secondary slot, asks MCUboot to swap on
+	  the next reset and reboots. The swap stays a trial until the device has a
+	  live broker session, so an update that cannot reach the network rolls back.
+
+if HCP_OTA
+
+config HCP_OTA_VERSION_URL
+	string "version file URL template (%s = host learned by hcp::ssdp)"
+	default "http://%s:9998/version.txt"
+	help
+	  Same endpoint pair the ESP-IDF firmware used: a plain HTTP server on the
+	  Home Assistant box, port 9998, serving a dotted-numeric version and the
+	  signed-or-unsigned MCUboot image.
+
+config HCP_OTA_IMAGE_URL
+	string "firmware image URL template (%s = host learned by hcp::ssdp)"
+	default "http://%s:9998/firmware.bin"
+
+config HCP_OTA_CONFIRM_AFTER_MS
+	int "Minimum uptime before a trial image may be confirmed (ms)"
+	default 60000
+	help
+	  Grace period after which "Wi-Fi up + broker session up" is allowed to make
+	  the new image permanent. A device that reboots into an image it cannot
+	  network with keeps burning MCUboot's watchdog window instead, and lands back
+	  on the previous firmware.
+
+config HCP_OTA_STACK_SIZE
+	int "update thread stack size"
+	default 8192
+	help
+	  The download runs HTTP parsing plus the flash_img write path on this stack.
+
+config HCP_OTA_TRIGGER_ON_BOOT
+	bool "Check for an update once the service session is up"
+	default n
+	help
+	  Auto-update. Off by default: an unattended fleet pulling whatever its
+	  server offers is a decision to make on purpose, not as a side effect.
+
+endif

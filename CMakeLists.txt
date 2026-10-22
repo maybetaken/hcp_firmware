@@ -6,7 +6,8 @@ cmake_minimum_required(VERSION 3.20.0)
 # containing zephyr/module.yml) before find_package.
 list(APPEND ZEPHYR_EXTRA_MODULES
   ${CMAKE_CURRENT_LIST_DIR}/modules/lib/nanomodbus
-  ${CMAKE_CURRENT_LIST_DIR}/modules/lib/blufi)
+  ${CMAKE_CURRENT_LIST_DIR}/modules/lib/blufi
+  ${CMAKE_CURRENT_LIST_DIR}/modules/lib/ota_client)
 
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(hcp LANGUAGES C CXX)
@@ -21,9 +22,11 @@ add_subdirectory(lib/modbus)
 add_subdirectory(lib/switch)
 add_subdirectory(lib/led)
 add_subdirectory(lib/net)
+add_subdirectory(lib/identity)
 add_subdirectory(lib/provision)
 add_subdirectory(lib/mqtt)
 add_subdirectory(lib/ssdp)
+add_subdirectory(lib/ota)
 
 # Application sources.
 target_sources(app PRIVATE src/main.cpp)

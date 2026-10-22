@@ -13,8 +13,20 @@ rsource "lib/modbus/Kconfig"
 rsource "lib/switch/Kconfig"
 rsource "lib/led/Kconfig"
 rsource "lib/net/Kconfig"
+rsource "lib/identity/Kconfig"
 rsource "lib/provision/Kconfig"
 rsource "lib/mqtt/Kconfig"
 rsource "lib/ssdp/Kconfig"
+rsource "lib/ota/Kconfig"
+
+config APP_VERSION
+	string "firmware version (dotted numeric: major.minor.patch)"
+	default "0.1.0"
+	help
+	  The one version knob of a build. Reported on the <sn>/online topic and used
+	  by hcp::ota as "what am I running", so an update is only taken when the
+	  server offers something above it. MCUboot compares the version in the image
+	  header (CONFIG_MCUBOOT_IMGTOOL_SIGN_VERSION), not this string, so the two
+	  have to move together: ./build.sh <board> --version <x.y.z> sets both.
 
 source "Kconfig.zephyr"

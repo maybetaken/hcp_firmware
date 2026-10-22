@@ -21,6 +21,9 @@
 #ifdef CONFIG_HCP_NET
 #include "hcp/net/wifi.h"
 #endif
+#ifdef CONFIG_HCP_IDENTITY
+#include "hcp/identity/identity.h"
+#endif
 #ifdef CONFIG_BLUFI
 #include <zephyr/kernel.h>
 extern "C" {
@@ -35,6 +38,9 @@ extern "C" {
 #endif
 #ifdef CONFIG_HCP_SSDP
 #include "hcp/ssdp/discovery.h"
+#endif
+#ifdef CONFIG_HCP_OTA
+#include "hcp/ota/ota.h"
 #endif
 
 using namespace hcp::kernel;
@@ -572,8 +578,26 @@ static void on_mqtt_command(const uint8_t* payload, size_t len, void* /*user*/) 
   memcpy(text, payload, n);
   text[n] = '\0';
   HCP_LOGI(hcp::log::kDomainMqtt, "command: %s", text);
+#ifdef CONFIG_HCP_OTA
+  /* "ota" / "ota <base-url>" belongs to hcp::ota, which reports how it went on the
+   * state topic rather than echoing the command back. */
+  if (hcp::ota::HandleCommand(text, n)) {
+    return;
+  }
+#endif
   hcp::mqtt::PublishTopic("ack", payload, len);
 }
+#ifdef CONFIG_HCP_OTA
+/* Adds "ota" to the periodic <sn>/state document while an update has been tried. */
+static int ota_state_extra(char* buf, size_t cap) {
+  char status[48];
+
+  if (hcp::ota::StatusText(status, sizeof(status)) == 0) {
+    return 0;
+  }
+  return snprintk(buf, cap, ",\"ota\":\"%s\"", status);
+}
+#endif  // CONFIG_HCP_OTA
 #endif  // CONFIG_HCP_MQTT
 
 #endif  // CONFIG_BLUFI
@@ -581,6 +605,17 @@ static void on_mqtt_command(const uint8_t* payload, size_t len, void* /*user*/) 
 int main(void) {
   HCP_LOGI(hcp::log::kDomainDevice, "*** HCP (Helios Collector Platform) P0 bring-up ***");
   HCP_LOGI(hcp::log::kDomainDevice, "build %s %s", __DATE__, __TIME__);
+
+#ifdef CONFIG_HCP_IDENTITY
+  /* Resolve the device identity before anything touches the network: the serial
+   * number is both the MQTT client-id/topic prefix and the DHCP hostname, and the
+   * name travels in the very first DISCOVER - setting it after a connect would
+   * wait for a renew to show up on the router. wifi::Init() only binds the
+   * interface and registers callbacks (hcp::net::wifi::Init is idempotent, the
+   * BluFi block below calls it again). */
+  hcp::net::wifi::Init();
+  hcp::identity::Init();
+#endif
 
   Thread th(ProducerWorker, nullptr, "producer");
   if (!th.Start()) {
@@ -655,6 +690,12 @@ int main(void) {
 #endif
 #ifdef CONFIG_HCP_MQTT
   hcp::mqtt::SetCommandHandler(on_mqtt_command, nullptr);
+#endif
+#ifdef CONFIG_HCP_OTA
+  /* Updates are version-gated downloads from the host Home Assistant announced, and
+   * a trial swap until this session proves the new image can reach the network. */
+  hcp::mqtt::SetStateExtraHandler(ota_state_extra);
+  hcp::ota::Start();
 #endif
 #else
   if (blufi_start() == 0) {

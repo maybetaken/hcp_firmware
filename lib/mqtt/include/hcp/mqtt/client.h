@@ -29,8 +29,9 @@ constexpr size_t kMaxPayloadLen = 256;
 
 // Device identity, used as the client id and as the topic prefix: every topic is
 // "<sn>/<suffix>" ("<sn>/online", "<sn>/cmd", ...), like the reference firmware, so
-// the broker/HA side can address one device out of many. Derived from the station
-// MAC on first boot and then kept in storage.
+// the broker/HA side can address one device out of many. The number itself comes
+// from hcp::identity (storage, else the station MAC) - the same string the device
+// announces as its DHCP hostname.
 const char* serial_number();
 
 // Learn or change the broker endpoint (host is a dotted-IPv4 string or a
@@ -61,6 +62,14 @@ bool PublishRetainedTopic(const char* topic, const void* payload, size_t len);
 // block on networking from here.
 using CommandHandler = void (*)(const uint8_t* payload, size_t len, void* user);
 void SetCommandHandler(CommandHandler cb, void* user = nullptr);
+
+// Extra fields for the periodic <sn>/state document. The provider writes a JSON
+// fragment that starts with ',' (e.g. ,"ota":"updating") or returns 0 when it has
+// nothing to report; it runs on the session thread, so it must be quick and
+// non-blocking. This is how another subsystem puts its liveness on the same topic
+// without this module having to know what it reports.
+using StateExtraHandler = int (*)(char* buf, size_t cap);
+void SetStateExtraHandler(StateExtraHandler cb);
 
 }  // namespace mqtt
 }  // namespace hcp

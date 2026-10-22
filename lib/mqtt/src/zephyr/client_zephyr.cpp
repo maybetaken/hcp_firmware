@@ -26,11 +26,10 @@
 #include <zephyr/net/net_ip.h>
 #include <zephyr/net/socket.h>
 
+#include "hcp/identity/identity.h"
 #include "hcp/log/log.h"
 #include "hcp/mqtt/backoff.h"
-#include "hcp/net/wifi.h"
 #include "hcp/provision/provision.h"
-#include "hcp/storage/store.h"
 
 namespace hcp {
 namespace mqtt {
@@ -43,7 +42,6 @@ namespace {
 #define MQTT_LOGW(...) HCP_LOGW(hcp::log::kDomainMqtt, __VA_ARGS__)
 #define MQTT_LOGD(...) HCP_LOGD(hcp::log::kDomainMqtt, __VA_ARGS__)
 
-constexpr char kKeySnr[] = "dev/snr";
 constexpr size_t kHostMax = 64;
 constexpr int kTxQueueDepth = 4;
 constexpr int kPollMs = 500;
@@ -61,7 +59,6 @@ struct mqtt_client cli;
 struct sockaddr_in broker_addr;
 
 char host[kHostMax];
-char sn[kMaxTopicLen];
 uint16_t port;
 uint16_t message_id = 1;
 volatile bool connected;
@@ -71,9 +68,9 @@ volatile bool started;
  * talking to the stale address until keepalive gives up (tens of seconds). */
 atomic_t broker_dirty;
 
-storage::Store store;
 CommandHandler cmd_cb;
 void* cmd_user;
+StateExtraHandler state_extra;
 bool waiting_for_broker_logged;  // so the poll loop does not spam the console
 Backoff backoff(CONFIG_HCP_MQTT_RETRY_BASE_MS, CONFIG_HCP_MQTT_RETRY_CAP_MS);
 
@@ -88,30 +85,11 @@ mqtt_utf8 Utf8(const char* s) {
   return u;
 }
 
-/* Identity: a stored serial number wins, otherwise derive one from the station
- * MAC and keep it, so broker-side topics stay stable across reflashes. */
-void EnsureSerialNumber() {
-  if (sn[0] != '\0') {
-    return;
-  }
-  if (store.GetString(kKeySnr, sn, sizeof(sn)) && sn[0] != '\0') {
-    return;
-  }
-  uint8_t mac[6];
-  if (net::wifi::GetHwAddr(mac)) {
-    snprintk(sn, sizeof(sn), "hcp-%02x%02x%02x%02x%02x%02x", mac[0], mac[1],
-             mac[2], mac[3], mac[4], mac[5]);
-    store.SetString(kKeySnr, sn);
-    MQTT_LOGI("device identity %s", sn);
-    return;
-  }
-  // Interface not ready; use a placeholder and try to derive again next boot.
-  strncpy(sn, "hcp-pending", sizeof(sn) - 1);
-  sn[sizeof(sn) - 1] = '\0';
-}
-
-/* Every topic is "<sn>/<suffix>", like the reference firmware. */
+/* Every topic is "<sn>/<suffix>", like the reference firmware. The serial number
+ * itself is hcp::identity's business - the same string names this device on the
+ * broker and on the LAN (DHCP hostname). */
 bool FullTopic(const char* suffix, char* out, size_t cap) {
+  const char* sn = identity::serial_number();
   if (sn[0] == '\0' || suffix == nullptr) {
     return false;
   }
@@ -203,13 +181,27 @@ void PublishOnline() {
 /* Liveness signal for the broker/Home Assistant: without a periodic message the
  * device is silent between events and a debug subscriber sees nothing. */
 void PublishStateHeartbeat() {
-  static char payload[64];
-  const int n = snprintk(payload, sizeof(payload), "{\"up\":%u,\"fw\":\"%s\"}",
-                          static_cast<unsigned>(k_uptime_get() / 1000),
-                          CONFIG_HCP_MQTT_FW_VERSION);
-  if (n > 0) {
-    PublishTopic(CONFIG_HCP_MQTT_TOPIC_STATE, payload, static_cast<size_t>(n));
+  char payload[128];
+
+  int n = snprintk(payload, sizeof(payload), "{\"up\":%u,\"fw\":\"%s\"",
+                   static_cast<unsigned>(k_uptime_get() / 1000),
+                   CONFIG_HCP_MQTT_FW_VERSION);
+  if (n < 0 || static_cast<size_t>(n) >= sizeof(payload)) {
+    return;
   }
+  if (state_extra != nullptr) {
+    /* Optional, and never allowed to truncate what is already built: on refusal
+     * or overflow the state document is simply sent without the extra fields. */
+    const int more = state_extra(payload + n, sizeof(payload) - n);
+    if (more > 0 && static_cast<size_t>(n + more) < sizeof(payload)) {
+      n += more;
+    }
+  }
+  if (snprintk(payload + n, sizeof(payload) - n, "}") <= 0) {
+    return;
+  }
+  PublishTopic(CONFIG_HCP_MQTT_TOPIC_STATE, payload,
+               strnlen(payload, sizeof(payload)));
 }
 
 /* Queue a publish for the session thread; only that thread may touch the client. */
@@ -329,7 +321,7 @@ void InitClient() {
 
   cli.broker = &broker_addr;
   cli.evt_cb = OnEvent;
-  cli.client_id = Utf8(sn);
+  cli.client_id = Utf8(identity::serial_number());
   cli.user_name = user.size > 0 ? &user : nullptr;
   cli.password = pass.size > 0 ? &pass : nullptr;
   cli.keepalive = CONFIG_HCP_MQTT_KEEPALIVE_SEC;
@@ -494,10 +486,10 @@ bool Start() {
   if (started) {
     return true;
   }
-  if (!store.Open()) {
-    MQTT_LOGW("storage unavailable, broker address will not persist");
-  }
-  EnsureSerialNumber();
+  /* Idempotent: normally main() has already resolved the identity (it needs the
+   * serial as the DHCP hostname too), so this only matters for builds that start
+   * the session without that boot order. */
+  identity::Init();
   LoadBroker();
   started = true;
   k_thread_create(&session_thread, session_stack,
@@ -509,7 +501,7 @@ bool Start() {
 
 bool IsConnected() { return connected; }
 
-const char* serial_number() { return sn; }
+const char* serial_number() { return identity::serial_number(); }
 
 bool PublishTopic(const char* topic, const void* payload, size_t len) {
   return Enqueue(topic, payload, len, false);
@@ -527,6 +519,8 @@ void SetCommandHandler(CommandHandler cb, void* user) {
   cmd_cb = cb;
   cmd_user = user;
 }
+
+void SetStateExtraHandler(StateExtraHandler cb) { state_extra = cb; }
 
 }  // namespace mqtt
 }  // namespace hcp

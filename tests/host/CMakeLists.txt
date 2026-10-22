@@ -123,3 +123,19 @@ add_executable(test_ssdp ${SD}/src/discovery.cpp
 target_include_directories(test_ssdp PRIVATE ${SD}/include)
 target_link_libraries(test_ssdp PRIVATE GTest::gtest_main)
 add_test(NAME test_ssdp COMMAND test_ssdp)
+
+# ---- hcp::identity serial/hostname formatting (pure logic) ----
+set(ID ${HCP_ROOT}/lib/identity)
+add_executable(test_identity ${ID}/src/identity.cpp
+              ${CMAKE_CURRENT_LIST_DIR}/test_identity.cpp)
+target_include_directories(test_identity PRIVATE ${ID}/include)
+target_link_libraries(test_identity PRIVATE GTest::gtest_main)
+add_test(NAME test_identity COMMAND test_identity)
+
+# ---- ota_client module: version ordering and URL parsing (pure logic) ----
+set(OTAM ${HCP_ROOT}/modules/lib/ota_client)
+add_executable(test_ota_client ${OTAM}/src/ota_util.c
+              ${CMAKE_CURRENT_LIST_DIR}/test_ota_client.cpp)
+target_include_directories(test_ota_client PRIVATE ${OTAM}/include)
+target_link_libraries(test_ota_client PRIVATE GTest::gtest_main)
+add_test(NAME test_ota_client COMMAND test_ota_client)
