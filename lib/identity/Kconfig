@@ -1,0 +1,36 @@
+# hcp::identity module Kconfig
+# SPDX-License-Identifier: Apache-2.0
+
+menuconfig HCP_IDENTITY
+	bool "HCP device identity (serial number and hostname)"
+	depends on HCP_NET && HCP_STORAGE
+	# The hostname is what makes a router show the serial number instead of the
+	# MAC vendor ("espressif"). DYNAMIC is required for Init() to replace the
+	# build-time name; it still depends on !NET_HOSTNAME_UNIQUE_UPDATE, which HCP
+	# does not enable.
+	select NET_HOSTNAME_ENABLE
+	select NET_HOSTNAME_DYNAMIC
+	# Factory codes live in the read-only "prodinfo" partition, which is only
+	# reachable through the flash map (boards without the partition simply get no
+	# match and fall back to storage / the MAC).
+	select FLASH_MAP if FLASH
+	default y
+	help
+	  One serial number for the whole device: a code burned into the "prodinfo"
+	  partition (tools/make_sn_bin.py) wins, then storage ("dev/snr"), then a value
+	  derived from the station MAC. It is published as both the MQTT client-id /
+	  topic prefix and the DHCP hostname.
+
+if HCP_IDENTITY
+
+config HCP_IDENTITY_PREFIX
+	string "prefix for a MAC-derived serial number"
+	default "hcp-"
+	help
+	  Used only when neither prodinfo nor storage holds a serial number yet, and as
+	  the prefix in front of a burned factory code: the station MAC is appended as
+	  12 lowercase hex digits ("hcp-404cca57446c"), while production burns just the
+	  unique part ("M1230" -> hcp-M1230). A code that already starts with this
+	  prefix is taken as-is, so it is never doubled.
+
+endif

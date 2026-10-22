@@ -21,3 +21,24 @@
 
 #include "../common/hcp_base.dtsi"
 #include "../common/hcp_ws2812.dtsi"
+
+/*
+ * Factory identity blob (hcp::identity reads "prodinfo" before falling back to
+ * storage / the station MAC), carved out of the tail of the "storage" partition.
+ * The C5 uses the 8 MB Espressif table, so its storage slot sits at 0x7b0000;
+ * settings+NVS only ever uses the first 32 KB of its 192 KB and the partition
+ * keeps that start, so credentials already written in the field stay valid.
+ * Burn a per-device sn.bin at 0x7df000 - no rebuild of the app image needed.
+ */
+&storage_partition {
+	reg = <0x7b0000 DT_SIZE_K(188)>;
+};
+
+&flash0 {
+	partitions {
+		prodinfo_partition: partition@7df000 {
+			label = "prodinfo";
+			reg = <0x7df000 DT_SIZE_K(4)>;
+		};
+	};
+};

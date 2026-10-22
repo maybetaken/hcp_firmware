@@ -20,3 +20,24 @@
 
 #include "../common/hcp_base.dtsi"
 #include "../common/hcp_ws2812.dtsi"
+
+/*
+ * Factory identity blob (hcp::identity reads "prodinfo" before falling back to
+ * storage / the station MAC), carved out of the tail of the "storage" partition:
+ * settings+NVS only ever uses the first 32 KB (CONFIG_SETTINGS_NVS_SECTOR_COUNT=8)
+ * of its 192 KB, and the partition keeps its 0x3b0000 start, so credentials
+ * already written in the field stay valid. Burning a per-device sn.bin at
+ * 0x3df000 with esptool therefore needs no rebuild of the application image.
+ */
+&storage_partition {
+	reg = <0x3b0000 DT_SIZE_K(188)>;
+};
+
+&flash0 {
+	partitions {
+		prodinfo_partition: partition@3df000 {
+			label = "prodinfo";
+			reg = <0x3df000 DT_SIZE_K(4)>;
+		};
+	};
+};

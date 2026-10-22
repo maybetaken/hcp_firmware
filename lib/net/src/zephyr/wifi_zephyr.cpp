@@ -16,6 +16,9 @@
 #include <zephyr/net/net_if.h>
 #include <zephyr/net/net_ip.h>
 #include <zephyr/net/net_mgmt.h>
+#if defined(CONFIG_NET_HOSTNAME_ENABLE)
+#include <zephyr/net/hostname.h>
+#endif
 #include <zephyr/net/wifi_mgmt.h>
 
 LOG_MODULE_REGISTER(hcp_wifi, CONFIG_LOG_DEFAULT_LEVEL);
@@ -88,7 +91,14 @@ void Ipv4Handler(struct net_mgmt_event_callback* cb, uint64_t event,
   ARG_UNUSED(iface);
   if (event == NET_EVENT_IPV4_ADDR_ADD) {
     g.connected = true;
+    /* Log the name we announced: it is what the router's client list shows, and
+     * the only way to tell "hostname missing" from "router ignores option 12". */
+#if defined(CONFIG_NET_HOSTNAME_ENABLE)
+    LOG_INF("IPv4 address assigned (DHCP bound, hostname %s)",
+            net_hostname_get());
+#else
     LOG_INF("IPv4 address assigned (DHCP bound)");
+#endif
     Report(WifiEvent::kConnected);
   }
 }
