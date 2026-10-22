@@ -68,6 +68,10 @@ uint16_t port;
 uint16_t message_id = 1;
 volatile bool connected;
 volatile bool started;
+/* Set when the discovered broker changes mid-session: Home Assistant's address is
+ * DHCP-assigned, so it does move. Without this the running TCP session keeps
+ * talking to the stale address until keepalive gives up (tens of seconds). */
+atomic_t broker_dirty;
 
 storage::Store store;
 CommandHandler cmd_cb;
@@ -381,6 +385,12 @@ bool WaitConnack() {
 
 /* One read/keepalive round. Returns false when the connection is gone. */
 bool Pump() {
+  if (atomic_get(&broker_dirty)) {
+    atomic_set(&broker_dirty, 0);
+    MQTT_LOGI("broker moved to %s:%u, reconnecting now", host,
+              static_cast<unsigned>(port));
+    return false;
+  }
   if (PollReadable(kPollMs) && mqtt_input(&cli) < 0) {
     return false;
   }
@@ -434,7 +444,9 @@ void ConnectAndServe() {
 
 void SessionThread(void*, void*, void*) {
   while (true) {
-    LoadBroker();
+    // No LoadBroker() here: storage is only the boot cache, and the SSDP listener
+    // is the runtime owner of these globals (re-reading storage each round could
+    // otherwise resurrect a stale address if a persist ever failed).
     if (!BrokerKnown()) {
       if (!waiting_for_broker_logged) {
         MQTT_LOGI("waiting for a broker address (SSDP or CONFIG_HCP_MQTT_HOST)");
@@ -470,6 +482,9 @@ bool SetBroker(const char* new_host, uint16_t new_port) {
   if (strlen(new_host) >= sizeof(host)) {
     return false;
   }
+  const bool moved = connected &&
+                     (strcmp(host, new_host) != 0 ||
+                      (new_port != 0 && port != new_port));
   strncpy(host, new_host, sizeof(host) - 1);
   host[sizeof(host) - 1] = '\0';
   if (new_port != 0) {
@@ -479,6 +494,9 @@ bool SetBroker(const char* new_host, uint16_t new_port) {
             store.SetInt(kKeyPort, static_cast<int32_t>(port));
   MQTT_LOGI("broker set to %s:%u (%s)", host, static_cast<unsigned>(port),
             ok ? "persisted" : "session only");
+  if (moved) {
+    atomic_set(&broker_dirty, 1);
+  }
   return true;
 }
 
