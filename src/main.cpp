@@ -561,6 +561,21 @@ extern "C" void on_blufi_data(uint8_t type, uint8_t subtype,
     }
   }
 }
+#ifdef CONFIG_HCP_MQTT
+/* Commands arrive on <sn>/cmd. Nothing acts on them yet (relay/collection control
+ * is the next phase), but the device logs them and echoes to <sn>/ack, so a
+ * publish from Home Assistant is observable end to end even when the USB console
+ * is not attached. */
+static void on_mqtt_command(const uint8_t* payload, size_t len, void* /*user*/) {
+  char text[65];
+  size_t n = len < sizeof(text) - 1 ? len : sizeof(text) - 1;
+  memcpy(text, payload, n);
+  text[n] = '\0';
+  HCP_LOGI(hcp::log::kDomainMqtt, "command: %s", text);
+  hcp::mqtt::PublishTopic("ack", payload, len);
+}
+#endif  // CONFIG_HCP_MQTT
+
 #endif  // CONFIG_BLUFI
 
 int main(void) {
@@ -637,6 +652,9 @@ int main(void) {
   /* Home Assistant announces its broker every 5 s on 239.255.255.250:1900; this
    * feeds hcp::mqtt so no broker address has to be compiled in. */
   hcp::ssdp::Start();
+#endif
+#ifdef CONFIG_HCP_MQTT
+  hcp::mqtt::SetCommandHandler(on_mqtt_command, nullptr);
 #endif
 #else
   if (blufi_start() == 0) {

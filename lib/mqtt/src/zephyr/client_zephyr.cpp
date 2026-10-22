@@ -51,6 +51,7 @@ constexpr int kTxQueueDepth = 4;
 constexpr int kPollMs = 500;
 
 struct TxItem {
+  char topic[kMaxTopicLen];  // fully prefixed ("<sn>/..."), built at enqueue time
   uint16_t len;
   uint8_t payload[kMaxPayloadLen];
 };
@@ -220,22 +221,18 @@ void HandleInbound(const mqtt_publish_param& pub) {
 /* Sends everything queued by other threads. Only called from the session thread,
  * which is the only one allowed to touch the client. */
 void DrainTxQueue() {
-  char topic[kMaxTopicLen];
-  if (!FullTopic(CONFIG_HCP_MQTT_TOPIC_STATE, topic, sizeof(topic))) {
-    return;
-  }
   TxItem item;
   while (k_msgq_get(&tx_queue, &item, K_NO_WAIT) == 0) {
     const mqtt_publish_param param = {};
     mqtt_publish_param p = param;
-    p.message.topic.topic = Utf8(topic);
+    p.message.topic.topic = Utf8(item.topic);
     p.message.topic.qos = MQTT_QOS_0_AT_MOST_ONCE;
     p.message.payload.data = item.payload;
     p.message.payload.len = item.len;
     p.message_id = message_id++;
     int rc = mqtt_publish(&cli, &p);
     if (rc != 0) {
-      MQTT_LOGW("publish failed (%d)", rc);
+      MQTT_LOGW("publish to %s failed (%d)", item.topic, rc);
       return;
     }
   }
@@ -448,15 +445,20 @@ bool IsConnected() { return connected; }
 
 const char* serial_number() { return sn; }
 
-bool PublishTopic(const char* /*topic*/, const void* payload, size_t len) {
-  if (payload == nullptr || len == 0 || len > kMaxPayloadLen || !connected) {
+bool PublishTopic(const char* topic, const void* payload, size_t len) {
+  if (topic == nullptr || payload == nullptr || len == 0 ||
+      len > kMaxPayloadLen || !connected) {
     return false;
   }
   TxItem item;
+  if (!FullTopic(topic, item.topic, sizeof(item.topic))) {
+    MQTT_LOGW("topic too long: %s", topic);
+    return false;
+  }
   item.len = static_cast<uint16_t>(len);
   memcpy(item.payload, payload, len);
-  /* One in flight is plenty for a status topic; dropping instead of blocking
-   * keeps callers (the collection loop) off the MQTT path. */
+  /* Drop when the queue is full instead of blocking: callers are the collection
+   * loop and command handlers, not the MQTT path itself. */
   return k_msgq_put(&tx_queue, &item, K_NO_WAIT) == 0;
 }
 
