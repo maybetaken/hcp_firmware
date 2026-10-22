@@ -43,8 +43,6 @@ namespace {
 #define MQTT_LOGW(...) HCP_LOGW(hcp::log::kDomainMqtt, __VA_ARGS__)
 #define MQTT_LOGD(...) HCP_LOGD(hcp::log::kDomainMqtt, __VA_ARGS__)
 
-constexpr char kKeyHost[] = "svc/host";
-constexpr char kKeyPort[] = "svc/port";
 constexpr char kKeySnr[] = "dev/snr";
 constexpr size_t kHostMax = 64;
 constexpr int kTxQueueDepth = 4;
@@ -121,19 +119,13 @@ bool FullTopic(const char* suffix, char* out, size_t cap) {
   return n > 0 && static_cast<size_t>(n) < cap;
 }
 
-/* Broker address: storage (learned at runtime) wins, then the build-time
- * default. Returns false when neither is set, i.e. we must wait for discovery. */
+/* Boot-time broker address: only the compiled-in fallback exists any more. The
+ * discovered value deliberately is NOT persisted - Home Assistant is DHCP-assigned
+ * and re-announces every 5 s, so SSDP is the source of truth and a cached address
+ * could only ever be stale. */
 void LoadBroker() {
   host[0] = '\0';
   port = CONFIG_HCP_MQTT_PORT;
-  if (store.GetString(kKeyHost, host, sizeof(host)) && host[0] != '\0') {
-    int32_t stored_port = 0;
-    if (store.GetInt(kKeyPort, stored_port) && stored_port > 0 &&
-        stored_port <= 65535) {
-      port = static_cast<uint16_t>(stored_port);
-    }
-    return;
-  }
   strncpy(host, CONFIG_HCP_MQTT_HOST, sizeof(host) - 1);
   host[sizeof(host) - 1] = '\0';
 }
@@ -490,10 +482,8 @@ bool SetBroker(const char* new_host, uint16_t new_port) {
   if (new_port != 0) {
     port = new_port;
   }
-  bool ok = store.SetString(kKeyHost, host) &&
-            store.SetInt(kKeyPort, static_cast<int32_t>(port));
-  MQTT_LOGI("broker set to %s:%u (%s)", host, static_cast<unsigned>(port),
-            ok ? "persisted" : "session only");
+  // RAM only: see LoadBroker() - the announcement is authoritative and repeats.
+  MQTT_LOGI("broker set to %s:%u", host, static_cast<unsigned>(port));
   if (moved) {
     atomic_set(&broker_dirty, 1);
   }
