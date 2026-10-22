@@ -12,6 +12,13 @@
 #   ./build.sh hcp_c3                # one board, LED on
 #   ./build.sh <board> --no-led      # disable LED (Kconfig off)
 #   ./build.sh <board> --rs485       # RS485 uart1 variant (per-board overlay)
+#   ./build.sh <board> --version 0.2.0
+#                                  # stamp this build as 0.2.0: both the version
+#                                  # the application reports and the version
+#                                  # imgtool writes into the MCUboot image header.
+#                                  # Goes to its own build/<slug>_version dir, and
+#                                  # zephyr/zephyr.signed.bin is what an update
+#                                  # server should serve.
 #   ./build.sh <board> -- <extra west args>
 set -euo pipefail
 
@@ -21,6 +28,7 @@ APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # .../zephyr/hcp
 BOARD_OR_ALL="hcp_c6/esp32c6/hpcore"
 WANT_LED=1
 WANT_RS485=0
+VERSION=""
 EXTRA_ARGS=""
 positional_seen=0
 while [ $# -gt 0 ]; do
@@ -29,6 +37,7 @@ while [ $# -gt 0 ]; do
     --no-led)   WANT_LED=0; shift ;;
     --led)      WANT_LED=1; shift ;;
     --rs485)    WANT_RS485=1; shift ;;
+    --version)  VERSION="$2"; shift 2 ;;
     --)         shift; EXTRA_ARGS="$EXTRA_ARGS $*"; break ;;
     -*)         echo "unknown option: $1" >&2; exit 1 ;;
     *)          if [ "$positional_seen" -eq 0 ]; then BOARD_OR_ALL="$1"; positional_seen=1; shift;
@@ -58,7 +67,21 @@ build_one() {
   [ "$WANT_LED" = "0" ] && SLUG="${SLUG}_nold"
   [ "$WANT_RS485" = "1" ] && SLUG="${SLUG}_rs485"
 
-  echo ">>> building ${BOARD}  (LED=${WANT_LED} RS485=${WANT_RS485})  -> build/${SLUG}"
+  # A versioned build is a build of its own: the two version symbols have to change
+  # together (an image whose MCUboot header still says 0.0.0+0 makes the
+  # bootloader's downgrade prevention compare nothing, while the application keeps
+  # reporting CONFIG_APP_VERSION), and a fresh directory avoids inheriting a
+  # configured-from-elsewhere cache.
+  local VERSION_ARGS=""
+  if [ -n "$VERSION" ]; then
+    SLUG="${SLUG}_v${VERSION}"
+    mkdir -p "${APP_DIR}/build"
+    printf 'CONFIG_APP_VERSION="%s"\nCONFIG_MCUBOOT_IMGTOOL_SIGN_VERSION="%s"\n' \
+      "$VERSION" "$VERSION" > "${APP_DIR}/build/.version.conf"
+    VERSION_ARGS="-DEXTRA_CONF_FILE=/workspace/hcp/build/.version.conf"
+  fi
+
+  echo ">>> building ${BOARD}  (LED=${WANT_LED} RS485=${WANT_RS485}${VERSION:+ version=${VERSION}})  -> build/${SLUG}"
   docker run --rm \
     -v "$(dirname "${APP_DIR}")":/workspace \
     --entrypoint /bin/bash "${IMAGE}" -lc "
@@ -68,7 +91,7 @@ build_one() {
       export ZEPHYR_BASE=/opt/toolchains/zephyr
       cd /workspace/hcp
       west build -p auto -d /workspace/hcp/build/${SLUG} -b ${BOARD} . -- \
-        -DBOARD_ROOT=/workspace/hcp ${LED_ARGS} ${RS485_ARGS} ${EXTRA_ARGS}
+        -DBOARD_ROOT=/workspace/hcp ${LED_ARGS} ${RS485_ARGS} ${VERSION_ARGS} ${EXTRA_ARGS}
     "
 }
 
