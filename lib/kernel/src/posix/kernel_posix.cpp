@@ -10,6 +10,7 @@
 #include <atomic>
 #include <cerrno>
 #include <condition_variable>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <mutex>
@@ -18,6 +19,12 @@
 
 namespace hcp {
 namespace kernel {
+
+void Reboot() {
+  /* Nothing to reset on a host; abort so a test that reaches this line fails
+   * loudly instead of returning into code that assumed it would not. */
+  std::abort();
+}
 
 namespace {
 void AbsDeadlineMs(struct timespec* ts, uint32_t ms) {

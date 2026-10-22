@@ -136,5 +136,15 @@ class Timer {
   Impl* impl_;
 };
 
+// Restart the device; never returns.
+//
+// Kept here because the platform detail is easy to get wrong twice: Zephyr's
+// sys_reboot() has no Espressif implementation and hal_espressif's esp_restart()
+// is not part of a Zephyr build, so the on-target backend calls the ROM entry
+// point directly (verified present in the linked ELF on C3/C5/C6). Callers that
+// want a log line out first must flush it: with buffered logging a reset can
+// outrun the log thread.
+void Reboot();
+
 }  // namespace kernel
 }  // namespace hcp

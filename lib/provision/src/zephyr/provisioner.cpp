@@ -15,6 +15,7 @@
 
 #include "blufi/blufi.h"
 #include "hcp/input/input.h"
+#include "hcp/kernel/kernel.h"
 #include "hcp/led/strip.h"
 #include "hcp/log/log.h"
 #include "hcp/storage/store.h"
@@ -58,12 +59,6 @@ constexpr int kOwnDisconnectMs = 1500;
 constexpr char kKeySsid[] = "prov/ssid";
 constexpr char kKeyPass[] = "prov/pass";
 
-/* ROM entry point, linked from the ESP32 ROM symbol table (verified present in
- * the produced ELF). hal_espressif's esp_restart() is not compiled into a
- * Zephyr build and Zephyr's sys_reboot() has no Espressif implementation, so
- * this is the working way to reboot on ESP32-C6/C5/C3. */
-extern "C" void esp_rom_software_reset_system(void);
-
 Fsm g_fsm(kWifiAttempts);
 storage::Store g_store;
 led::Strip g_strip(1);
@@ -104,12 +99,10 @@ void AttemptTimeoutFn(struct k_work*) {
 
 void Reboot() {
   HCP_LOGI(hcp::log::kDomainDevice, "provision: short press -> reboot");
-  // Logging is synchronous (LOG_MODE_IMMEDIATE), so the line above has already
-  // reached the console by the time we get here.
-  (void)irq_lock();
-  esp_rom_software_reset_system();
-  while (true) {
-  }
+  // Buffered logging may not have drained yet; give the log thread a moment so
+  // the reason for the reset is visible on the console.
+  k_sleep(K_MSEC(200));
+  kernel::Reboot();
 }
 
 void SavePendingCreds() {

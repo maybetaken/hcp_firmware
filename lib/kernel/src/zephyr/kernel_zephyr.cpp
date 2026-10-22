@@ -9,6 +9,7 @@
 #include "hcp/kernel/kernel.h"
 
 #include <zephyr/kernel.h>
+#include <zephyr/irq.h>
 #include <zephyr/sys/atomic.h>
 
 #include <cstdint>
@@ -21,6 +22,19 @@ namespace time {
 uint64_t UptimeMs() { return static_cast<uint64_t>(k_uptime_get()); }
 void DelayMs(uint32_t ms) { k_sleep(K_MSEC(ms)); }
 }  // namespace time
+
+/* ESP32 ROM entry point, resolved from the ROM symbol table at link time: the
+ * only reset path that exists in a Zephyr build of these SoCs (see the header). */
+extern "C" void esp_rom_software_reset_system(void);
+
+void Reboot() {
+  /* Interrupts off so nothing can touch memory while the cache and the SoC are
+   * being torn down. */
+  (void)irq_lock();
+  esp_rom_software_reset_system();
+  while (true) {
+  }
+}
 
 struct Mutex::Impl {
   struct k_mutex m;
