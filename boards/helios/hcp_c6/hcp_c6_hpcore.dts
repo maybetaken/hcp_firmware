@@ -41,3 +41,13 @@
 		};
 	};
 };
+
+/*
+ * MWDT0 (alias watchdog0): hcp::ota arms a reset deadline on it while this boot
+ * is an unconfirmed trial image, so a firmware that never gets healthy rolls
+ * itself back. Enabled only here and on hcp_c3 - the boards that boot through
+ * MCUboot, where a reset is recoverable.
+ */
+&wdt0 {
+	status = "okay";
+};

@@ -31,6 +31,12 @@
 		hcp-uart = &uart1;
 		hcp-k1 = &relay_k1;
 		hcp-k2 = &relay_k2;
+		/* Watchdog the trial-image deadline is set on (hcp::kernel) and the one
+		 * MCUboot's watchdog code looks for by the same name. The alias is here so
+		 * both sides agree; the node itself is only enabled on the boards that boot
+		 * through MCUboot - where it stays "disabled", ArmWatchdog() has nothing to
+		 * arm and the update path behaves as it did before. */
+		watchdog0 = &wdt0;
 	};
 
 	gpio_keys {

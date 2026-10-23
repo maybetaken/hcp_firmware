@@ -26,6 +26,11 @@ void Reboot() {
   std::abort();
 }
 
+/* No hardware deadline to set on a host. Returning false is what the caller
+ * needs: hcp::ota keeps the behaviour it has on a board without a watchdog. */
+bool ArmWatchdog(uint32_t) { return false; }
+void DisarmWatchdog() {}
+
 namespace {
 void AbsDeadlineMs(struct timespec* ts, uint32_t ms) {
   clock_gettime(CLOCK_REALTIME, ts);

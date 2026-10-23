@@ -12,6 +12,11 @@
 #include <zephyr/irq.h>
 #include <zephyr/sys/atomic.h>
 
+#if DT_NODE_HAS_STATUS(DT_ALIAS(watchdog0), okay)
+#include <zephyr/device.h>
+#include <zephyr/drivers/watchdog.h>
+#endif
+
 #include <cstdint>
 #include <new>
 
@@ -34,6 +39,57 @@ void Reboot() {
   esp_rom_software_reset_system();
   while (true) {
   }
+}
+
+#if DT_NODE_HAS_STATUS(DT_ALIAS(watchdog0), okay)
+namespace {
+/* The board's main watchdog (MWDT0), reached through the `watchdog0` alias that
+ * MCUboot's watchdog code looks for as well, so the bootloader and the
+ * application are talking to the same block. */
+const struct device* const g_wdt = DEVICE_DT_GET(DT_ALIAS(watchdog0));
+int g_wdt_channel = -1;
+}  // namespace
+#endif
+
+bool ArmWatchdog(uint32_t ms) {
+#if DT_NODE_HAS_STATUS(DT_ALIAS(watchdog0), okay)
+  if (g_wdt_channel >= 0) {
+    DisarmWatchdog();
+  }
+  if (!device_is_ready(g_wdt)) {
+    return false;
+  }
+
+  struct wdt_timeout_cfg cfg = {};
+  cfg.window.min = 0U;
+  cfg.window.max = ms;
+  cfg.callback = nullptr;
+  cfg.flags = WDT_FLAG_RESET_SOC;  /* whole chip, which is what MCUboot can undo */
+
+  const int channel = wdt_install_timeout(g_wdt, &cfg);
+  if (channel < 0) {
+    return false;
+  }
+  if (wdt_setup(g_wdt, 0) != 0) {
+    return false;
+  }
+
+  g_wdt_channel = channel;
+  return true;
+#else
+  ARG_UNUSED(ms);
+  return false;
+#endif
+}
+
+void DisarmWatchdog() {
+#if DT_NODE_HAS_STATUS(DT_ALIAS(watchdog0), okay)
+  if (g_wdt_channel < 0) {
+    return;
+  }
+  g_wdt_channel = -1;
+  (void)wdt_disable(g_wdt);
+#endif
 }
 
 struct Mutex::Impl {

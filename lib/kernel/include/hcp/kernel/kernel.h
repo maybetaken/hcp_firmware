@@ -146,5 +146,18 @@ class Timer {
 // outrun the log thread.
 void Reboot();
 
+// Hardware deadline: reset the chip in `ms` unless DisarmWatchdog() is called.
+//
+// Deliberately no Feed(): the only user is hcp::ota guarding a trial firmware
+// image, and the whole point is a deadline nobody pets - the image either proves
+// itself healthy in time or the chip resets and the bootloader rolls it back. A
+// feedable watchdog would degrade that into "resets only if my thread dies".
+//
+// ArmWatchdog() returns false when there is nothing to arm (board without a
+// watchdog node, or the host backend), so the caller keeps the behaviour it had
+// before rather than failing the update.
+bool ArmWatchdog(uint32_t ms);
+void DisarmWatchdog();
+
 }  // namespace kernel
 }  // namespace hcp
