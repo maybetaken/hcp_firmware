@@ -19,6 +19,10 @@
 #                                  # Goes to its own build/<slug>_version dir, and
 #                                  # zephyr/zephyr.signed.bin is what an update
 #                                  # server should serve.
+#   ./build.sh <board> --signed    # sign the image with hcp/keys/$HCP_SIGN_KEY.pem
+#                                  # (default root-ec256), i.e. produce an image an
+#                                  # ECDSA-enabled MCUboot will boot. Must match how
+#                                  # ./tools/build_mcuboot.sh --signed was built.
 #   ./build.sh <board> -- <extra west args>
 #                                  # also gets a directory of its own (build.sh
 #                                  # fingerprints the arguments into the name), so a
@@ -32,6 +36,8 @@ BOARD_OR_ALL="hcp_c6/esp32c6/hpcore"
 WANT_LED=1
 WANT_RS485=0
 VERSION=""
+SIGNED=0
+HCP_SIGN_KEY="${HCP_SIGN_KEY:-root-ec256}"
 EXTRA_ARGS=""
 positional_seen=0
 while [ $# -gt 0 ]; do
@@ -41,6 +47,7 @@ while [ $# -gt 0 ]; do
     --led)      WANT_LED=1; shift ;;
     --rs485)    WANT_RS485=1; shift ;;
     --version)  VERSION="$2"; shift 2 ;;
+    --signed)   SIGNED=1; shift ;;
     --)         shift; EXTRA_ARGS="$EXTRA_ARGS $*"; break ;;
     -*)         echo "unknown option: $1" >&2; exit 1 ;;
     *)          if [ "$positional_seen" -eq 0 ]; then BOARD_OR_ALL="$1"; positional_seen=1; shift;
@@ -75,24 +82,56 @@ build_one() {
   # bootloader's downgrade prevention compare nothing, while the application keeps
   # reporting CONFIG_APP_VERSION), and a fresh directory avoids inheriting a
   # configured-from-elsewhere cache.
-  local VERSION_ARGS=""
+  #
+  # Both overrides are written to one conf fragment rather than passed as
+  # -DCONFIG_X=...: a string symbol surviving docker/bash/cmake loses its quotes and
+  # Kconfig then refuses it as a "malformed string literal". The fragment is named
+  # after the build directory on purpose - a single shared file would let the next
+  # build change what a previous build reconfigures from.
+  local confname=""
   if [ -n "$VERSION" ]; then
+    confname="v${VERSION}"
     SLUG="${SLUG}_v${VERSION}"
+  fi
+
+  # Relative key path, which is what Zephyr resolves the signing key against
+  # (APPLICATION_CONFIG_DIR, cmake/mcuboot.cmake); a missing file fails the build
+  # with a clear message, the right answer to "signed image requested, no key".
+  #
+  # MCUBOOT_GENERATE_UNSIGNED_IMAGE has to be switched off explicitly: it is y
+  # whenever no key is known, and CONFIG_MCUBOOT_SIGNATURE_KEY_FILE depends on it
+  # being n - without this line the key assignment is silently dropped and the image
+  # comes out with a hash TLV but no signature (Zephyr's hawkbit sample does the
+  # same thing).
+  if [ "$SIGNED" = "1" ]; then
+    confname="${confname:+${confname}_}signed-${HCP_SIGN_KEY}"
+    SLUG="${SLUG}_signed-${HCP_SIGN_KEY}"
+  fi
+
+  local VERSION_ARGS=""
+  if [ -n "$confname" ]; then
     mkdir -p "${APP_DIR}/build"
-    printf 'CONFIG_APP_VERSION="%s"\nCONFIG_MCUBOOT_IMGTOOL_SIGN_VERSION="%s"\n' \
-      "$VERSION" "$VERSION" > "${APP_DIR}/build/.version.conf"
-    VERSION_ARGS="-DEXTRA_CONF_FILE=/workspace/hcp/build/.version.conf"
+    : > "${APP_DIR}/build/.config-${confname}.conf"
+    if [ -n "$VERSION" ]; then
+      printf 'CONFIG_APP_VERSION="%s"\nCONFIG_MCUBOOT_IMGTOOL_SIGN_VERSION="%s"\n' \
+        "$VERSION" "$VERSION" >> "${APP_DIR}/build/.config-${confname}.conf"
+    fi
+    if [ "$SIGNED" = "1" ]; then
+      printf 'CONFIG_MCUBOOT_GENERATE_UNSIGNED_IMAGE=n\nCONFIG_MCUBOOT_SIGNATURE_KEY_FILE="keys/%s.pem"\n' \
+        "$HCP_SIGN_KEY" >> "${APP_DIR}/build/.config-${confname}.conf"
+    fi
+    VERSION_ARGS="-DEXTRA_CONF_FILE='/workspace/hcp/build/.config-${confname}.conf'"
   fi
 
   # Extra west/cmake arguments are part of the directory name too: west caches the
   # -D values it was configured with, so a plain ./build.sh after a customized one
   # would silently rebuild with the *previous* overrides still in .config (this bit
-  # me once: a 20 s watchdog test image came back out of the "default" directory).
+  # me once: a 20 s-watchdog test image came back out of the "default" directory).
   if [ -n "$EXTRA_ARGS" ]; then
     SLUG="${SLUG}_x$(printf '%s' "$EXTRA_ARGS" | cksum | cut -d' ' -f1)"
   fi
 
-  echo ">>> building ${BOARD}  (LED=${WANT_LED} RS485=${WANT_RS485}${VERSION:+ version=${VERSION}})  -> build/${SLUG}"
+  echo ">>> building ${BOARD}  (LED=${WANT_LED} RS485=${WANT_RS485}${VERSION:+ version=${VERSION}}${SIGNED:+ signed=${HCP_SIGN_KEY}})  -> build/${SLUG}"
   docker run --rm \
     -v "$(dirname "${APP_DIR}")":/workspace \
     --entrypoint /bin/bash "${IMAGE}" -lc "

@@ -5,6 +5,13 @@
 #   ./tools/flash.sh                       # hcp_c6, port auto-detected
 #   ./tools/flash.sh hcp_c5 -p /dev/cu.usbmodem101
 #   ./tools/flash.sh hcp_c6 --no-erase     # skip the slot erase (never for a reflash)
+#   ./tools/flash.sh hcp_c6 --app build/hcp_c6_esp32c6_hpcore_signed/zephyr/zephyr.signed.bin
+#   ./tools/flash.sh hcp_c6 --mcuboot build/mcuboot/hcp_c6_esp32c6_hpcore/mcuboot.bin
+#                                          # point at another artifact: build.sh puts
+#                                          # --signed / --version / customized builds in
+#                                          # their own directory, and signed and
+#                                          # unsigned images must not be mixed with the
+#                                          # wrong bootloader
 #
 # The primary slot is erased before writing, on purpose: MCUboot keeps its swap
 # state in the trailer at the END of the slot and esptool only erases what it
@@ -26,8 +33,10 @@ while [ $# -gt 0 ]; do
     hcp_c3|hcp_c5|hcp_c6) BOARD="$1"; shift ;;
     -p|--port)  PORT="$2"; shift 2 ;;
     -b|--baud)  BAUD="$2"; shift 2 ;;
+    --app)      APP="$2"; shift 2 ;;
+    --mcuboot)  MCUBOOT="$2"; shift 2 ;;
     --no-erase) ERASE=0; shift ;;
-    -h|--help)  sed -n 2,20p "$0"; exit 0 ;;
+    -h|--help)  sed -n 2,26p "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 1 ;;
   esac
 done
@@ -42,8 +51,8 @@ esac
 
 # Build directories are the board name with '/' and '-' turned into '_', which is
 # what build.sh and build_mcuboot.sh produce.
-MCUBOOT="${HCP_DIR}/build/mcuboot/${SLUG}/mcuboot.bin"
-APP="${HCP_DIR}/build/${SLUG}/zephyr/zephyr.signed.bin"
+MCUBOOT="${MCUBOOT:-${HCP_DIR}/build/mcuboot/${SLUG}/mcuboot.bin}"
+APP="${APP:-${HCP_DIR}/build/${SLUG}/zephyr/zephyr.signed.bin}"
 
 [ -n "${PORT}" ] || PORT="$(ls /dev/cu.usbmodem* 2>/dev/null | head -1 || true)"
 [ -n "${PORT}" ] || { echo "no /dev/cu.usbmodem* found; is the board plugged in?" >&2; exit 1; }

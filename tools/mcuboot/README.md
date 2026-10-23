@@ -176,15 +176,83 @@ Typical verdicts, both seen on this bench:
   asked for the swap; check that `boot_request_upgrade()` was reached and that the
   primary slot's trailer was not wiped by a reflash (`tools/flash.sh`).
 
+## Signing (ECDSA-P256), opt-in
+
+Unsigned (`CONFIG_BOOT_SIGNATURE_TYPE_NONE`) remains the default so a fresh clone
+builds without key material. Both halves of the switch are one flag:
+
+```bash
+./tools/make_signing_key.sh                        # -> keys/root-ec256.pem (gitignored)
+./tools/build_mcuboot.sh --signed hcp_c6/esp32c6/hpcore
+./build.sh hcp_c6/esp32c6/hpcore --signed          # same key by default
+./tools/flash.sh hcp_c6 --app build/hcp_c6_esp32c6_hpcore_signed-root-ec256/zephyr/zephyr.signed.bin
+```
+
+`HCP_SIGN_KEY=<name>` picks another pair (the name is also what distinguishes the
+build directory). What the flag does to the image: `imgtool` adds a KEYHASH TLV and
+an `ECDSA_SIG` TLV next to the SHA-256 it always wrote - +111 bytes on this image:
+
+```
+TLV 0x10 SHA256(hdr+body) len 32   TLV 0x01 KEYHASH len 32   TLV 0x22 ECDSA_SIG len 71
+```
+
+Measured cost in the bootloader (its own partition is 64 K on C3/C6, 56 K on C5):
+
+| board | mcuboot.bin unsigned | signed | partition | headroom after signing |
+| --- | ---: | ---: | ---: | ---: |
+| hcp_c6 | 38,864 | 44,464 | 65,536 | 21,072 |
+| hcp_c3 | 36,688 | 42,240 | 65,536 | 23,296 |
+| hcp_c5 | 46,944 | 52,512 | 57,344 | **4,832 (91.6 % used)** |
+
+So ~5.6 KB for verification on all three; C5 is tight enough that anything else added
+to MCUboot there needs checking against that 4.8 KB.
+
+Bench evidence, both directions. Positive: signed 0.1.0 -> signed 0.2.0 over the air,
+confirmed, hard reset, still 0.2.0. Negative: an image signed with a **different key**,
+version 0.9.0 (so above what was running) and with a perfectly consistent hash TLV,
+was staged by the application and then refused by the bootloader -
+`EXPECTED_HASH_TLV`/`EXPECTED_KEY_TLV`/`EXPECTED_SIG_TLV` all found,
+`E: Image in the secondary slot is not valid!`, secondary slot wiped, 0.2.0 booted.
+That is the point: the application does not verify anything, the bootloader does.
+
+Two traps, both silent:
+
+* `CONFIG_MCUBOOT_GENERATE_UNSIGNED_IMAGE` defaults to y when no key is known, and
+  `CONFIG_MCUBOOT_SIGNATURE_KEY_FILE` `depends on` it being n - so simply setting the
+  key can be dropped without an error and the image comes out with a hash and no
+  signature. The fragment build.sh writes therefore sets it to `n` explicitly (the
+  same thing Zephyr's hawkbit sample does).
+* Signed and unsigned must not be mixed. A signing MCUboot will refuse the unsigned
+  images this tree builds by default, and it cannot be changed by an OTA - so
+  `mcuboot.bin` and the application always come from the same `--signed` decision.
+  `flash.sh --app/--mcuboot` exist to make that pairing explicit rather than
+  "hopefully the newest artifact in build/".
+
+Key handling: `keys/` is gitignored because whoever holds `root-ec256.pem` can
+produce firmware every device you have flashed will accept. Losing it means no
+further OTA without reflashing each device; leaking it means the opposite. Treat it
+as a CA-grade secret: back it up, and do not reuse this development pair for a
+product.
+
+What signing does *not* buy: no TLS (the download is still plaintext - which is now
+harmless rather than dangerous, since an attacker's image is refused by the
+bootloader), and no revocation. The trust anchor is one embedded public key, and
+neither MCUboot's hardware-key option nor the security-counter TLV is enabled, so a
+compromised key means reflashing and "downgrade prevention" is a plain version-number
+comparison.
+
 ## Not done yet (deliberate)
 
-* **Signing.** `CONFIG_BOOT_SIGNATURE_TYPE_NONE` in `mcuboot.conf`. Switching means
-  generating a key once (`imgtool -k root-ec256-pub.pem key gen --ecc256`), keeping
-  the private key out of the repo, and setting
-  `CONFIG_BOOT_SIGNATURE_TYPE_ECDSA_P256` + `CONFIG_BOOT_SIGNATURE_KEY_FILE`
-  on *both* sides. Decide before any device ships: the public key is baked into
-  MCUboot, which no OTA can replace.
+* **Key rotation / anti-rollback counter.** See the paragraph above: one embedded
+  public key, no `SEC_CNT` in the image, so there is no way to retire a key or pin a
+  minimum version in hardware. Both have to be decided before units ship, because
+  neither can be introduced by an OTA.
+* **Signing on by default.** `mcuboot.conf` still says NONE and every `--signed`
+  decision is per-build; turning it into the default is a one-line change plus
+  deciding where the key lives (see `CONFIG_BOOT_SIGNATURE_TYPE_ECDSA_P256` in
+  `tools/mcuboot/signing.conf`).
 * **TLS.** The HTTP source returns `-ENOTSUP` for `https://`.
 * **Per-board bring-up.** Only the C6 has been run on hardware; C3/C5 need the same
   two commands and a look at the log levels (`boot/zephyr/socs/` has no `esp32c5`
-  fragment, so `mcuboot.conf` is the whole configuration there).
+  fragment, so `mcuboot.conf` is the whole configuration there). C5 additionally has
+  only 4.8 KB of MCUboot partition left after signing.
