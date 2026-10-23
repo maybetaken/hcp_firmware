@@ -179,18 +179,13 @@ Typical verdicts, both seen on this bench:
 ## Signing (ECDSA-P256), opt-in
 
 Unsigned (`CONFIG_BOOT_SIGNATURE_TYPE_NONE`) remains the default so a fresh clone
-builds without key material. Both halves of the switch are one flag:
+builds without key material. The procedure - generating a key, building both halves
+with `--signed`, checking an image without hardware, the bench test that proves the
+bootloader really verifies, and what cannot be undone afterwards - is in
+**[SIGNING.md](SIGNING.md)**.
 
-```bash
-./tools/make_signing_key.sh                        # -> keys/root-ec256.pem (gitignored)
-./tools/build_mcuboot.sh --signed hcp_c6/esp32c6/hpcore
-./build.sh hcp_c6/esp32c6/hpcore --signed          # same key by default
-./tools/flash.sh hcp_c6 --app build/hcp_c6_esp32c6_hpcore_signed-root-ec256/zephyr/zephyr.signed.bin
-```
-
-`HCP_SIGN_KEY=<name>` picks another pair (the name is also what distinguishes the
-build directory). What the flag does to the image: `imgtool` adds a KEYHASH TLV and
-an `ECDSA_SIG` TLV next to the SHA-256 it always wrote - +111 bytes on this image:
+What the flag changes in the image: `imgtool` adds a KEYHASH TLV and an `ECDSA_SIG`
+TLV next to the SHA-256 it always wrote (+111 bytes):
 
 ```
 TLV 0x10 SHA256(hdr+body) len 32   TLV 0x01 KEYHASH len 32   TLV 0x22 ECDSA_SIG len 71
@@ -215,24 +210,14 @@ was staged by the application and then refused by the bootloader -
 `E: Image in the secondary slot is not valid!`, secondary slot wiped, 0.2.0 booted.
 That is the point: the application does not verify anything, the bootloader does.
 
-Two traps, both silent:
+Two traps, both silent, are written out in SIGNING.md: `CONFIG_MCUBOOT_GENERATE_UNSIGNED_IMAGE`
+must be forced to n or the key assignment is dropped without an error, and signed /
+unsigned artifacts must never be mixed because the trust anchor lives in a
+bootloader that no OTA can replace.
 
-* `CONFIG_MCUBOOT_GENERATE_UNSIGNED_IMAGE` defaults to y when no key is known, and
-  `CONFIG_MCUBOOT_SIGNATURE_KEY_FILE` `depends on` it being n - so simply setting the
-  key can be dropped without an error and the image comes out with a hash and no
-  signature. The fragment build.sh writes therefore sets it to `n` explicitly (the
-  same thing Zephyr's hawkbit sample does).
-* Signed and unsigned must not be mixed. A signing MCUboot will refuse the unsigned
-  images this tree builds by default, and it cannot be changed by an OTA - so
-  `mcuboot.bin` and the application always come from the same `--signed` decision.
-  `flash.sh --app/--mcuboot` exist to make that pairing explicit rather than
-  "hopefully the newest artifact in build/".
-
-Key handling: `keys/` is gitignored because whoever holds `root-ec256.pem` can
-produce firmware every device you have flashed will accept. Losing it means no
-further OTA without reflashing each device; leaking it means the opposite. Treat it
-as a CA-grade secret: back it up, and do not reuse this development pair for a
-product.
+Key handling (`keys/` gitignored, CA-grade secret, what losing or leaking it means)
+and the verification commands (`imgtool verify` / `dumpinfo` / `getpubhash`) are in
+**[SIGNING.md](SIGNING.md)**.
 
 What signing does *not* buy: no TLS (the download is still plaintext - which is now
 harmless rather than dangerous, since an attacker's image is refused by the

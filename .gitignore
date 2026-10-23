@@ -7,8 +7,9 @@ build_*/
 wificreds.conf
 
 # MCUboot signing keys: whoever holds root-ec256.pem can produce firmware every
-# flashed bootloader accepts. Generate your own with tools/make_signing_key.sh
-# (see tools/mcuboot/README.md); the public half is derived at build time.
+# flashed bootloader accepts. Generate your own with tools/make_signing_key.sh and
+# read tools/mcuboot/SIGNING.md before losing or sharing one; the public half is
+# derived at build time.
 keys/
 
 # Editor / OS cruft

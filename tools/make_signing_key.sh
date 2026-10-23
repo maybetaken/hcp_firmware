@@ -6,14 +6,15 @@
 #   ./tools/make_signing_key.sh bench-other     # keys/bench-other.pem
 #
 # The private key is what signs ./build.sh --signed images, and the public half is
-# baked into MCUboot by ./tools/build_mcuboot.sh --signed. Everything under keys/
-# is gitignored on purpose: whoever holds this file can produce firmware that every
+# baked into MCUboot by ./tools/build_mcuboot.sh --signed. Everything under keys/ is
+# gitignored on purpose: whoever holds this file can produce firmware that every
 # device you have already flashed will accept, so treat it like a CA key - keep it
-# out of the repository, out of backups you do not control, and generate a fresh
-# one per product line rather than reusing this file.
+# out of the repository, out of backups you do not control, and generate a fresh one
+# per product line rather than reusing this file. The full procedure, including
+# what losing or leaking the key costs, is tools/mcuboot/SIGNING.md.
 #
-# MCUboot reads the private file and derives the public key itself (imgtool getpub)
-# at build time, so the .pub.pem next to it is only a convenience copy.
+# MCUboot reads this private file and derives the public key itself (imgtool getpub)
+# at build time; the .pub.c next to it is only a convenience copy of that output.
 set -euo pipefail
 
 HCP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
