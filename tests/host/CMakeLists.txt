@@ -88,13 +88,12 @@ add_test(NAME test_modbus COMMAND test_modbus)
 # ---- hcp::blufi frames + security handshake ----
 set(BF ${HCP_ROOT}/modules/lib/blufi)
 
-# The crypto is the referenced Mbed TLS 2.28 tree, not a copy inside this
-# repository; resolve it the same way the firmware build does (its default is the
-# west module location, then <module>/../.mbedtls-2.28 as created by
-# blufi/tools/fetch_mbedtls.sh).
+# The crypto is the Mbed TLS submodule this library carries, not a copy inside it;
+# resolve it the same way the firmware build does (submodule first, then a west
+# module location for workspaces that provide it that way).
 set(BLUFI_MBEDTLS_DIR "" CACHE PATH "Mbed TLS 2.28 source tree for the BluFi tests")
 if(BLUFI_MBEDTLS_DIR STREQUAL "")
-  foreach(_cand ${BF}/../.mbedtls-2.28
+  foreach(_cand ${BF}/deps/mbedtls
                  ${ZEPHYR_BASE}/../modules/crypto/mbedtls-2.28
                  /opt/toolchains/modules/crypto/mbedtls-2.28)
     if(EXISTS ${_cand}/library/dhm.c)
@@ -104,8 +103,9 @@ if(BLUFI_MBEDTLS_DIR STREQUAL "")
   endforeach()
 endif()
 if(NOT EXISTS ${BLUFI_MBEDTLS_DIR}/library/dhm.c)
-  message(FATAL_ERROR "BluFi security test needs an Mbed TLS 2.28 tree; run "
-          "${BF}/tools/fetch_mbedtls.sh or pass -DBLUFI_MBEDTLS_DIR=<checkout>")
+  message(FATAL_ERROR "BluFi security test needs the Mbed TLS submodule; run "
+          "'git submodule update --init --depth 1 deps/mbedtls' in ${BF}, or pass "
+          "-DBLUFI_MBEDTLS_DIR=<checkout>")
 endif()
 
 # platform_util.c is only in this list, not the firmware one: on target the

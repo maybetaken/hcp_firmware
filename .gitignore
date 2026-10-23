@@ -2,10 +2,6 @@
 build/
 build_*/
 
-# Mbed TLS tree fetched by modules/lib/blufi/tools/fetch_mbedtls.sh - upstream
-# sources for the optional encrypted provisioning, never a copy in this repo.
-modules/lib/.mbedtls-2.28/
-
 # Local / secret config — never commit (e.g. real Wi-Fi credentials)
 *.local.conf
 wificreds.conf

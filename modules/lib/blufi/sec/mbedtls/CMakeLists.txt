@@ -1,8 +1,8 @@
-# The referenced Mbed TLS 2.28 sources behind BluFi's encrypted provisioning.
+# Mbed TLS sources behind BluFi's encrypted provisioning.
 #
-# This repository keeps no copy of any of this: BLUFI_MBEDTLS_DIR points at the
-# west module (or a -DBLUFI_MBEDTLS_DIR=<path> checkout) and the files are
-# compiled exactly as upstream ships them.
+# This library keeps no copy of any of this: BLUFI_MBEDTLS_DIR points at the
+# deps/mbedtls submodule (or wherever the caller sent it with
+# -DBLUFI_MBEDTLS_DIR), and the files compile exactly as upstream ships them.
 #
 # They live in a library of their own for one reason: the application already
 # links TF-PSA-Crypto, which publishes an mbedtls/platform_util.h with the same

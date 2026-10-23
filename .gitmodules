@@ -1,0 +1,5 @@
+[submodule "modules/lib/blufi/deps/mbedtls"]
+	path = modules/lib/blufi/deps/mbedtls
+	url = https://github.com/Mbed-TLS/mbedtls.git
+	branch = mbedtls-2.28
+	shallow = true

@@ -11,7 +11,7 @@ frame.c / include/blufi/frame.h        frame layout, CRC16, protobuf-ish fields
 blufi_ble.c / include/blufi/blufi.h    GATT service, advertise/connect, subtypes
 include/blufi/blufi_security.h         negotiation + AES-CFB128 (optional)
 sec/                                   the security handshake (see below)
-tools/fetch_mbedtls.sh                 gets the Mbed TLS tree sec/ builds against
+deps/mbedtls                           Mbed TLS submodule, pinned by its gitlink
 ```
 
 ## Using it
@@ -33,16 +33,21 @@ advertise from a fresh identity each boot.
 Off by default. When on, the phone can negotiate DH + AES-128-CFB128 with
 MD5-derived key material, as the ESP-IDF example does. The module implements the
 handshake (`sec/blufi_security.c`) but **no crypto of its own**: `dhm`, `bignum`,
-`constant_time`, `aes` and `md5` are compiled from an Mbed TLS 2.28 tree,
-unmodified, and Mbed TLS 2.28 is the last series with classic finite-field DH -
-TF-PSA-Crypto / Mbed TLS 3.x and 4.x removed it, and their PSA FFDH knows only the
-RFC 7919 named groups, while BluFi negotiates its own 256-bit group.
+`constant_time`, `aes` and `md5` are compiled out of an Mbed TLS checkout this
+library carries as a git submodule - upstream files, unmodified. Mbed TLS 2.28 is
+the last series with classic finite-field DH: TF-PSA-Crypto and Mbed TLS 3.x/4.x
+removed it, and their PSA FFDH knows only the RFC 7919 named groups, while BluFi
+negotiates its own 256-bit group.
 
 ```bash
-blufi/tools/fetch_mbedtls.sh          # pins v2.28.9 (commit 5e146ade...), verifies
-# then just build with CONFIG_BLUFI_SECURITY=y; CMake finds the tree next to the
-# module, or name it: -DBLUFI_MBEDTLS_DIR=<path>
+# once, after cloning (or clone with --recurse-submodules):
+git submodule update --init --depth 1 deps/mbedtls
 ```
+
+Then build with `CONFIG_BLUFI_SECURITY=y`; CMake finds `deps/mbedtls` by itself and
+prints which tree it resolved to. `-DBLUFI_MBEDTLS_DIR=<path>` points it at another
+checkout (any 2.28 tree), which is also how a workspace that provides Mbed TLS by
+other means - a west manifest entry, for instance - reuses that copy instead.
 
 `sec/mbedtls/CMakeLists.txt` builds those upstream files as a library of their
 own, for two reasons: the application already links an AES, so
@@ -57,7 +62,10 @@ into WPA2/WPA3 and rely on the TLS/signed-image layers elsewhere.
 
 ## License
 
-MIT - see [LICENSE](LICENSE). It covers this repository's files only. The Mbed TLS
-sources `CONFIG_BLUFI_SECURITY` builds are fetched, not vendored, and remain
-Apache-2.0 (dual licensed GPL-2.0-or-later) under their own terms; a binary that
-enables encrypted provisioning therefore carries their notices.
+MIT - see [LICENSE](LICENSE). It covers this repository's files only. Mbed TLS is
+submoduled, not vendored, and stays Apache-2.0 (dual licensed GPL-2.0-or-later)
+under its own terms; a binary that enables encrypted provisioning therefore carries
+their notices. Bump the pin with an ordinary `git submodule` update - the gitlink
+commit is the record of exactly which upstream code went in, and `git -C
+ deps/mbedtls log -1` answers "what version is this" without anyone reading a
+script.

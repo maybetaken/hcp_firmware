@@ -5,29 +5,29 @@ if(CONFIG_BLUFI)
   zephyr_library_sources(frame.c)
   zephyr_library_sources_ifdef(CONFIG_BT_PERIPHERAL blufi_ble.c)
   if(CONFIG_BLUFI_SECURITY)
-    # The algorithms (DH, bignum, AES-CFB128, MD5) are compiled from an Mbed TLS
-    # 2.28 LTS tree that this module does NOT carry: the sources are upstream and
-    # unmodified. Look for them in, in order:
+    # The algorithms (DH, bignum, AES-CFB128, MD5) are compiled from Mbed TLS, not
+    # from a copy inside this module. Where to find it, in order:
     #   1. -DBLUFI_MBEDTLS_DIR=<path>, if the caller says where;
-    #   2. the west module location, if the application's manifest imports it;
-    #   3. <module>/../.mbedtls-2.28, which tools/fetch_mbedtls.sh creates.
+    #   2. deps/mbedtls, the git submodule this library carries (pin = its gitlink);
+    #   3. the west module location, for workspaces that provide it that way.
     set(BLUFI_MBEDTLS_DIR "" CACHE PATH
         "Mbed TLS 2.28 source tree used by the BluFi security handshake")
-    foreach(_cand ${ZEPHYR_BASE}/../modules/crypto/mbedtls-2.28
-                   ${CMAKE_CURRENT_SOURCE_DIR}/../.mbedtls-2.28)
+    foreach(_cand ${CMAKE_CURRENT_SOURCE_DIR}/deps/mbedtls
+                   ${ZEPHYR_BASE}/../modules/crypto/mbedtls-2.28)
       if(BLUFI_MBEDTLS_DIR STREQUAL "" AND EXISTS ${_cand}/library/dhm.c)
         set(BLUFI_MBEDTLS_DIR ${_cand})
       endif()
     endforeach()
     if(NOT EXISTS ${BLUFI_MBEDTLS_DIR}/library/dhm.c)
       message(FATAL_ERROR
-        "CONFIG_BLUFI_SECURITY needs an Mbed TLS 2.28 tree (library/dhm.c, "
-        "bignum.c, constant_time.c, aes.c, md5.c); none was found at\n"
-        "  '${BLUFI_MBEDTLS_DIR}'\n"
-        "Fetch it with blufi/tools/fetch_mbedtls.sh (pins v2.28.9), or point "
-        "-DBLUFI_MBEDTLS_DIR at a checkout, or add the project to your west "
-        "manifest as modules/crypto/mbedtls-2.28 - or leave "
-        "CONFIG_BLUFI_SECURITY=n (plaintext provisioning, the default).")
+        "CONFIG_BLUFI_SECURITY needs the Mbed TLS submodule "
+        "(library/dhm.c, bignum.c, constant_time.c, aes.c, md5.c); nothing was "
+        "found at\n  '${BLUFI_MBEDTLS_DIR}'\n"
+        "Populate it with:\n"
+        "  git submodule update --init --depth 1 deps/mbedtls\n"
+        "from the module directory, or point -DBLUFI_MBEDTLS_DIR at any Mbed TLS "
+        "2.28 tree - or leave CONFIG_BLUFI_SECURITY=n (plaintext provisioning, the "
+        "default, and the state everything else is tested in).")
     endif()
     message(STATUS "blufi: encrypted provisioning builds Mbed TLS from ${BLUFI_MBEDTLS_DIR}")
 
