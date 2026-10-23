@@ -20,6 +20,9 @@
 #                                  # zephyr/zephyr.signed.bin is what an update
 #                                  # server should serve.
 #   ./build.sh <board> -- <extra west args>
+#                                  # also gets a directory of its own (build.sh
+#                                  # fingerprints the arguments into the name), so a
+#                                  # following plain build cannot inherit them.
 set -euo pipefail
 
 IMAGE="env-zephyr-espressif"
@@ -79,6 +82,14 @@ build_one() {
     printf 'CONFIG_APP_VERSION="%s"\nCONFIG_MCUBOOT_IMGTOOL_SIGN_VERSION="%s"\n' \
       "$VERSION" "$VERSION" > "${APP_DIR}/build/.version.conf"
     VERSION_ARGS="-DEXTRA_CONF_FILE=/workspace/hcp/build/.version.conf"
+  fi
+
+  # Extra west/cmake arguments are part of the directory name too: west caches the
+  # -D values it was configured with, so a plain ./build.sh after a customized one
+  # would silently rebuild with the *previous* overrides still in .config (this bit
+  # me once: a 20 s watchdog test image came back out of the "default" directory).
+  if [ -n "$EXTRA_ARGS" ]; then
+    SLUG="${SLUG}_x$(printf '%s' "$EXTRA_ARGS" | cksum | cut -d' ' -f1)"
   fi
 
   echo ">>> building ${BOARD}  (LED=${WANT_LED} RS485=${WANT_RS485}${VERSION:+ version=${VERSION}})  -> build/${SLUG}"
