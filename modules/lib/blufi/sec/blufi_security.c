@@ -10,7 +10,7 @@
  * already links an AES from TF-PSA-Crypto. So what follows uses plain
  * mbedtls_* names.
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  */
 #include "blufi/blufi_security.h"
 

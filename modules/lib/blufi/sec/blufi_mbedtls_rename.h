@@ -14,7 +14,7 @@
  * zeroize is deliberately left alone and resolves to the copy the application
  * already links.
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  */
 #ifndef BLUFI_MBEDTLS_RENAME_H_
 #define BLUFI_MBEDTLS_RENAME_H_

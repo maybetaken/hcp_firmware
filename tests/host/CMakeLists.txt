@@ -89,14 +89,14 @@ add_test(NAME test_modbus COMMAND test_modbus)
 set(BF ${HCP_ROOT}/modules/lib/blufi)
 
 # The crypto is the referenced Mbed TLS 2.28 tree, not a copy inside this
-# repository; find it the same way the firmware build does (the firmware side uses
-# ${ZEPHYR_BASE}/../modules/crypto/mbedtls-2.28, which is where the west manifest
-# puts it inside the build container).
+# repository; resolve it the same way the firmware build does (its default is the
+# west module location, then <module>/../.mbedtls-2.28 as created by
+# blufi/tools/fetch_mbedtls.sh).
 set(BLUFI_MBEDTLS_DIR "" CACHE PATH "Mbed TLS 2.28 source tree for the BluFi tests")
 if(BLUFI_MBEDTLS_DIR STREQUAL "")
-  foreach(_cand ${HCP_ROOT}/../.mbedtls-2.28
-                 /opt/toolchains/modules/crypto/mbedtls-2.28
-                 ${HCP_ROOT}/../modules/crypto/mbedtls-2.28)
+  foreach(_cand ${BF}/../.mbedtls-2.28
+                 ${ZEPHYR_BASE}/../modules/crypto/mbedtls-2.28
+                 /opt/toolchains/modules/crypto/mbedtls-2.28)
     if(EXISTS ${_cand}/library/dhm.c)
       set(BLUFI_MBEDTLS_DIR ${_cand})
       break()
@@ -104,8 +104,8 @@ if(BLUFI_MBEDTLS_DIR STREQUAL "")
   endforeach()
 endif()
 if(NOT EXISTS ${BLUFI_MBEDTLS_DIR}/library/dhm.c)
-  message(FATAL_ERROR "BluFi security test needs Mbed TLS 2.28 sources; pass "
-          "-DBLUFI_MBEDTLS_DIR=<checkout>")
+  message(FATAL_ERROR "BluFi security test needs an Mbed TLS 2.28 tree; run "
+          "${BF}/tools/fetch_mbedtls.sh or pass -DBLUFI_MBEDTLS_DIR=<checkout>")
 endif()
 
 # platform_util.c is only in this list, not the firmware one: on target the

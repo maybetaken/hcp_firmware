@@ -10,9 +10,9 @@
 # sort ahead of the interface ones, so these translation units see Mbed TLS' own
 # headers first, and nothing else in the build gains a 2.28 include path.
 #
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 
-zephyr_library_named(hcp_blufi_mbedtls)
+zephyr_library_named(blufi_mbedtls)
 
 zephyr_library_sources(
   ${BLUFI_MBEDTLS_DIR}/library/dhm.c
@@ -21,7 +21,7 @@ zephyr_library_sources(
   ${BLUFI_MBEDTLS_DIR}/library/aes.c
   ${BLUFI_MBEDTLS_DIR}/library/md5.c)
 
-target_include_directories(hcp_blufi_mbedtls PRIVATE
+target_include_directories(blufi_mbedtls PRIVATE
   ${BLUFI_MBEDTLS_DIR}/include
   ${BLUFI_MBEDTLS_DIR}/library
   ${CMAKE_CURRENT_SOURCE_DIR}/..)
@@ -33,5 +33,5 @@ target_include_directories(hcp_blufi_mbedtls PRIVATE
 # COMPILE_FLAGS as one string, not COMPILE_OPTIONS as a list: the list form makes
 # CMake hand GCC "-include" and the path as unrelated arguments, and the path then
 # looks like a second input file.
-set_target_properties(hcp_blufi_mbedtls PROPERTIES COMPILE_FLAGS
+set_target_properties(blufi_mbedtls PROPERTIES COMPILE_FLAGS
     "-w -include ${CMAKE_CURRENT_SOURCE_DIR}/../blufi_dhm_compat.h -include ${CMAKE_CURRENT_SOURCE_DIR}/../blufi_mbedtls_rename.h")

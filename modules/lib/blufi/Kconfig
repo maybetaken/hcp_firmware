@@ -7,8 +7,9 @@ menuconfig BLUFI
 	select BT_DRIVERS
 	select BT_ESP32
 	help
-	  Reusable BluFi protocol implementation (frame codec now; GATT + security
-	  handshake + provisioning flow added by hcp::blufi on Zephyr BLE).
+	  Reusable BluFi protocol implementation: the frame codec plus the GATT
+	  transport and security handshake on Zephyr BLE, compatible with the Espressif
+	  apps and the WeChat mini-program provisioning flow.
 
 if BLUFI
 

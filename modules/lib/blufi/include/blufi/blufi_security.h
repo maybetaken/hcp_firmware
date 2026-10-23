@@ -3,7 +3,7 @@
  * negotiation (mbedtls DHM) -> MD5(shared) = 16-byte PSK -> AES-128-CFB128.
  * Ported faithfully from esp-idf examples/bluetooth/blufi/main/blufi_security.c.
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  */
 #ifndef BLUFI_SECURITY_H_
 #define BLUFI_SECURITY_H_

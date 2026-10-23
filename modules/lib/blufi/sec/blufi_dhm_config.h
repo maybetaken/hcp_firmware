@@ -5,7 +5,7 @@
  * (MBEDTLS_CONFIG_FILE), and so no upstream file has to be edited to state which
  * of its features are wanted here.
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  */
 #ifndef BLUFI_DHM_CONFIG_H_
 #define BLUFI_DHM_CONFIG_H_

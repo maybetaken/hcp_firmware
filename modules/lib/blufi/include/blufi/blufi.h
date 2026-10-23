@@ -4,7 +4,7 @@
  * write char 0xFF01 phone->esp, notify char 0xFF02 esp->phone). Received
  * frames are parsed and surfaced to a callback.
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  */
 #ifndef BLUFI_BLUFI_H_
 #define BLUFI_BLUFI_H_

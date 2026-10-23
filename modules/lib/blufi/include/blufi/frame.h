@@ -4,7 +4,7 @@
  * type byte = (subtype<<2)|type. Fragmentation (>255) handled by the caller
  * via a fragment header (adds u16 total_len). Pure C, host-testable.
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  */
 #ifndef BLUFI_FRAME_H_
 #define BLUFI_FRAME_H_

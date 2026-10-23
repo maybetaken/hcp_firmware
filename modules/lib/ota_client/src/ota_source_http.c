@@ -1,7 +1,7 @@
 /*
- * Copyright (c) 2026 Helios Collector Platform contributors
+ * Copyright (c) 2026 the ota_client authors
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  */
 
 /**

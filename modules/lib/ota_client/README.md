@@ -167,6 +167,11 @@ src/ota_source_http.c src/ota_sink_mcuboot.c backends
 
 ## License
 
-Apache-2.0. Contributions expected to follow Zephyr's coding style
-(`scripts/checkpatch.pl`), keep the core free of board and vendor dependencies,
-and add a host test for anything pure.
+MIT - see [LICENSE](LICENSE). Contributions are expected to follow Zephyr's coding
+style (`scripts/checkpatch.pl`), keep the core free of board and vendor
+dependencies, and add a host test for anything pure.
+
+The module has no third-party code and no build-time dependency outside Zephyr
+itself; `CONFIG_BOOTLOADER_MCUBOOT`, `flash_img` and `HTTP_CLIENT` are Zephyr
+subsystems it selects, so a build using it is subject to Zephyr's own licensing
+like any other Zephyr application.

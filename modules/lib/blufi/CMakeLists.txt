@@ -5,23 +5,31 @@ if(CONFIG_BLUFI)
   zephyr_library_sources(frame.c)
   zephyr_library_sources_ifdef(CONFIG_BT_PERIPHERAL blufi_ble.c)
   if(CONFIG_BLUFI_SECURITY)
-    # The algorithms (DH, bignum, AES-CFB128, MD5) come from Mbed TLS 2.28 LTS
-    # sources that the west manifest checks out. This repository keeps no copy:
-    # nothing here is edited, and the version is pinned by the manifest. Override
-    # the location with -DBLUFI_MBEDTLS_DIR=<path> (the host test build does).
+    # The algorithms (DH, bignum, AES-CFB128, MD5) are compiled from an Mbed TLS
+    # 2.28 LTS tree that this module does NOT carry: the sources are upstream and
+    # unmodified. Look for them in, in order:
+    #   1. -DBLUFI_MBEDTLS_DIR=<path>, if the caller says where;
+    #   2. the west module location, if the application's manifest imports it;
+    #   3. <module>/../.mbedtls-2.28, which tools/fetch_mbedtls.sh creates.
     set(BLUFI_MBEDTLS_DIR "" CACHE PATH
         "Mbed TLS 2.28 source tree used by the BluFi security handshake")
-    if(BLUFI_MBEDTLS_DIR STREQUAL "")
-      set(BLUFI_MBEDTLS_DIR ${ZEPHYR_BASE}/../modules/crypto/mbedtls-2.28)
-    endif()
+    foreach(_cand ${ZEPHYR_BASE}/../modules/crypto/mbedtls-2.28
+                   ${CMAKE_CURRENT_SOURCE_DIR}/../.mbedtls-2.28)
+      if(BLUFI_MBEDTLS_DIR STREQUAL "" AND EXISTS ${_cand}/library/dhm.c)
+        set(BLUFI_MBEDTLS_DIR ${_cand})
+      endif()
+    endforeach()
     if(NOT EXISTS ${BLUFI_MBEDTLS_DIR}/library/dhm.c)
       message(FATAL_ERROR
-        "CONFIG_BLUFI_SECURITY needs the Mbed TLS 2.28 sources (library/dhm.c, "
-        "bignum.c, aes.c, md5.c) but none were found at\n"
-        "  ${BLUFI_MBEDTLS_DIR}\n"
-        "Run 'west update', or point -DBLUFI_MBEDTLS_DIR at a 2.28 checkout, or "
-        "leave CONFIG_BLUFI_SECURITY=n (plaintext provisioning, the default).")
+        "CONFIG_BLUFI_SECURITY needs an Mbed TLS 2.28 tree (library/dhm.c, "
+        "bignum.c, constant_time.c, aes.c, md5.c); none was found at\n"
+        "  '${BLUFI_MBEDTLS_DIR}'\n"
+        "Fetch it with blufi/tools/fetch_mbedtls.sh (pins v2.28.9), or point "
+        "-DBLUFI_MBEDTLS_DIR at a checkout, or add the project to your west "
+        "manifest as modules/crypto/mbedtls-2.28 - or leave "
+        "CONFIG_BLUFI_SECURITY=n (plaintext provisioning, the default).")
     endif()
+    message(STATUS "blufi: encrypted provisioning builds Mbed TLS from ${BLUFI_MBEDTLS_DIR}")
 
     # Two force-included headers, both owned by us and applied to blufi_security.c
     # as well as to the upstream sources (see sec/mbedtls/CMakeLists.txt): they must
