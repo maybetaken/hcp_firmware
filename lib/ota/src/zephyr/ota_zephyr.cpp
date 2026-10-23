@@ -300,10 +300,25 @@ size_t StatusText(char* out, size_t cap) {
 		return 0;
 	}
 
-	const int n = snprintk(out, cap, "%s %u/%lld %s", StateStr(),
-			       ota_client_received(&g_client),
-			       static_cast<long long>(ota_client_total(&g_client)),
-			       ota_client_remote_version(&g_client));
+	const enum ota_client_state st = ota_client_state(&g_client);
+	const int64_t total = ota_client_total(&g_client);
+	const char* ver = ota_client_remote_version(&g_client);
+	int n;
+
+	/* This string ends up on <sn>/state, a document the broker's clients render,
+	 * so only what is actually known goes on the wire: the module's internal "no
+	 * size yet" marker is -1 and the offered version starts out empty, and neither
+	 * belongs there. The errno does, because "error" alone does not tell anybody
+	 * whether the server refused, the link dropped, or the image did not fit. */
+	if (st == OTA_CLIENT_ERROR) {
+		n = snprintk(out, cap, "%s (%d)", StateStr(), ota_client_error(&g_client));
+	} else if (total > 0) {
+		n = snprintk(out, cap, "%s %u/%lld%s%s", StateStr(),
+			   ota_client_received(&g_client), static_cast<long long>(total),
+			   ver[0] != '\0' ? " " : "", ver);
+	} else {
+		n = snprintk(out, cap, "%s", StateStr());
+	}
 
 	return (n > 0 && static_cast<size_t>(n) < cap) ? static_cast<size_t>(n)
 						       : cap - 1;
