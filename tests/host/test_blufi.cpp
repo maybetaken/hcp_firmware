@@ -130,11 +130,11 @@ TEST(BlufiChecksum, EmptyPayload) {
   EXPECT_EQ(blufi_frame_verify_checksum(buf, total), 0);
 }
 
-// ---- vendored crypto correctness ----
+// ---- referenced Mbed TLS 2.28 crypto correctness ----
 
 TEST(BlufiSec, Md5KnownVector) {
   uint8_t out[16];
-  blufimbed_md5(reinterpret_cast<const uint8_t*>("abc"), 3, out);
+  mbedtls_md5(reinterpret_cast<const uint8_t*>("abc"), 3, out);
   const uint8_t expect[16] = {0x90,0x01,0x50,0x98,0x3c,0xd2,0x4f,0xb0,
                               0xd6,0x96,0x3f,0x7d,0x28,0xe1,0x7f,0x72};
   EXPECT_EQ(memcmp(out, expect, 16), 0);
@@ -147,31 +147,31 @@ TEST(BlufiSec, AesEcbFips197Vector) {
                           0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff};
   const uint8_t ct[16] = {0x69,0xc4,0xe0,0xd8,0x6a,0x7b,0x04,0x30,
                           0xd8,0xcd,0xb7,0x80,0x70,0xb4,0xc5,0x5a};
-  blufimbed_aes_context a;
-  blufimbed_aes_init(&a);
-  ASSERT_EQ(blufimbed_aes_setkey_enc(&a, key, 128), 0);
+  mbedtls_aes_context a;
+  mbedtls_aes_init(&a);
+  ASSERT_EQ(mbedtls_aes_setkey_enc(&a, key, 128), 0);
   uint8_t out[16];
-  blufimbed_aes_encrypt(&a, pt, out);
+  ASSERT_EQ(mbedtls_aes_crypt_ecb(&a, MBEDTLS_AES_ENCRYPT, pt, out), 0);
   EXPECT_EQ(memcmp(out, ct, 16), 0);
-  blufimbed_aes_free(&a);
+  mbedtls_aes_free(&a);
 }
 
 TEST(BlufiSec, AesCfb128Roundtrip) {
   const uint8_t key[16] = {0};
   uint8_t iv[16] = {0};
   const uint8_t pt[20] = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20};
-  blufimbed_aes_context a;
-  blufimbed_aes_init(&a);
-  ASSERT_EQ(blufimbed_aes_setkey_enc(&a, key, 128), 0);
+  mbedtls_aes_context a;
+  mbedtls_aes_init(&a);
+  ASSERT_EQ(mbedtls_aes_setkey_enc(&a, key, 128), 0);
   uint8_t ct[20], back[20];
   size_t off = 0;
-  blufimbed_aes_crypt_cfb128(&a, MBEDTLS_AES_ENCRYPT, sizeof(pt), &off, iv, pt, ct);
+  mbedtls_aes_crypt_cfb128(&a, MBEDTLS_AES_ENCRYPT, sizeof(pt), &off, iv, pt, ct);
   off = 0;
   memset(iv, 0, 16);
-  blufimbed_aes_crypt_cfb128(&a, MBEDTLS_AES_DECRYPT, sizeof(pt), &off, iv, ct, back);
+  mbedtls_aes_crypt_cfb128(&a, MBEDTLS_AES_DECRYPT, sizeof(pt), &off, iv, ct, back);
   EXPECT_EQ(memcmp(back, pt, sizeof(pt)), 0);
   EXPECT_NE(memcmp(ct, pt, sizeof(pt)), 0);  // actually changed
-  blufimbed_aes_free(&a);
+  mbedtls_aes_free(&a);
 }
 
 // ---- fragment encode <-> reassemble round-trip (the DH-pubkey path) ----
@@ -291,7 +291,7 @@ TEST(BlufiHandshake, DhThenAesCfbInterop) {
   uint8_t share_be[64];
   ASSERT_EQ(mbedtls_mpi_write_binary(&shared, share_be, slen), 0);
   uint8_t psk[16];
-  blufimbed_md5(share_be, slen, psk);
+  mbedtls_md5(share_be, slen, psk);
 
   // Phone AES-128-CFB128-encrypts a password (iv=0, iv[0]=seq); device decrypts.
   const uint8_t seq = 42;
@@ -299,13 +299,13 @@ TEST(BlufiHandshake, DhThenAesCfbInterop) {
   size_t plen = strlen(plain);
   uint8_t cipher[32];
   uint8_t iv[16] = {0}; iv[0] = seq;
-  blufimbed_aes_context a;
-  blufimbed_aes_init(&a);
-  ASSERT_EQ(blufimbed_aes_setkey_enc(&a, psk, 128), 0);
+  mbedtls_aes_context a;
+  mbedtls_aes_init(&a);
+  ASSERT_EQ(mbedtls_aes_setkey_enc(&a, psk, 128), 0);
   size_t off = 0;
-  blufimbed_aes_crypt_cfb128(&a, MBEDTLS_AES_ENCRYPT, plen, &off, iv,
+  mbedtls_aes_crypt_cfb128(&a, MBEDTLS_AES_ENCRYPT, plen, &off, iv,
                               (const uint8_t *)plain, cipher);
-  blufimbed_aes_free(&a);
+  mbedtls_aes_free(&a);
   EXPECT_NE(memcmp(cipher, plain, plen), 0);
 
   uint8_t recovered[32];
@@ -402,7 +402,7 @@ TEST(BlufiHandshake, IosAppRealGroupAndEncryptedFrame) {
   ASSERT_EQ(mbedtls_mpi_exp_mod(&shared, &Y, &x, &P, nullptr), 0);
   auto ss = be(&shared);
   uint8_t psk[16];
-  blufimbed_md5(ss.data(), ss.size(), psk);
+  mbedtls_md5(ss.data(), ss.size(), psk);
 
   // The SET_SEC_MODE control frame the app posts (checksum=YES, seq 4).
   uint8_t ctrl[16] = {0x04, 0x00, 0x04, 0x01, 0x03};
@@ -426,14 +426,14 @@ TEST(BlufiHandshake, IosAppRealGroupAndEncryptedFrame) {
   // Encrypt only the payload, exactly like getPostPacket: (crc, then encrypt).
   uint8_t iv[16] = {0};
   iv[0] = seq;
-  blufimbed_aes_context aes;
-  blufimbed_aes_init(&aes);
-  ASSERT_EQ(blufimbed_aes_setkey_enc(&aes, psk, 128), 0);
+  mbedtls_aes_context aes;
+  mbedtls_aes_init(&aes);
+  ASSERT_EQ(mbedtls_aes_setkey_enc(&aes, psk, 128), 0);
   size_t off = 0;
-  ASSERT_EQ(blufimbed_aes_crypt_cfb128(&aes, MBEDTLS_AES_ENCRYPT, slen, &off, iv,
+  ASSERT_EQ(mbedtls_aes_crypt_cfb128(&aes, MBEDTLS_AES_ENCRYPT, slen, &off, iv,
                                        frame + BLUFI_HDR_LEN,
                                        frame + BLUFI_HDR_LEN), 0);
-  blufimbed_aes_free(&aes);
+  mbedtls_aes_free(&aes);
   frame[1] |= BLUFI_FC_ENC | BLUFI_FC_CHECK;
   EXPECT_NE(memcmp(frame + BLUFI_HDR_LEN, ssid, slen), 0);
 

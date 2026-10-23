@@ -1,8 +1,11 @@
 /*
- * Force-included (-include) for the vendored DHM/bignum translation units.
- * The app-wide mbedTLS interface defines MBEDTLS_CONFIG_FILE to the TF-PSA-Crypto
- * config; we must NOT use that for the vendored mbedtls-2.4 DHM sources, so
- * redirect it to our minimal private config before any mbedtls header is seen.
+ * Force-included (-include) into the referenced Mbed TLS 2.28 translation units
+ * (dhm, bignum, aes, md5) and into blufi_security.c.
+ *
+ * The application-wide mbedTLS interface defines MBEDTLS_CONFIG_FILE to the
+ * TF-PSA-Crypto config; those sources must not use it, so redirect it to our
+ * minimal private config before any mbedtls header is seen. blufi_mbedtls_rename.h
+ * is force-included next to it, and both are ours - no upstream file is edited.
  *
  * SPDX-License-Identifier: Apache-2.0
  */

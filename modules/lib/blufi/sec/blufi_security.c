@@ -1,9 +1,14 @@
 /*
- * BluFi security handshake (ESP-compatible): classic finite-field DH via the
- * vendored mbedtls-2.4 DHM -> MD5(shared) = 16-byte PSK -> AES-128-CFB128.
- * Mirrors esp-idf examples/bluetooth/blufi/main/blufi_security.c. MD5/AES use
- * the renamed vendored primitives (blufi_md5 / blufi_aes_*) to avoid clashing
- * with the app-wide TF-PSA-Crypto 1.0 (which removed those legacy APIs).
+ * BluFi security handshake (ESP-compatible): classic finite-field DH -> MD5 of the
+ * shared secret = 16-byte PSK -> AES-128-CFB128 payload encryption. Mirrors
+ * esp-idf examples/bluetooth/blufi/main/blufi_security.c.
+ *
+ * The algorithms are not implemented here and not vendored either: dhm, bignum and
+ * md5 are the referenced Mbed TLS 2.28 sources (see the module CMakeLists and
+ * CONFIG_BLUFI_MBEDTLS_DIR), and AES is the same upstream file with its symbols
+ * renamed at compile time by blufi_mbedtls_rename.h, because the application
+ * already links an AES from TF-PSA-Crypto. So what follows uses plain
+ * mbedtls_* names.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -51,9 +56,9 @@ LOG_MODULE_DECLARE(blufi, CONFIG_LOG_DEFAULT_LEVEL);
 #define DH_PARAM_MAX        1024
 #define PSK_LEN             16
 
-/* mbedtls AES direction constants (values fixed by the vendored aes.h). */
-#define BLUFI_AES_ENCRYPT   1
-#define BLUFI_AES_DECRYPT   0
+/* Mbed TLS AES direction constants. */
+#define BLUFI_AES_ENCRYPT   MBEDTLS_AES_ENCRYPT
+#define BLUFI_AES_DECRYPT   MBEDTLS_AES_DECRYPT
 
 struct blufi_security {
 	uint8_t self_public_key[DH_SELF_PUB_KEY_LEN];
@@ -64,7 +69,7 @@ struct blufi_security {
 	int dh_param_len;
 	uint8_t iv[16];
 	mbedtls_dhm_context dhm;
-	blufimbed_aes_context aes;
+	mbedtls_aes_context aes;
 };
 
 static struct blufi_security *sec;
@@ -89,7 +94,7 @@ int blufi_security_init(void)
 		return -1;
 	}
 	mbedtls_dhm_init(&sec->dhm);
-	blufimbed_aes_init(&sec->aes);
+	mbedtls_aes_init(&sec->aes);
 	memset(sec->iv, 0x0, sizeof(sec->iv));
 	LOG_INF("blufi sec: dhm/aes init ok");
 	return 0;
@@ -101,7 +106,7 @@ void blufi_security_deinit(void)
 		return;
 	}
 	mbedtls_dhm_free(&sec->dhm);
-	blufimbed_aes_free(&sec->aes);
+	mbedtls_aes_free(&sec->aes);
 	free(sec);
 	sec = NULL;
 }
@@ -161,8 +166,10 @@ int blufi_negotiate(const uint8_t *data, uint16_t len, const uint8_t **out,
 			LOG_ERR("blufi sec: make_public failed %d", ret);
 			return -1;
 		}
-		/* The vendored mbedtls 2.4 DHM ignores a failing RNG callback and
-		 * can leave GX == 1. Never hand a degenerate key to the phone. */
+		/* A DH public key of 0 or 1 is degenerate and would hand the phone a
+		 * predictable shared secret. 2.28 propagates an RNG failure, so this is
+		 * a belt-and-braces check (mbedtls 2.4, which this used to build against,
+		 * ignored the callback's return value and could leave GX == 1). */
 		if (mbedtls_mpi_cmp_int(&sec->dhm.GX, 2) < 0) {
 			LOG_ERR("blufi sec: degenerate DH public key");
 			return -1;
@@ -174,8 +181,8 @@ int blufi_negotiate(const uint8_t *data, uint16_t len, const uint8_t **out,
 			LOG_ERR("blufi sec: calc_secret failed %d", ret);
 			return -1;
 		}
-		blufimbed_md5(sec->share_key, sec->share_len, sec->psk);
-		blufimbed_aes_setkey_enc(&sec->aes, sec->psk, PSK_LEN * 8);
+		mbedtls_md5(sec->share_key, sec->share_len, sec->psk);
+		mbedtls_aes_setkey_enc(&sec->aes, sec->psk, PSK_LEN * 8);
 
 		*out = sec->self_public_key;
 		*out_len = (uint16_t)dhm_len;
@@ -198,7 +205,7 @@ int blufi_aes_encrypt(uint8_t iv8, uint8_t *data, int len)
 	}
 	memcpy(iv0, sec->iv, sizeof(sec->iv));
 	iv0[0] = iv8;
-	if (blufimbed_aes_crypt_cfb128(&sec->aes, BLUFI_AES_ENCRYPT, len, &iv_offset,
+	if (mbedtls_aes_crypt_cfb128(&sec->aes, BLUFI_AES_ENCRYPT, len, &iv_offset,
 					iv0, data, data) != 0) {
 		return -1;
 	}
@@ -215,7 +222,7 @@ int blufi_aes_decrypt(uint8_t iv8, uint8_t *data, int len)
 	}
 	memcpy(iv0, sec->iv, sizeof(sec->iv));
 	iv0[0] = iv8;
-	if (blufimbed_aes_crypt_cfb128(&sec->aes, BLUFI_AES_DECRYPT, len, &iv_offset,
+	if (mbedtls_aes_crypt_cfb128(&sec->aes, BLUFI_AES_DECRYPT, len, &iv_offset,
 					iv0, data, data) != 0) {
 		return -1;
 	}

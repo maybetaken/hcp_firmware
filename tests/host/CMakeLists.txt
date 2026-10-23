@@ -85,17 +85,44 @@ target_include_directories(test_modbus PRIVATE
 target_link_libraries(test_modbus PRIVATE GTest::gtest_main pthread)
 add_test(NAME test_modbus COMMAND test_modbus)
 
-# ---- BluFi frame codec + vendored crypto (module) ----
+# ---- hcp::blufi frames + security handshake ----
 set(BF ${HCP_ROOT}/modules/lib/blufi)
-set_source_files_properties(${BF}/sec/vendor/aes.c ${BF}/sec/vendor/md5.c
-                            ${BF}/sec/vendor/dhm.c ${BF}/sec/vendor/bignum.c
-                            PROPERTIES COMPILE_FLAGS "-w")
-add_executable(test_blufi ${BF}/frame.c
-              ${BF}/sec/blufi_security.c
-              ${BF}/sec/vendor/dhm.c ${BF}/sec/vendor/bignum.c
-              ${BF}/sec/vendor/aes.c ${BF}/sec/vendor/md5.c
+
+# The crypto is the referenced Mbed TLS 2.28 tree, not a copy inside this
+# repository; find it the same way the firmware build does (the firmware side uses
+# ${ZEPHYR_BASE}/../modules/crypto/mbedtls-2.28, which is where the west manifest
+# puts it inside the build container).
+set(BLUFI_MBEDTLS_DIR "" CACHE PATH "Mbed TLS 2.28 source tree for the BluFi tests")
+if(BLUFI_MBEDTLS_DIR STREQUAL "")
+  foreach(_cand ${HCP_ROOT}/../.mbedtls-2.28
+                 /opt/toolchains/modules/crypto/mbedtls-2.28
+                 ${HCP_ROOT}/../modules/crypto/mbedtls-2.28)
+    if(EXISTS ${_cand}/library/dhm.c)
+      set(BLUFI_MBEDTLS_DIR ${_cand})
+      break()
+    endif()
+  endforeach()
+endif()
+if(NOT EXISTS ${BLUFI_MBEDTLS_DIR}/library/dhm.c)
+  message(FATAL_ERROR "BluFi security test needs Mbed TLS 2.28 sources; pass "
+          "-DBLUFI_MBEDTLS_DIR=<checkout>")
+endif()
+
+# platform_util.c is only in this list, not the firmware one: on target the
+# application already links mbedtls_platform_zeroize from TF-PSA-Crypto, and a
+# second definition there would be a duplicate symbol.
+add_executable(test_blufi ${BF}/frame.c ${BF}/sec/blufi_security.c
+              ${BLUFI_MBEDTLS_DIR}/library/platform_util.c
+              ${BLUFI_MBEDTLS_DIR}/library/dhm.c
+              ${BLUFI_MBEDTLS_DIR}/library/bignum.c
+              ${BLUFI_MBEDTLS_DIR}/library/constant_time.c
+              ${BLUFI_MBEDTLS_DIR}/library/aes.c
+              ${BLUFI_MBEDTLS_DIR}/library/md5.c
               ${CMAKE_CURRENT_LIST_DIR}/test_blufi.cpp)
-target_include_directories(test_blufi PRIVATE ${BF}/include ${BF}/sec ${BF}/sec/vendor)
+target_include_directories(test_blufi PRIVATE ${BF}/include ${BF}/sec
+                         ${BLUFI_MBEDTLS_DIR}/include)
+# Upstream Mbed TLS is not written against this project's warning set.
+target_compile_options(test_blufi PRIVATE -w)
 target_compile_definitions(test_blufi PRIVATE MBEDTLS_CONFIG_FILE="blufi_dhm_config.h" CONFIG_BLUFI_SECURITY=1)
 target_link_libraries(test_blufi PRIVATE GTest::gtest_main)
 add_test(NAME test_blufi COMMAND test_blufi)

@@ -1,9 +1,9 @@
 /*
- * Minimal private config for the vendored mbedtls 2.4 DHM/bignum used only by
- * BluFi key negotiation. Forced via blufi_dhm_compat.h so it does not collide
- * with the app-wide TF-PSA-Crypto 1.0 config (MBEDTLS_CONFIG_FILE).
- * Only classic finite-field DH + bignum are compiled here; AES-CFB and MD5 are
- * provided self-contained in blufi_security.c (TF-PSA-Crypto removed them).
+ * Minimal private config for the referenced Mbed TLS 2.28 DHM/bignum/AES/MD5, used
+ * only by BluFi key negotiation. Force-included through blufi_dhm_compat.h so these
+ * translation units do not pick up the application-wide TF-PSA-Crypto config
+ * (MBEDTLS_CONFIG_FILE), and so no upstream file has to be edited to state which
+ * of its features are wanted here.
  *
  * SPDX-License-Identifier: Apache-2.0
  */

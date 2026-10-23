@@ -36,7 +36,9 @@ BOARD_OR_ALL="hcp_c6/esp32c6/hpcore"
 WANT_LED=1
 WANT_RS485=0
 VERSION=""
-SIGNED=0
+# Empty, not 0: the summary line below uses ${SIGNED:+ ...}, which triggers on any
+# non-empty value.
+SIGNED=""
 HCP_SIGN_KEY="${HCP_SIGN_KEY:-root-ec256}"
 EXTRA_ARGS=""
 positional_seen=0

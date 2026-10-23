@@ -18,7 +18,18 @@ config BLUFI_SECURITY
 	help
 	  Enables the ESP-compatible BluFi key negotiation (Diffie-Hellman) and
 	  AES-128-CFB128 payload encryption used when the phone app selects
-	  encrypted provisioning. Uses a vendored mbedtls-2.4 DHM/bignum plus
-	  self-contained MD5/AES (TF-PSA-Crypto 1.0 removed those legacy APIs).
+	  encrypted provisioning.
+
+	  The algorithms are not part of this repository: they are the Mbed TLS
+	  2.28 LTS sources checked out by the west manifest (dhm, bignum, aes and
+	  md5, unmodified; AES with its symbols renamed at compile time because the
+	  application already links an AES of its own). If that module is not
+	  present the build fails with instructions rather than silently compiling a
+	  copy - point -DBLUFI_MBEDTLS_DIR at a checkout if your layout differs.
+
+	  Left off by default: plaintext provisioning interoperates with both the
+	  Espressif apps and the WeChat mini-program, and what this handshake adds is
+	  protocol compatibility rather than strength - its DH group is 256 bits and
+	  the key is MD5-derived.
 
 endif
