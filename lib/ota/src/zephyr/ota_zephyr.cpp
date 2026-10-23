@@ -52,8 +52,10 @@ struct ota_client_http g_http;
 struct ota_client_mcuboot g_sink;
 
 bool g_worker_started;
+bool g_client_ready;  // sink bound, so the bootloader can be asked questions
 bool g_ever_ran;    // an update was attempted since this boot
 bool g_confirmed;   // trial image made permanent (or none was pending)
+bool g_deadline;    // trial image is under a watchdog deadline right now
 
 /*
  * Build the two endpoint URLs. base == nullptr takes the host hcp::ssdp learned
@@ -89,6 +91,36 @@ bool ResolveEndpoints(const char* base, char* version_url, char* image_url) {
 	const int n2 = snprintk(image_url, kUrlCap, CONFIG_HCP_OTA_IMAGE_URL, host);
 	return n1 > 0 && static_cast<size_t>(n1) < kUrlCap && n2 > 0 &&
 	       static_cast<size_t>(n2) < kUrlCap;
+}
+
+/*
+ * Bind the sink-only client: "is the image I am running still a trial?" has to be
+ * answerable from the first second of boot, long before any update URL exists -
+ * and that question decides both whether to arm the trial deadline and when there
+ * is nothing left to confirm. RunUpdate() re-binds the same client with a source
+ * once it has one.
+ */
+bool EnsureClient() {
+	if (g_client_ready) {
+		return true;
+	}
+	if (ota_client_mcuboot_init(&g_sink) != 0) {
+		HCP_LOGE(hcp::log::kDomainOta, "mcuboot sink init failed");
+		return false;
+	}
+
+	static const struct ota_client_config queries_cfg = {
+		.sink = &g_sink.sink,
+		.running_version = CONFIG_APP_VERSION,
+	};
+
+	if (ota_client_init(&g_client, &queries_cfg) != 0) {
+		HCP_LOGE(hcp::log::kDomainOta, "no usable bootloader backend");
+		return false;
+	}
+
+	g_client_ready = true;
+	return true;
 }
 
 void RunUpdate(const Request& req) {
@@ -170,6 +202,10 @@ void MaybeConfirm() {
 	if (!ota_client_pending_image(&g_client)) {
 		/* One line per boot, and deliberate: if the bootloader is ever misread as
 		 * "nothing to confirm", the rollback we then skip is invisible otherwise. */
+		if (g_deadline) {
+			kernel::DisarmWatchdog();
+			g_deadline = false;
+		}
 		HCP_LOGI(hcp::log::kDomainOta,
 			 "no trial image to confirm (running %s is final)",
 			 CONFIG_APP_VERSION);
@@ -178,6 +214,12 @@ void MaybeConfirm() {
 	}
 	if (ota_client_confirm(&g_client) == 0) {
 		g_confirmed = true;
+		if (g_deadline) {
+			/* The image earned its keep: cancel the deadline armed for it at boot,
+			 * or a healthy device would reset once per watchdog window forever. */
+			kernel::DisarmWatchdog();
+			g_deadline = false;
+		}
 		HCP_LOGI(hcp::log::kDomainOta, "new image kept (session is up)");
 	}
 }
@@ -200,22 +242,7 @@ bool Start() {
 		return true;
 	}
 
-	if (ota_client_mcuboot_init(&g_sink) != 0) {
-		HCP_LOGE(hcp::log::kDomainOta, "mcuboot sink init failed");
-		return false;
-	}
-
-	/* Bind a source-less client immediately: "is the image I am running still a
-	 * trial?" has to be answerable from the first second of boot, long before any
-	 * update URL exists - and that question decides whether we ever confirm.
-	 * RunUpdate() re-binds the same client with a source once it has one. */
-	static const struct ota_client_config queries_cfg = {
-		.sink = &g_sink.sink,
-		.running_version = CONFIG_APP_VERSION,
-	};
-
-	if (ota_client_init(&g_client, &queries_cfg) != 0) {
-		HCP_LOGE(hcp::log::kDomainOta, "no usable bootloader backend");
+	if (!EnsureClient()) {
 		return false;
 	}
 
@@ -228,6 +255,41 @@ bool Start() {
 	HCP_LOGI(hcp::log::kDomainOta, "update worker ready (running %s)",
 		 CONFIG_APP_VERSION);
 	return true;
+}
+
+bool GuardTrialImage() {
+	if (!EnsureClient()) {
+		return false;
+	}
+
+	if (!ota_client_pending_image(&g_client)) {
+		/* MCUboot armed its own (long) deadline before jumping here. Nothing is
+		 * pending, so this image is final: cancel it, or a perfectly healthy device
+		 * would reset once per bootloader timeout for the rest of its life. */
+		kernel::DisarmWatchdog();
+		return false;
+	}
+
+	/* Nobody feeds this deadline. It exists so that "the new image booted but
+	 * never became healthy" - which includes hanging on the way up, before the
+	 * worker or the network exist - ends in a reset, and the reset ends in
+	 * MCUboot putting the old firmware back. Tighter than the bootloader's, which
+	 * stays as the net under an image that never reaches main() at all. */
+	g_deadline = kernel::ArmWatchdog(CONFIG_HCP_OTA_WATCHDOG_MS);
+	if (g_deadline) {
+		/* Say what the chip will actually do, not what was written into the
+		 * register: Espressif's MWDT counts the installed window twice (interrupt
+		 * stage, then reset stage) - measured, 20000 ms installed reset this board
+		 * after 40.0 s. */
+		HCP_LOGI(hcp::log::kDomainOta,
+			 "trial image: watchdog armed, reset in ~%u ms unless this image "
+			 "reaches the broker",
+			 2 * CONFIG_HCP_OTA_WATCHDOG_MS);
+	} else {
+		HCP_LOGW(hcp::log::kDomainOta,
+			 "trial image with no watchdog: it will not roll back by itself");
+	}
+	return g_deadline;
 }
 
 bool Trigger(const char* url) {

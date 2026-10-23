@@ -28,6 +28,21 @@ namespace ota {
 // client could not be set up; every other entry point then reports false too.
 bool Start();
 
+// Arm the trial-image deadline, and report whether this boot is a trial at all.
+//
+// Call it as early in boot as possible, before anything that can block. Two
+// outcomes: this image is still a trial, so replace the bootloader's long watchdog
+// deadline with the tight one nobody feeds - the image either proves itself healthy
+// in time (hcp::ota cancels the deadline when it confirms the image) or the chip
+// resets and MCUboot rolls it back; or the image is final, and the bootloader's
+// deadline is cancelled outright.
+//
+// What that buys over "revert on the next reset": a firmware that boots but never
+// gets healthy - cannot associate, cannot reach the broker, hangs on the way up,
+// never reaches main() - reverts by itself instead of staying broken until
+// somebody power-cycles it. Returns true when a tight deadline is now running.
+bool GuardTrialImage();
+
 // Queue an update.
 //
 // url == nullptr builds both endpoints from the configured templates and the
@@ -49,8 +64,9 @@ bool HandleCommand(const char* payload, size_t len);
 const char* StateStr();
 
 // Status for the telemetry topic: empty string when no update has ever been
-// attempted, otherwise "<state> <received>/<total> <version>" (total -1 when the
-// server did not say). Returns the length written, excluding the NUL.
+// attempted, otherwise the state plus what is known about the transfer -
+// "updating 458752/1084236 0.2.0" while it moves, "error (-111)" when it failed.
+// Returns the length written, excluding the NUL.
 size_t StatusText(char* out, size_t cap);
 
 }  // namespace ota

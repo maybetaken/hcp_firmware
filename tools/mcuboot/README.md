@@ -106,6 +106,41 @@ Budget **about a minute and a half per update** on the C6: a few seconds to eras
 through the scratch area one 4 KB sector at a time). The console is silent for all
 of that with the shipped `mcuboot.conf`, which is not a hang.
 
+### The trial deadline (watchdog)
+
+"Revert on the next reset" is not much use if nobody ever resets: an image that
+boots and then hangs, or that boots and cannot reach the network, would sit there.
+So both sides carry a deadline, on the same MWDT0 (`watchdog0` alias):
+
+| who | when | installed window | chip actually resets at |
+| --- | --- | ---: | ---: |
+| MCUboot (`BOOT_WATCHDOG_TIMEOUT_MS`) | every boot, before jumping to the app | 600000 ms | ~20 min, and the app replaces/cancels it within milliseconds |
+| hcp::ota (`CONFIG_HCP_OTA_WATCHDOG_MS`) | first thing in `main()`, only if this boot is a trial | 300000 ms | ~10 min |
+
+The application's first act is therefore: **trial → re-arm tighter and never feed;
+final image → cancel outright**. Cancelling is not optional - a bootloader that
+arms and an application that never disarms resets a perfectly healthy device once
+per window, so MCUboot and the application have to be reflashed together.
+Confirming the image (`new image kept (session is up)`) disarms it too.
+
+Two measured details worth knowing before changing the numbers:
+
+- Espressif's MWDT is **two-stage**: the installed window passes once as an
+  interrupt and again before the reset, so the chip comes back at 2x what was
+  written into the register. Installed 20000 ms on a C6 measured a reset at 40.0 s,
+  with the ROM banner reporting `rst:0x7 (TG0_WDT_HPSYS)`.
+- The bootloader has to feed the running deadline through its own ~75 s of flash
+  work (`CONFIG_BOOT_WATCHDOG_FEED=y`), otherwise the rollback it is performing
+  gets interrupted by the very reset it is waiting for. Note that `FEED` without
+  `SETUP_AT_BOOT` does not even compile in this MCUboot (its feed path uses a
+  channel id that is only declared when a timeout is installed).
+
+Bench result, both directions: trial 0.2.0 with a 20 s window reached the broker
+late, reset itself at 40.0 s, MCUboot moved 0.1.0 back (72 s), and the device was
+healthy on 0.1.0 again with nobody touching it; a final image booted under a
+bootloader deadline of 20 s and ran 150 s+ without a single reset, which is the
+cancel path working.
+
 Verified on an ESP32-C6 at 02:0x (bench): 0.1.0 -> 0.2.0 -> 0.3.0 in a row, each
 step `new image kept (session is up)` at the confirmation window and still there
 after a hard reset; the 0.2.0 step was deliberately run with the secondary slot

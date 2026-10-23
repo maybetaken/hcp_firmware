@@ -7,6 +7,10 @@ menuconfig HCP_OTA
 	# One knob for the whole update path: the reusable module then pulls in the
 	# HTTP source, the MCUboot sink, BOOTLOADER_MCUBOOT and the image manager.
 	select OTA_CLIENT
+	# The trial-image deadline is armed on the SoC watchdog (see
+	# HCP_OTA_WATCHDOG_MS); the driver is pulled in by the board's `watchdog0`
+	# alias, and boards without one simply have nothing to arm.
+	select WATCHDOG
 	#
 	# Default on, except on ESP32-C5, where it does not fit - measured, not
 	# guessed: with CONFIG_BOOTLOADER_MCUBOOT the C5 image overflows SRAM by
@@ -45,6 +49,30 @@ config HCP_OTA_CONFIRM_AFTER_MS
 	  the new image permanent. A device that reboots into an image it cannot
 	  network with keeps burning MCUboot's watchdog window instead, and lands back
 	  on the previous firmware.
+
+config HCP_OTA_WATCHDOG_MS
+	int "Reset deadline for an unconfirmed trial image (ms)"
+	default 300000
+	help
+		At the very start of main(), if MCUboot still considers the running image a
+		trial, hcp::ota arms the SoC watchdog to reset the chip after this long and
+		nobody feeds it. Confirming the image (IP address plus live broker session)
+		cancels it.
+
+		What that buys: a new firmware that boots but never gets healthy - cannot
+		associate, cannot reach the broker, hangs on the way up, or never reaches
+		main() at all - now reverts by itself, instead of staying broken until
+		somebody power-cycles it. Set it comfortably above the confirm gate
+		(HCP_OTA_CONFIRM_AFTER_MS) plus one Wi-Fi retry cycle, and above the time
+		the bootloader needs to move the image back on the next reset.
+
+		On Espressif the MWDT is two-stage - the installed window passes first as an
+		interrupt, then again before the reset - so the chip actually comes back at
+		twice this value. Measured on a C6: 20000 ms installed reset it after 40.0 s,
+		with the ROM banner reporting rst:0x7 (TG0_WDT_HPSYS). The default here
+		therefore means "roll an unconfirmed image back after ten minutes", which is
+		deliberately generous: a broker that is briefly down during an upgrade should
+		not cost the device the new firmware.
 
 config HCP_OTA_STACK_SIZE
 	int "update thread stack size"

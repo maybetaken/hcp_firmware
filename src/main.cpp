@@ -606,6 +606,15 @@ int main(void) {
   HCP_LOGI(hcp::log::kDomainDevice, "*** HCP (Helios Collector Platform) P0 bring-up ***");
   HCP_LOGI(hcp::log::kDomainDevice, "build %s %s", __DATE__, __TIME__);
 
+#ifdef CONFIG_HCP_OTA
+  /* First thing, before any subsystem that can block or fail: if MCUboot still
+   * treats this image as a trial, put a hardware deadline on it. Nothing ever
+   * feeds that deadline; hcp::ota cancels it when the image is confirmed. Being
+   * here this early is the point - a new firmware that dies on the way up still
+   * gets reverted instead of staying dead. */
+  hcp::ota::GuardTrialImage();
+#endif
+
 #ifdef CONFIG_HCP_IDENTITY
   /* Resolve the device identity before anything touches the network: the serial
    * number is both the MQTT client-id/topic prefix and the DHCP hostname, and the
