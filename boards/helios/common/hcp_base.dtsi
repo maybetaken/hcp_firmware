@@ -77,6 +77,16 @@
 	current-speed = <115200>;
 	pinctrl-0 = <&uart1_default>;
 	pinctrl-names = "default";
+
+	/* hcp::modbus rides Zephyr's own Modbus RTU client (subsys/modbus) on this
+	 * UART. The subsys owns the RTU framing, the t3.5 inter-frame timing and -
+	 * through de-gpios, set by the RS485 variant overlay - the direction line of
+	 * the external transceiver. The client looks the interface up by this node's
+	 * name, so renaming it means updating hcp::modbus to match. */
+	modbus0: modbus0 {
+		compatible = "zephyr,modbus-serial";
+		status = "okay";
+	};
 };
 
 &gpio0 {

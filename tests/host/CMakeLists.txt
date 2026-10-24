@@ -72,18 +72,13 @@ target_include_directories(test_led PRIVATE ${D}/include)
 target_link_libraries(test_led PRIVATE GTest::gtest_main)
 add_test(NAME test_led COMMAND test_led)
 
-# ---- hcp::modbus (nanoMODBUS module over posix serial) ----
-set(M ${HCP_ROOT}/lib/modbus)
-set(NM ${HCP_ROOT}/modules/lib/nanomodbus)
-add_executable(test_modbus
-  ${NM}/nanomodbus.c
-  ${M}/src/master.cpp
-  ${HCP_ROOT}/lib/transport/serial/src/posix/serial_posix.cpp
-  ${CMAKE_CURRENT_LIST_DIR}/test_modbus.cpp)
-target_include_directories(test_modbus PRIVATE
-  ${M}/include ${NM} ${HCP_ROOT}/lib/transport/serial/include)
-target_link_libraries(test_modbus PRIVATE GTest::gtest_main pthread)
-add_test(NAME test_modbus COMMAND test_modbus)
+# ---- hcp::modbus: no host test ----
+# It used to be tested here over posix serial + nanoMODBUS. The backend is now
+# Zephyr's own Modbus subsys, which cannot be compiled for the host, so the
+# remaining façade logic (interface lookup from devicetree, parameter mapping,
+# request length checks) is covered on real hardware instead: build with
+# CONFIG_HCP_MODBUS_DEMO=y and read the log (see lib/modbus/Kconfig). test_serial
+# above still covers the UART path the loopback self-test uses.
 
 # ---- hcp::blufi frames + security handshake ----
 set(BF ${HCP_ROOT}/modules/lib/blufi)

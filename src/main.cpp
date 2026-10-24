@@ -91,9 +91,10 @@ static void LedWorker(void* /*arg*/) {
 #endif  // CONFIG_HCP_LED
 
 #ifdef CONFIG_HCP_MODBUS_DEMO
-// Bring-up aid: periodically poll a Modbus slave over uart1 to exercise the
-// RTU path on real hardware. With no slave attached this logs a timeout,
-// which still proves the uart/RS485/nmbs integration is wired up.
+// Bring-up aid: periodically poll a Modbus slave over uart1 to exercise the RTU
+// path on real hardware. With no slave attached this logs a timeout (-ENOTCONN),
+// which still proves the devicetree interface resolved, the uart was configured
+// and the RS485 DE line toggles.
 static void ModbusWorker(void* /*arg*/) {
   hcp::modbus::Master bus;
   hcp::modbus::Config cfg;

@@ -1,6 +1,6 @@
 # hcp::modbus module — Zephyr build integration.
-# Thin C++ master over hcp::serial::Port. The Modbus protocol comes from the
-# nanoMODBUS Zephyr module (modules/lib/nanomodbus), not vendored here.
+# Thin C++ facade over Zephyr's own Modbus RTU client (subsys/modbus). The UART and
+# the RS485 direction pin come from the `zephyr,modbus-serial` devicetree node.
 zephyr_include_directories(include)
 if(CONFIG_HCP_MODBUS)
   target_sources(app PRIVATE src/master.cpp)

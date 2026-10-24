@@ -40,3 +40,11 @@
 &uart1 {
 	pinctrl-0 = <&uart1_rs485_default>;
 };
+
+/* Zephyr's Modbus subsys drives DE itself: idle low, asserted for the duration of
+ * each transmission (see modbus_serial.c), which is what the transceiver wants.
+ * Same pad as the hcp-rs485-dir alias above, which hcp::serial still uses for the
+ * raw loopback self-test - the two are not active in the same build. */
+&modbus0 {
+	de-gpios = <&gpio0 5 GPIO_ACTIVE_HIGH>;
+};

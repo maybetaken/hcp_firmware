@@ -5,7 +5,6 @@ cmake_minimum_required(VERSION 3.20.0)
 # In-tree Zephyr modules (reusable components). Add each module dir (the one
 # containing zephyr/module.yml) before find_package.
 list(APPEND ZEPHYR_EXTRA_MODULES
-  ${CMAKE_CURRENT_LIST_DIR}/modules/lib/nanomodbus
   ${CMAKE_CURRENT_LIST_DIR}/modules/lib/blufi
   ${CMAKE_CURRENT_LIST_DIR}/modules/lib/ota_client)
 

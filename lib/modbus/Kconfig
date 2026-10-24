@@ -1,12 +1,21 @@
 # hcp::modbus module Kconfig
 # SPDX-License-Identifier: Apache-2.0
-
 menuconfig HCP_MODBUS
-	bool "HCP Modbus RTU master (nanoMODBUS)"
+	bool "HCP Modbus RTU master (Zephyr's own Modbus subsys)"
 	default y
-	depends on HCP_SERIAL
+	depends on SERIAL
+	select MODBUS
+	select GPIO
+	help
+	  C++ facade over Zephyr's in-tree Modbus client (subsys/modbus), on the
+	  UART the board's `zephyr,modbus-serial` node names - which also carries the
+	  RS485 DE pin, so the subsys drives the transceiver itself. No third-party
+	  Modbus implementation is involved.
 
 if HCP_MODBUS
+
+comment "The role choice (MODBUS_ROLE_CLIENT) is set in prj.conf: Kconfig"
+comment "choices cannot be selected from a symbol like this one."
 
 config HCP_MODBUS_DEFAULT_BAUD
 	int "Default modbus baud"
@@ -17,7 +26,9 @@ config HCP_MODBUS_DEMO
 	default n
 	help
 	  Bring-up aid: periodically reads holding registers from a configured
-	  slave so the uart1/RS485 path can be exercised on real hardware.
+	  slave so the uart1/RS485 path can be exercised on real hardware. With no
+	  slave on the bus it logs a -ENOTCONN per attempt, which still proves the
+	  interface resolved, the UART is configured and DE toggles.
 
 config HCP_MODBUS_DEMO_SLAVE
 	int "Demo: Modbus slave/unit address"
