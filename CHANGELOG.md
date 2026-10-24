@@ -40,6 +40,44 @@ HCP_SN=hcp-M1231 ./tools/ota_release.sh 2.0.3.15 hcp_c3 --bench
 a tree that does not compile. There is no git remote yet, so nothing is pushed: when
 one exists, `git push && git push --tags` after the release.
 
+## 2.0.3.15 — 2026-10-24
+
+The C3's status LED could light up but not blink or switch - and now it can, because
+the timings were measured instead of assumed.
+
+- **Root cause.** The bit-bang loop bounded each phase by reading the system clock,
+  and on this part that primitive is slower than the phase it is meant to bound:
+  measured with interrupts locked, `sys_clock_cycle_get_32()` costs **687 ns** and
+  `gpio_pin_set_dt()` **312 ns**, while a WS2812 bit period is 1250 ns and a zero's
+  high phase is 400 ns. Every bit therefore came out at the same ~2000 ns floor (two
+  reads plus two calls), which a strip reads as all-ones whatever was asked for - lit,
+  stuck, immune to data. No choice of constants could fix that loop; the shape was
+  wrong.
+- **Fix.** One unlocked register store per edge (`gpio_port_set_bits_raw` /
+  `gpio_port_clear_bits_raw`, which is what the Zephyr driver writes internally - the
+  312 ns above was `pin_set`'s lock and checks, not the store), phases from a counted
+  spin loop, and clock reads reduced to once per boot: a 0.5 ms calibration run makes
+  the 687 ns granularity 0.1 % instead of the whole budget.
+- **Measured after, on the same bench C3:** `store 187 ns, spin 44 ns/iter, t0H 407 ns,
+  t1H 804 ns, 24-bit delta 10187 ns` against datasheet targets of 400 +/- 150 and
+  800 +/- 150, and a predicted delta of 9600 ns for the 24-bit one-vs-zero comparison
+  the boot self-test performs (+/- 1.4 us with this instrument). The self-test exists
+  because there is no scope on the bench: it holds the falling-edge delay fixed and
+  times a frame of ones against a frame of zeros, which is the one thing that proves
+  the strip can tell them apart.
+- **A correction to 2.0.3.14's entry**, which claimed the bit-bang emitted correct
+  frames and that no RMT port was needed. That claim came from log lines showing
+  frames alternating - evidence the software was sending, not evidence about the
+  waveform - and it was wrong. The RMT HAL is present in this tree (`esp_hal_rmt` plus
+  `esp32c3/rmt_ll.h` and the SoC's `rmt_struct.h`) and remains the fallback if a board
+  ever cannot meet these timings in software; it was not needed here, and the reason it
+  is not needed is now measured rather than argued.
+- Also fixed while writing the evidence: the calibration line itself was wrong twice
+  (a picoseconds-to-nanoseconds division off by 1000, then truncation), each time
+  reporting `t0H == t1H` - the instrument misleading exactly when the symptom was
+  being chased. The self-test's measured delta is what said the hardware was fine
+  while the printed phases were not.
+
 ## 2.0.3.14 — 2026-10-24
 
 The Home Assistant contract is complete, and the relay outputs became the second
