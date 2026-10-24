@@ -5,8 +5,6 @@
  */
 #include "hcp/collector/schedule.h"
 
-#include <string.h>
-
 namespace hcp {
 namespace collector {
 
@@ -124,10 +122,12 @@ int BusHealth::Failures(uint8_t unit) const {
 }
 
 void BusHealth::Clear() {
-  // `used` is the only field that must be reset for correctness, but zeroing the
-  // whole array also resets failures/retry_after so a stale entry can never come
-  // back to life if the same unit address reappears in a new table.
-  memset(entries_, 0, sizeof(entries_));
+  // Value-initialise rather than memset: Entry has default member initializers, so
+  // it is not a trivially-copyable type and GCC says (correctly) that wiping it with
+  // memset is not the way to reset it.
+  for (auto& e : entries_) {
+    e = Entry{};
+  }
 }
 
 }  // namespace collector
