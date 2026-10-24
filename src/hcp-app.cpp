@@ -46,9 +46,10 @@ void App::Start() {
   printk("*** HCP (Helios Collector Platform) ***\n");
   printk("hcp: build %s %s\n", __DATE__, __TIME__);
 #ifdef CONFIG_HCP_BENCH
-  /* Loud on purpose. This image has provisioning off, BLE always advertising, the
-   * LED cycling and a Modbus poll running - it is a bench tool, and the last
-   * thing anyone needs is to mistake it for what ships. */
+  /* Loud on purpose. This image runs the bring-up aids and debug logging and is
+   * meant for the bench; it is not what ships. It still keeps provisioning, MQTT
+   * and OTA on, so a bench device can be upgraded over the network instead of
+   * being plugged into USB again - which is also why this line cannot be subtle. */
   printk("hcp: *** BENCH BUILD - not a deployment image ***\n");
 #endif
 

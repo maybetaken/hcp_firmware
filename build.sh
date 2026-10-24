@@ -83,13 +83,17 @@ build_one() {
   [ "$WANT_LED" = "0" ] && SLUG="${SLUG}_nold"
   [ "$WANT_RS485" = "1" ] && SLUG="${SLUG}_rs485"
 
-  # The bench image is its own build directory, not just another set of -D flags on
-  # the product one: it disables hcp::provision (which otherwise owns the strip and
-  # the button) and turns the bring-up aids on, so .config differs in ways worth
-  # keeping apart from a shipping build.
+  # The bench image is a build of its own directory rather than a few extra -D
+  # flags on the product one, because .config differs in ways worth keeping apart:
+  # the aid threads are in, and device-domain logging is debug.
+  #
+  # It keeps hcp::provision ON deliberately. A bench device that is on the network
+  # can be upgraded with ./tools/ota_release.sh and watched with
+  # ./tools/mqtt_watch.py, so nothing has to be plugged into USB again; drop that
+  # one benefit and the image stops being useful after the first release.
   local BENCH_ARGS=""
   if [ "$WANT_BENCH" = "1" ]; then
-    BENCH_ARGS="-DCONFIG_HCP_BENCH=y -DCONFIG_HCP_PROVISION=n -DCONFIG_HCP_LOG_LEVEL_DEVICE=4"
+    BENCH_ARGS="-DCONFIG_HCP_BENCH=y -DCONFIG_HCP_LOG_LEVEL_DEVICE=4"
     SLUG="${SLUG}_bench"
   fi
 

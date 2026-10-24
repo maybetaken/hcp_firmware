@@ -22,22 +22,29 @@ rsource "lib/ssdp/Kconfig"
 rsource "lib/ota/Kconfig"
 
 config HCP_BENCH
-	bool "Bench / HIL firmware: bring-up aids on, provisioning off"
+	bool "Bench / HIL firmware: bring-up aids on, verbose logging"
 	default n
 	help
-	  A build meant to be run on the test bench rather than shipped: the LED colour
-	  cycle and the periodic Modbus poll are compiled in, and hcp::provision is
-	  expected to be off so this image also owns the button, the strip and an
-	  always-advertising BLE.
+	  A build meant to be run on the test bench rather than shipped: the periodic
+	  Modbus poll is compiled in, the raw UART loopback self-test can be turned on
+	  beside it, and device-domain logging is debug so the boot is readable
+	  without a serial session. hcp::provision, MQTT, SSDP and OTA stay in, so a
+	  bench device is reachable and upgradeable over the network - which is the
+	  point: after the first flash it should never need the USB port again.
 
-	  The raw UART loopback self-test is deliberately NOT part of it: it talks on
+	  ./build.sh <board> --bench
+
+	  The LED colour cycle needs the strip to itself, so it only compiles when
+	  hcp::provision is off (a status light and a demo cannot share one pin). For a
+	  BLE-and-LED-only image, add -DCONFIG_HCP_PROVISION=n.
+
+	  The raw UART loopback self-test is NOT part of the bench default: it talks on
 	  the same uart1 the Modbus poll uses, so the two would fight for the port.
-	  Enable it on its own (-DCONFIG_HCP_SERIAL_LOOPBACK_TEST=y) when you are
-	  checking wiring, with the poll off.
+	  Enable it on its own (-DCONFIG_HCP_SERIAL_LOOPBACK_TEST=y) when checking
+	  wiring, with the poll off.
 
-	  It is a separate image on purpose - the product build compiles none of that
-	  out, and the boot banner says which one is running. Build it with
-	  ./build.sh <board> --bench.
+	  The product build compiles none of this in, and the boot banner says which
+	  image is running.
 
 config APP_VERSION
 	string "firmware version (dotted numeric: major.minor.patch)"
