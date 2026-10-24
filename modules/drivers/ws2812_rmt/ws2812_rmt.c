@@ -116,10 +116,19 @@ static int ws2812_rmt_flush_chunk(const struct device *dev, const uint8_t *bytes
 	const struct ws2812_rmt_config *const cfg = dev->config;
 	struct ws2812_rmt_data *const data = dev->data;
 	const uint32_t ch = cfg->channel;
+	/* The limit is where this chunk stops, not the channel's capacity. Left at the
+	 * capacity, the read pointer runs past the symbols that were written and waits
+	 * for ones that never arrive, so the frame never reaches its end and never
+	 * reports done - which is exactly what the first bench run did, and the driver
+	 * said so instead of leaving an LED that quietly does nothing. */
+	const uint32_t symbols = (uint32_t)count * 8U;
 
 	rmt_ll_tx_stop(data->regs, ch);
 	rmt_ll_tx_reset_pointer(data->regs, ch);
-	rmt_ll_clear_interrupt_status(data->regs, RMT_LL_EVENT_TX_MASK(ch));
+	rmt_ll_tx_set_limit(data->regs, ch, symbols - 1);
+	rmt_ll_clear_interrupt_status(data->regs,
+				      RMT_LL_EVENT_TX_MASK(ch) |
+				      RMT_LL_EVENT_TX_ERROR(ch));
 
 	for (uint8_t i = 0; i < count; i++) {
 		for (int bit = 7; bit >= 0; bit--) {
@@ -130,21 +139,59 @@ static int ws2812_rmt_flush_chunk(const struct device *dev, const uint8_t *bytes
 
 	rmt_ll_tx_start(data->regs, ch);
 
-	/* Bounded rather than infinite: a chunk is 6 bytes = 48 us of hardware time,
-	 * so a peripheral that never reports done is broken, and the driver should say
-	 * so instead of hanging the caller (which for the status LED is the system
-	 * workqueue). */
-	for (uint32_t passes = 0;
-	     rmt_ll_tx_get_interrupt_status(data->regs, ch) == 0; passes++) {
+	/* The RAW status, not the masked one: rmt_ll_tx_get_interrupt_status() reads
+	 * int_st, which is "raw AND interrupt-enabled", and this driver takes no
+	 * interrupt at all - so polling it can only ever return zero. The first build on
+	 * the bench proved that, reporting "never reported done" for every frame. Reading
+	 * raw costs nothing extra and keeps the wait free of an ISR, a handler and the
+	 * shared state that would come with them.
+	 *
+	 * Bounded because a chunk is 48 symbols = 60 us of hardware time; a channel that
+	 * never finishes is broken, and saying so beats hanging the caller, which is the
+	 * system workqueue for a status LED. */
+	const uint32_t done_bit = RMT_LL_EVENT_TX_DONE(ch);
+	const uint32_t err_bit = RMT_LL_EVENT_TX_ERROR(ch);
+	int rc = 0;
+
+	for (uint32_t passes = 0;; passes++) {
+		const uint32_t raw = rmt_ll_tx_get_interrupt_status_raw(data->regs, ch);
+
+		if ((raw & done_bit) != 0U) {
+			break;
+		}
+		if ((raw & err_bit) != 0U) {
+			/* An error here means the symbols never reached the counter - the
+			 * write path or the clock, not the strip - so it is worth its own
+			 * line rather than the timeout's generic wording. */
+			LOG_ERR("rmt channel %lu reported an error", (unsigned long)ch);
+			rc = -EIO;
+			break;
+		}
 		if (passes > 200000U) {
-			LOG_ERR("rmt channel %lu never reported done", (unsigned long)ch);
-			return -EIO;
+			/* A chunk is 48 symbols = 60 us of hardware time, so this is orders of
+			 * magnitude past any real frame. The register dump is what makes it
+			 * one round trip instead of four: every RMT register reading zero means
+			 * the block is not being clocked or is held in reset (the actual cause
+			 * found on the bench), while non-zero registers with no done bit point
+			 * at the symbol path or the limit. */
+			LOG_ERR("rmt ch%lu never done: tx_conf=0x%08x limit=0x%08x "
+				"status=0x%08x raw=0x%08x sys_conf=0x%08x clk_en=%d "
+				"rst_en0=0x%08x",
+				(unsigned long)ch, (unsigned)data->regs->tx_conf[ch].val,
+				(unsigned)data->regs->tx_lim[ch].val,
+				(unsigned)data->regs->tx_status[ch].val,
+				(unsigned)data->regs->int_raw.val,
+				(unsigned)data->regs->sys_conf.val,
+				(int)SYSTEM.perip_clk_en0.reg_rmt_clk_en,
+				(unsigned)*(const volatile uint32_t *)&SYSTEM.perip_rst_en0);
+			rc = -EIO;
+			break;
 		}
 	}
 
 	rmt_ll_tx_stop(data->regs, ch);
-	rmt_ll_clear_interrupt_status(data->regs, RMT_LL_EVENT_TX_MASK(ch));
-	return 0;
+	rmt_ll_clear_interrupt_status(data->regs, RMT_LL_EVENT_TX_MASK(ch) | err_bit);
+	return rc;
 }
 
 /* The wire order is whatever the board's color-mapping says; resolving it by name
@@ -257,6 +304,20 @@ static int ws2812_rmt_init(const struct device *dev)
 	/* Bus clock before any register touch: gated off, they all read back zero and
 	 * the failure shows up as an LED that never moves. */
 	rmt_ll_enable_bus_clock(0, true);
+	/* Pulse the peripheral out of reset. Without this the first bench builds read
+	 * every RMT register as zero no matter what was written - the clock gate was on,
+	 * the block was simply held in reset - which is why an LED driven this way looks
+	 * dead rather than mis-configured. rmt_ll_reset_register() asserts then
+	 * de-asserts the line, so it is safe to call at init. */
+	rmt_ll_reset_register(0);
+
+	/* RMT's symbol RAM has its own power switch. Left to the PMU, the memory can be
+	 * powered down while the registers answer - the writes then go nowhere and TX
+	 * never reaches its limit, which is the class of failure the first bench runs
+	 * showed. Forcing it on is correct here rather than merely convenient: this
+	 * device never suspends, so there is no low-power state to disturb, and the
+	 * driver then depends on no PMU configuration at all. */
+	rmt_ll_mem_force_power_on(data->regs);
 
 	rmt_ll_set_group_clock_src(data->regs, ch, RMT_CLK_SRC_APB, 1, 1, 0);
 	rmt_ll_enable_mem_access_nonfifo(data->regs, true);
@@ -268,7 +329,8 @@ static int ws2812_rmt_init(const struct device *dev)
 	 * the next. */
 	rmt_ll_tx_fix_idle_level(data->regs, ch, 0, true);
 	rmt_ll_tx_set_mem_blocks(data->regs, ch, 1);
-	rmt_ll_tx_set_limit(data->regs, ch, kSymbolsPerChannel - 1);
+	/* No limit here on purpose: it belongs to a chunk, not to the channel, and it
+	 * is written per flush (see ws2812_rmt_flush_chunk). */
 	rmt_ll_tx_enable_loop(data->regs, ch, false);
 
 	/* Signal index from the SoC's own table: "channel N" is a different PMUX
