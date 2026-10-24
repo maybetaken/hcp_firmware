@@ -45,6 +45,12 @@ void App::Start() {
    * the broker. */
   printk("*** HCP (Helios Collector Platform) ***\n");
   printk("hcp: build %s %s\n", __DATE__, __TIME__);
+#ifdef CONFIG_HCP_BENCH
+  /* Loud on purpose. This image has provisioning off, BLE always advertising, the
+   * LED cycling and a Modbus poll running - it is a bench tool, and the last
+   * thing anyone needs is to mistake it for what ships. */
+  printk("hcp: *** BENCH BUILD - not a deployment image ***\n");
+#endif
 
 #ifdef CONFIG_HCP_OTA
   /* First thing, before any subsystem that can block or fail: if MCUboot still

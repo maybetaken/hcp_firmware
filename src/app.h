@@ -44,6 +44,11 @@ class BringupAids {
 #ifndef CONFIG_HCP_PROVISION
   static void OnButton(bool pressed, void* arg);
 #endif
+#if defined(CONFIG_HCP_BENCH) && defined(CONFIG_HCP_LED) && !defined(CONFIG_HCP_PROVISION)
+  // Colour cycle, to show the strip and its SPI timing are alive. Bench image
+  // only: a shipped device shows state through the LED, not a demo.
+  static void LedWorker(void* arg);
+#endif
 #ifdef CONFIG_HCP_MODBUS_DEMO
   static void ModbusWorker(void* arg);
 #endif

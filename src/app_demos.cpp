@@ -19,6 +19,9 @@
 #include "hcp/kernel/kernel.h"
 #include "hcp/log/log.h"
 
+#if defined(CONFIG_HCP_BENCH) && defined(CONFIG_HCP_LED)
+#include "hcp/led/strip.h"
+#endif
 #ifdef CONFIG_HCP_MODBUS_DEMO
 #include "hcp/modbus/master.h"
 #endif
@@ -40,6 +43,30 @@ void BringupAids::OnButton(bool pressed, void* /*arg*/) {
            pressed ? "pressed" : "released");
 }
 #endif
+
+#if defined(CONFIG_HCP_BENCH) && defined(CONFIG_HCP_LED) && !defined(CONFIG_HCP_PROVISION)
+// The strip and its SPI timing, made visible: four colours and off, 1.2 s apart.
+// Lives in the bench image because that is the build where nothing else is using
+// the LED - hcp::provision owns the strip in a product build and reflects the
+// connection state through it instead.
+void BringupAids::LedWorker(void* /*arg*/) {
+  hcp::led::Strip s(1);
+  if (!s.Open()) {
+    HCP_LOGW(hcp::log::kDomainDevice,
+             "led_strip open failed (apply ws2812-spi.overlay?)");
+    return;
+  }
+  static const hcp::led::Color seq[] = {
+      {40, 0, 0}, {0, 40, 0}, {0, 0, 40}, {20, 20, 0}, {0, 0, 0}};
+  unsigned i = 0;
+  while (true) {
+    s.SetAll(seq[i]);
+    s.Show();
+    i = (i + 1) % (sizeof(seq) / sizeof(seq[0]));
+    time::DelayMs(1200);
+  }
+}
+#endif  // HCP_BENCH && HCP_LED && !HCP_PROVISION
 
 #ifdef CONFIG_HCP_MODBUS_DEMO
 // Bring-up aid: periodically poll a Modbus slave over uart1 to exercise the RTU
@@ -137,6 +164,11 @@ void BringupAids::Start() {
   if (!hcp::input::Button::Init(OnButton, nullptr)) {
     HCP_LOGW(hcp::log::kDomainDevice, "button init failed (no sw0?)");
   }
+#endif
+
+#if defined(CONFIG_HCP_BENCH) && defined(CONFIG_HCP_LED) && !defined(CONFIG_HCP_PROVISION)
+  Thread led(LedWorker, nullptr, "led");
+  led.Start();
 #endif
 
 #ifdef CONFIG_HCP_MODBUS_DEMO

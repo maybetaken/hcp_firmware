@@ -23,12 +23,16 @@ config HCP_MODBUS_DEFAULT_BAUD
 
 config HCP_MODBUS_DEMO
 	bool "Run a periodic Modbus poll demo in main"
+	default y if HCP_BENCH
 	default n
 	help
 	  Bring-up aid: periodically reads holding registers from a configured
 	  slave so the uart1/RS485 path can be exercised on real hardware. With no
 	  slave on the bus it logs a -ENOTCONN per attempt, which still proves the
 	  interface resolved, the UART is configured and DE toggles.
+
+	  Implied by HCP_BENCH. It owns uart1, so do not run it together with the raw
+	  loopback self-test - the two would be writing the same pins.
 
 config HCP_MODBUS_DEMO_SLAVE
 	int "Demo: Modbus slave/unit address"
