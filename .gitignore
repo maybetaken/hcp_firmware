@@ -16,3 +16,6 @@ keys/
 .vscode/
 *.swp
 .DS_Store
+
+# tools/make_sn_bin.py writes the blob here by default; it carries a serial number and is regenerable
+/sn.bin

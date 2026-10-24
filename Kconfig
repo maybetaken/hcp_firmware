@@ -21,6 +21,16 @@ rsource "lib/mqtt/Kconfig"
 rsource "lib/ssdp/Kconfig"
 rsource "lib/ota/Kconfig"
 
+# Zephyr's default log ring is 1024 B. That is not enough for the ESP32-C3's boot
+# burst: MCUboot's own load lines and the ESP HAL chatter fill it before the log
+# thread drains anything, and the first application messages of every boot - the
+# identity block and the build banner - were being dropped (three captures in a row
+# showed nothing of it, while the same build with 2048 B showed all three lines).
+# The ESP32-C5 cannot afford the extra kilobyte: its SRAM links with about 3,200
+# bytes free (measured), so it keeps the default and its boot log stays lossy.
+config LOG_BUFFER_SIZE
+	default 2048 if !BOARD_HCP_C5
+
 config HCP_BENCH
 	bool "Bench / HIL firmware: bring-up aids on, verbose logging"
 	default n
