@@ -1,13 +1,31 @@
 #!/usr/bin/env python3
 """Watch or drive the HCP device over MQTT, with no third-party packages.
 
-The device subscribes "<sn>/cmd" and echoes commands to "<sn>/ack", and publishes
-"<sn>/online" on every session and "<sn>/state" for telemetry. This tool speaks
-MQTT 3.1.1 over a plain TCP socket, which is enough to see what the device sends
-and to make it react - useful when the USB console is not attached.
+What is on the wire, from the device side (the subscribed set is
+lib/collector/src/commands.cpp, copied topic by topic from Home Assistant's plugins):
 
-    ./tools/mqtt_watch.py sub 'hcp-404cca57446c/#'
-    ./tools/mqtt_watch.py pub 'hcp-404cca57446c/cmd' 'led=on'
+  published   <sn>/online        retained, the firmware version, on every session
+                <sn>/diagnostics periodically: ssid, rssi, led, uptime, ota
+                <sn>/notify      the collected registers, as one report
+                <sn>-K/online    {"switch_count":N,...} - the relay identity
+                <sn>-K/notify    the relay snapshot Home Assistant reads state from
+  subscribed  <sn>/cmd           "ota [http://host:port/]" - the bench update channel
+                <sn>/config, <sn>/control/{cmd,restart,reconfig,led},
+                <sn>/host/heartbeat, <sn>/ota/start, <sn>-K/control/cmd
+
+Nothing is echoed back: there is no <sn>/ack, because Home Assistant has no reader for
+one, and <sn>/state became <sn>/diagnostics for the same reason - a topic nobody
+subscribes is a heartbeat published into the void.
+
+One trap when watching: "-K" is a sibling, not a child, so 'hcp-M1230/#' does NOT match
+'hcp-M1230-K/online'. Subscribe the tree you care about, and subscribe before you
+publish - <sn>/notify is not retained, so a late subscriber misses it.
+
+This tool speaks MQTT 3.1.1 over a plain TCP socket, which is enough to see what the
+device sends and to make it react - useful when the USB console is not attached.
+
+    ./tools/mqtt_watch.py sub 'hcp-M1230/#' 60
+    ./tools/mqtt_watch.py pub 'hcp-M1230/cmd' 'ota http://192.168.31.74:9998/'
 
 Broker and credentials default to the values in prj.conf / Home Assistant's
 mosquitto add-on; override with MQTT_HOST / MQTT_PORT / MQTT_USER / MQTT_PASS.

@@ -367,7 +367,7 @@ size_t StatusText(char* out, size_t cap) {
 	const char* ver = ota_client_remote_version(&g_client);
 	int n;
 
-	/* This string ends up on <sn>/state, a document the broker's clients render,
+	/* This string ends up on <sn>/diagnostics, a document the broker's clients render,
 	 * so only what is actually known goes on the wire: the module's internal "no
 	 * size yet" marker is -1 and the offered version starts out empty, and neither
 	 * belongs there. The errno does, because "error" alone does not tell anybody

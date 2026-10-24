@@ -124,7 +124,9 @@ bool Subscribe(const char* suffix, MessageHandler cb, void* user = nullptr,
 using DocumentFn = int (*)(char* buf, size_t cap);
 bool AnnounceDevice(Tree tree, DocumentFn doc);
 
-// Extra fields for the periodic <sn>/state document. The provider writes a JSON
+// Extra fields for the periodic <sn>/diagnostics document (CONFIG_HCP_MQTT_TOPIC_
+// DIAGNOSTICS - it was called <sn>/state until Home Assistant was checked, and nothing
+// on the other side subscribed to that name). The provider writes a JSON
 // fragment that starts with ',' (e.g. ,"ota":"updating") or returns 0 when it has
 // nothing to report; it runs on the session thread, so it must be quick and
 // non-blocking. This is how another subsystem puts its liveness on the same topic
