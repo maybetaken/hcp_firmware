@@ -79,6 +79,13 @@
 #define RMT_CHANNEL_CONF(dev, ch)      ((dev)->tx_conf[ch].val)
 #define RMT_CHANNEL_LIMIT(dev, ch)     ((dev)->tx_lim[ch].val)
 #define RMT_TX_CLK_SRC                 RMT_CLK_SRC_APB
+/* The C3 stops the transmitter when the read pointer passes tx_lim and raises TX_DONE
+ * there: measured on the bench (raddr 24 with a limit of 23, raw 0x101 = done + threshold)
+ * and it is what the working LED runs on.
+ */
+#define RMT_TX_LIMIT(symbols)          ((symbols) - 1U)
+#define kTxAppendEof                   false
+#define kTxWrapAtLimit                 false
 #define RMT_ARRAY_LEN(field) (sizeof(((rmt_dev_t *)0)->field) / sizeof(((rmt_dev_t *)0)->field[0]))
 static const uint32_t kChannelsPerInstance = RMT_ARRAY_LEN(tx_conf);
 #elif defined(CONFIG_SOC_ESP32C5) || defined(CONFIG_SOC_ESP32C6)
@@ -87,6 +94,24 @@ static const uint32_t kChannelsPerInstance = RMT_ARRAY_LEN(tx_conf);
 #define RMT_CHANNEL_CONF(dev, ch)      ((dev)->chnconf0[ch].val)
 #define RMT_CHANNEL_LIMIT(dev, ch)     ((dev)->chn_tx_lim[ch].val)
 #define RMT_TX_CLK_SRC                 RMT_CLK_SRC_PLL_F80M
+/* One off-by-one, and it is the difference between a lit LED and a dark one on this
+ * generation. The C3's tx_lim is where the read pointer has to reach; the C5/C6 header
+ * describes the same field as "the maximum entries that CHANNELn can send out" - a count,
+ * so it needs the number of symbols, not the index of the last one. Probed on the bench
+ * (CONFIG_WS2812_RMT_PROBE, one pixel = 24 symbols pushed):
+ *   limit 23 -> no TX_DONE ever; read pointer ran to 48, chnstatus bit22 mem_empty set,
+ *               only the threshold event (bit8) fired: the frame never ended on the wire.
+ *   limit 24 -> TX_DONE + threshold (raw 0x101), status shows the writes at 24 and no
+ *               mem_empty: the frame is exactly the data.
+ *   limit 47/48 -> TX_DONE too, but only because the channel ran to the end of its 48
+ *               entry block: the strip would get 24 real symbols plus whatever stale
+ *               entries followed them, which is a wrong colour rather than no colour.
+ * So the correct answer here is not "the C3's number plus one" by taste - it is that this
+ * part counts entries, and 47/48 pass a completion test while still being wrong.
+ */
+#define RMT_TX_LIMIT(symbols)          (symbols)
+#define kTxAppendEof                   false
+#define kTxWrapAtLimit                 false
 #define RMT_ARRAY_LEN(field) (sizeof(((rmt_dev_t *)0)->field) / sizeof(((rmt_dev_t *)0)->field[0]))
 static const uint32_t kChannelsPerInstance = RMT_ARRAY_LEN(chnconf0);
 #else
@@ -131,6 +156,19 @@ static rmt_dev_t *const rmt_base(void)
 	return (rmt_dev_t *)DR_REG_RMT_BASE;
 }
 
+/* Two casts, named: the production path and the bring-up probe both need the register
+ * block and the channel number, and spelling the void* arithmetic out at every call
+ * buried the arguments that are the interesting part of a transaction. */
+static inline rmt_dev_t *regs_of(const struct device *dev)
+{
+	return ((struct ws2812_rmt_data *const)dev->data)->regs;
+}
+
+static inline uint32_t chan_of(const struct device *dev)
+{
+	return ((const struct ws2812_rmt_config *const)dev->config)->channel;
+}
+
 /* The hardware's own symbol layout: duration0(15) level0(1) duration1(15) level1(1). */
 static inline uint32_t ws2812_symbol(bool one)
 {
@@ -140,62 +178,70 @@ static inline uint32_t ws2812_symbol(bool one)
 	return (high & 0x7FFFU) | (1U << 15) | ((low & 0x7FFFU) << 16);
 }
 
-/* Push one chunk of bits and wait for the hardware to have driven them. */
-static int ws2812_rmt_flush_chunk(const struct device *dev, const uint8_t *bytes,
-				  uint8_t count)
+/* What one chunk of symbols cost the hardware, as measured rather than assumed.
+ *
+ * 'status' and 'raw' are raw words on purpose, and decoding them has to be done against
+ * the header for the part in front of you, because the two generations do not agree on
+ * which half of the status word means what:
+ *   ESP32-C3 tx_status:  mem_waddr_ex[8:0], mem_raddr[20:12], state[23:21], then
+ *                        owner_err/mem_full/mem_rd_err.
+ *   C5/C6 chnstatus:     mem_raddr_ex_chn[8:0], state_chn[11:9],
+ *                        apb_mem_waddr_chn[20:12], then rd_err(21)/empty(22)/wr_err(23).
+ * So 0x00018000 is "24 symbols consumed" on the C3 and "24 written, none consumed" on the
+ * C6. Both words are kept because "done" alone has already been shown to say nothing about
+ * whether the symbols arrived or were merely counted. */
+struct tx_result {
+	uint32_t written;  /* status word after the pushes, before the channel is started */
+	uint32_t status;   /* channel status word at the moment it finished or gave up */
+	uint32_t raw;      /* raw interrupt word at that same moment */
+	uint32_t passes;   /* how many polls the wait took */
+	int rc;            /* 0 = the hardware reported TX_DONE */
+};
+
+/* Push one chunk, start it, and wait for the hardware to have driven it.
+ *
+ * 'limit', 'append_eof' and 'wrap' are arguments rather than constants because "the frame
+ * ends here" is expressed differently by the two register generations, and the difference
+ * is not visible in the ll layer (both heads describe tx_set_limit as "the amount of
+ * symbols that can trigger the limitation interrupt", and only the C3 stops at it). The
+ * values are therefore chosen by ws2812_rmt_probe_frame_end() below, on hardware, rather
+ * than by reading a header and hoping. */
+static void ws2812_rmt_tx_chunk(const struct device *dev, const uint8_t *bytes, uint8_t count,
+				uint32_t limit, bool append_eof, bool wrap, uint32_t pass_cap,
+				struct tx_result *out)
 {
 	const struct ws2812_rmt_config *const cfg = dev->config;
-	struct ws2812_rmt_data *const data = dev->data;
+	rmt_dev_t *const regs = regs_of(dev);
 	const uint32_t ch = cfg->channel;
-	/* The limit is where this chunk stops, not the channel's capacity. Left at the
-	 * capacity, the read pointer runs past the symbols that were written and waits
-	 * for ones that never arrive, so the frame never reaches its end and never
-	 * reports done - which is exactly what the first bench run did, and the driver
-	 * said so instead of leaving an LED that quietly does nothing. */
-	const uint32_t symbols = (uint32_t)count * 8U;
 
-	rmt_ll_tx_stop(data->regs, ch);
-	rmt_ll_tx_reset_pointer(data->regs, ch);
-	rmt_ll_tx_set_limit(data->regs, ch, symbols - 1);
-	rmt_ll_clear_interrupt_status(data->regs,
+	rmt_ll_tx_stop(regs, ch);
+	rmt_ll_tx_reset_pointer(regs, ch);
+	rmt_ll_tx_enable_wrap(regs, ch, wrap);
+	rmt_ll_tx_set_limit(regs, ch, limit);
+	rmt_ll_clear_interrupt_status(regs,
 				      RMT_LL_EVENT_TX_MASK(ch) |
 				      RMT_LL_EVENT_TX_ERROR(ch));
 
 	for (uint8_t i = 0; i < count; i++) {
 		for (int bit = 7; bit >= 0; bit--) {
-			RMT_CHANNEL_DATA(data->regs, ch) =
+			RMT_CHANNEL_DATA(regs, ch) =
 				ws2812_symbol(((bytes[i] >> bit) & 1U) != 0U);
 		}
 	}
-
-	/* The first frame of every boot, reported once: TX_DONE only proves the counter
-	 * ran, not that the symbols arrived. If the writes do not land, the channel
-	 * streams 24 empty symbols, reports done happily and the strip shows nothing -
-	 * which is precisely the failure this driver was written for, so the write and
-	 * read addresses are captured here rather than inferred. Raw words, because the
-	 * bitfield names are the SoC header's business - and because the two generations
-	 * do not even agree on which half of the word means what, so decoding has to be
-	 * done against the header for the part in front of you:
-	 *   ESP32-C3 tx_status:  mem_waddr_ex[8:0], mem_raddr[20:12], state[23:21],
-	 *                        then owner_err/mem_full/mem_rd_err.
-	 *   C5/C6 chnstatus:     mem_raddr_ex_chn[8:0], state_chn[11:9],
-	 *                        apb_mem_waddr_chn[20:12], then rd_err/empty/wr_err.
-	 * The same 0x00018000 therefore means "the read pointer reached 24" on the C3 and
-	 * "the write pointer reached 24, the read pointer is still at 0" on the C6.
-	 */
-	static bool first_reported;
-	if (!first_reported) {
-		first_reported = true;
-		LOG_INF("ch%lu after %u symbols: tx_status=0x%08x sys_conf=0x%08x "
-			"tx_conf=0x%08x limit=0x%08x",
-			(unsigned long)ch, (unsigned)symbols,
-			(unsigned)RMT_CHANNEL_STATUS(data->regs, ch),
-			(unsigned)data->regs->sys_conf.val,
-			(unsigned)RMT_CHANNEL_CONF(data->regs, ch),
-			(unsigned)RMT_CHANNEL_LIMIT(data->regs, ch));
+	/* An all-zero symbol is duration0=0/level0=0/duration1=0/level1=0: it contributes
+	 * no edge and no time on the line, so where the protocol is concerned it is not
+	 * extra data - it is a marker for the transmitter to stop at. */
+	if (append_eof) {
+		RMT_CHANNEL_DATA(regs, ch) = 0U;
 	}
 
-	rmt_ll_tx_start(data->regs, ch);
+	/* Taken before the start, because it is the only reading that says the writes
+	 * landed: the C3's non-FIFO attempt pushed 24 words and reported a write address of
+	 * zero, and the channel then transmitted empty symbols, reached its limit and said
+	 * done - a successful transfer of nothing. */
+	out->written = RMT_CHANNEL_STATUS(regs, ch);
+
+	rmt_ll_tx_start(regs, ch);
 
 	/* The RAW status, not the masked one: rmt_ll_tx_get_interrupt_status() reads
 	 * int_st, which is "raw AND interrupt-enabled", and this driver takes no
@@ -205,72 +251,136 @@ static int ws2812_rmt_flush_chunk(const struct device *dev, const uint8_t *bytes
 	 * shared state that would come with them.
 	 *
 	 * Bounded because a chunk is 48 symbols = 60 us of hardware time; a channel that
-	 * never finishes is broken, and saying so beats hanging the caller, which is the
-	 * system workqueue for a status LED. */
+	 * never finishes is mis-configured, and saying so beats hanging the caller, which
+	 * is the system workqueue for a status LED. */
 	const uint32_t done_bit = RMT_LL_EVENT_TX_DONE(ch);
 	const uint32_t err_bit = RMT_LL_EVENT_TX_ERROR(ch);
-	int rc = 0;
 
-	for (uint32_t passes = 0;; passes++) {
-		const uint32_t raw = rmt_ll_tx_get_interrupt_status_raw(data->regs, ch);
+	out->rc = -EIO;
+	for (uint32_t passes = 0; passes <= pass_cap; passes++) {
+		const uint32_t raw = rmt_ll_tx_get_interrupt_status_raw(regs, ch);
 
 		if ((raw & done_bit) != 0U) {
+			out->rc = 0;
+			out->passes = passes;
 			break;
 		}
 		if ((raw & err_bit) != 0U) {
 			/* An error here means the symbols never reached the counter - the
 			 * write path or the clock, not the strip - so it is worth its own
 			 * line rather than the timeout's generic wording. */
-			LOG_ERR("rmt channel %lu reported an error", (unsigned long)ch);
-			rc = -EIO;
+			out->passes = passes;
 			break;
 		}
-		if (passes > 200000U) {
-			/* A chunk is 48 symbols = 60 us of hardware time, so this is orders of
-			 * magnitude past any real frame. The register dump is what makes it
-			 * one round trip instead of four: every RMT register reading zero means
-			 * the block is not being clocked or is held in reset (the actual cause
-			 * found on the bench), while non-zero registers with no done bit point
-			 * at the symbol path or the limit. The bus-clock and reset bits are not
-			 * dumped as well, deliberately: on the C3 they sit in the SYSTEM block
-			 * and on the C5/C6 in PCR, so naming them would put a fourth per-part
-			 * difference in a diagnostic whose whole job is to be portable - and an
-			 * all-zero register file already says the same thing. */
-			LOG_ERR("rmt ch%lu never done: tx_conf=0x%08x limit=0x%08x "
-				"status=0x%08x raw=0x%08x sys_conf=0x%08x",
-				(unsigned long)ch, (unsigned)RMT_CHANNEL_CONF(data->regs, ch),
-				(unsigned)RMT_CHANNEL_LIMIT(data->regs, ch),
-				(unsigned)RMT_CHANNEL_STATUS(data->regs, ch),
-				(unsigned)data->regs->int_raw.val,
-				(unsigned)data->regs->sys_conf.val);
-			rc = -EIO;
-			break;
-		}
+		out->passes = passes;
 	}
 
-	rmt_ll_tx_stop(data->regs, ch);
+	rmt_ll_tx_stop(regs, ch);
 	/* Measured before the status is cleared: reading it afterwards is how the first
 	 * version of this line printed raw=0 for a channel that had just reported done,
 	 * and an invalid measurement is worse than none. */
-	const uint32_t status_after = RMT_CHANNEL_STATUS(data->regs, ch);
-	const uint32_t raw_after = rmt_ll_tx_get_interrupt_status_raw(data->regs, ch);
+	out->status = RMT_CHANNEL_STATUS(regs, ch);
+	out->raw = rmt_ll_tx_get_interrupt_status_raw(regs, ch);
+	rmt_ll_clear_interrupt_status(regs, RMT_LL_EVENT_TX_MASK(ch) | err_bit);
+}
 
-	rmt_ll_clear_interrupt_status(data->regs, RMT_LL_EVENT_TX_MASK(ch) | err_bit);
+/* TEMPORARY (driver bring-up on a second part): ask the hardware which of the plausible
+ * ways to end a frame actually produces a TX_DONE, and print all of them. Built only when
+ * CONFIG_WS2812_RMT_PROBE=y, because it is a question to ask once per part - and worth
+ * keeping as the answer to "what does a new ESP32 do here" instead of re-deriving it from
+ * a header and hoping.
+ *
+ * It has been asked once, on an ESP32-C6, and the answer is in the comment on RMT_TX_LIMIT
+ * above. Note what the probe alone would have misled with: three of these candidates end
+ * the frame and report TX_DONE, and only one of them sends exactly the data - so a
+ * completion bit is still not the measurement, it is only the filter. */
+#ifdef CONFIG_WS2812_RMT_PROBE
+static void ws2812_rmt_probe_frame_end(const struct device *dev)
+{
+	/* One pixel: 3 bytes, 24 symbols. */
+	static const uint8_t kPattern[3] = { 0x80U, 0x00U, 0x00U };
+	const uint32_t s = 24U;
 
-	/* The other half of the first-frame measurement: after the hardware says it is
-	 * done, the read address has to have moved as far as the write address, or the
-	 * channel ran on empty memory and the "done" meant nothing about the strip.
-	 */
-	if (rc == 0) {
+	struct Try { const char *what; uint32_t limit; bool eof; bool wrap; };
+	static const struct Try kTries[] = {
+		/* what the C3 does, and what the C6 measured as "thr event, no done" */
+		{ "lim=s-1          ", s - 1U, false, false },
+		{ "lim=s-1 wrap     ", s - 1U, false, true },
+		{ "lim=s            ", s, false, false },
+		{ "lim=2s-1         ", 2U * s - 1U, false, false },
+		{ "lim=2s           ", 2U * s, false, false },
+		{ "lim=2s wrap      ", 2U * s, false, true },
+		{ "lim=s-1 eof      ", s - 1U, true, false },
+		{ "lim=s eof        ", s, true, false },
+		{ "lim=2s eof       ", 2U * s, true, false },
+		{ "lim=2s eof wrap  ", 2U * s, true, true },
+	};
+
+	for (unsigned t = 0; t < ARRAY_SIZE(kTries); t++) {
+		struct tx_result r;
+
+		ws2812_rmt_tx_chunk(dev, kPattern, sizeof(kPattern), kTries[t].limit,
+				   kTries[t].eof, kTries[t].wrap, 30000U, &r);
+		LOG_INF("probe ch%lu [%s] rc=%d passes=%u written=0x%08x status=0x%08x "
+			"raw=0x%08x limit=0x%08x conf=0x%08x",
+			(unsigned long)chan_of(dev), kTries[t].what, r.rc,
+			(unsigned)r.passes, (unsigned)r.written, (unsigned)r.status,
+			(unsigned)r.raw, (unsigned)kTries[t].limit,
+			(unsigned)RMT_CHANNEL_CONF(regs_of(dev), chan_of(dev)));
+	}
+}
+#endif /* CONFIG_WS2812_RMT_PROBE */
+
+/* Push one chunk of the real frame and wait for it. */
+static int ws2812_rmt_flush_chunk(const struct device *dev, const uint8_t *bytes, uint8_t count)
+{
+	const uint32_t symbols = (uint32_t)count * 8U;
+	struct tx_result r;
+
+	/* The limit is where this chunk stops, not the channel's capacity. Left at the
+	 * capacity, the read pointer runs past the symbols that were written and waits for
+	 * ones that never arrive, so the frame never reaches its end and never reports done
+	 * - which is exactly what the first bench run did, and the driver said so instead
+	 * of leaving an LED that quietly does nothing. */
+	ws2812_rmt_tx_chunk(dev, bytes, count, RMT_TX_LIMIT(symbols), kTxAppendEof, kTxWrapAtLimit,
+			   200000U, &r);
+
+	/* The first frame of every boot, reported once. TX_DONE alone has already been
+	 * shown to prove nothing about the strip, so the three readings that do are logged
+	 * together: what the status word said before the channel started (the writes
+	 * landed), and what it and the raw interrupt say after (the symbols were consumed).
+	 * Decode them against this part's header - see struct tx_result. */
+	static bool first_reported;
+
+	if (!first_reported) {
+		first_reported = true;
+		LOG_INF("ch%lu %u symbols: written=0x%08x status=0x%08x raw=0x%08x "
+			"sys_conf=0x%08x",
+			(unsigned long)chan_of(dev), (unsigned)symbols, (unsigned)r.written,
+			(unsigned)r.status, (unsigned)r.raw,
+			(unsigned)regs_of(dev)->sys_conf.val);
+	}
+
+	if (r.rc == 0) {
 		static bool done_reported;
 
 		if (!done_reported) {
 			done_reported = true;
-			LOG_INF("ch%lu done: tx_status=0x%08x raw=0x%08x",
-				(unsigned long)ch, (unsigned)status_after, (unsigned)raw_after);
+			LOG_INF("ch%lu done: written=0x%08x status=0x%08x raw=0x%08x",
+				(unsigned long)chan_of(dev), (unsigned)r.written,
+				(unsigned)r.status, (unsigned)r.raw);
 		}
+		return 0;
 	}
-	return rc;
+	if ((r.raw & RMT_LL_EVENT_TX_ERROR(chan_of(dev))) != 0U) {
+		LOG_ERR("rmt channel %lu reported an error", (unsigned long)chan_of(dev));
+	} else {
+		LOG_ERR("rmt ch%lu never done: written=0x%08x status=0x%08x raw=0x%08x "
+			"sys_conf=0x%08x",
+			(unsigned long)chan_of(dev), (unsigned)r.written, (unsigned)r.status,
+			(unsigned)r.raw, (unsigned)regs_of(dev)->sys_conf.val);
+	}
+	return r.rc;
 }
 
 /* The wire order is whatever the board's color-mapping says; resolving it by name
@@ -456,6 +566,11 @@ static int ws2812_rmt_init(const struct device *dev)
 		"sys_conf=0x%08x", (unsigned long)ch, cfg->data.pin, cfg->length,
 		(unsigned)kBitCellTicks, (unsigned)RMT_CHANNEL_CONF(data->regs, ch),
 		(unsigned)data->regs->sys_conf.val);
+#ifdef CONFIG_WS2812_RMT_PROBE
+	/* Bring-up on a part this driver has never run on: ask the hardware how a frame is
+	 * ended and print every answer, before anything depends on the result. */
+	ws2812_rmt_probe_frame_end(dev);
+#endif
 	return 0;
 }
 
