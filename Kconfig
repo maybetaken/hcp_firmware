@@ -56,7 +56,7 @@ config HCP_BENCH
 
 config APP_VERSION
 	string "firmware version (dotted numeric: major.minor.patch.build)"
-	default "2.0.3.16"
+	default "2.0.3.17"
 	help
 	  The one version knob of a build. Reported on the <sn>/online topic and used
 	  by hcp::ota as "what am I running", so an update is only taken when the

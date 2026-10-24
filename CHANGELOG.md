@@ -40,7 +40,37 @@ HCP_SN=hcp-M1231 ./tools/ota_release.sh 2.0.3.15 hcp_c3 --bench
 a tree that does not compile. There is no git remote yet, so nothing is pushed: when
 one exists, `git push && git push --tags` after the release.
 
+## 2.0.3.17 — 2026-10-24
+
+The RMT driver now actually transmits; on the bench it went from "every frame fails"
+to zero failures over a window that included the 2 Hz blink, and the four things that
+were wrong are worth naming because each was found by measurement, not by reading.
+
+- **The block was held in reset.** `rmt_ll_enable_bus_clock()` on its own is not
+  enough on the ESP32-C3: every RMT register read back zero — including the ones
+  written moments earlier — so no configuration could take. `rmt_ll_reset_register(0)`
+  (assert, then de-assert) fixed it. This is what "the LED is dead" looked like from
+  the driver's side, and it is invisible from any register dump that isn't asked.
+- **The completion bit was read from a gated register.** Polling
+  `rmt_ll_tx_get_interrupt_status()` can never succeed in a driver that takes no
+  interrupt: it reads `int_st`, which is *raw AND interrupt-enabled*. The raw variant
+  is the one to poll, and it also lets the error bit be distinguished from done.
+- **`tx_lim` is the end of this chunk, not the channel's capacity.** Left at 47 while
+  24 symbols were written, the read pointer ran into symbols that never arrived and
+  the frame never ended. Set per flush from the symbol count.
+- **RMT's symbol RAM has its own power switch,** and leaving it to the PMU let the
+  registers answer while the memory was off. Forced on: this device never suspends.
+- Kept: on the rare timeout the driver prints `tx_conf/limit/status/raw/sys_conf`
+  plus the clock-enable and reset-register words, because the difference between
+  "every register is zero" (not clocked / in reset) and "non-zero but no done" (symbol
+  path or limit) is one line to read and cost four flash cycles to discover.
+
 ## 2.0.3.16 — 2026-10-24
+
+> Correction, found the same day: this release's driver **did not make the LED work**.
+> It compiled, bound and ran, but every frame failed with "never reported done" (see
+> 2.0.3.17 for the four reasons). What below describes as done is the structure - the
+> module, the binding, the removal of the bit-bang branch - not a working strip.
 
 The C3's WS2812 is driven by a real driver now: `modules/drivers/ws2812_rmt`, a
 Zephyr module implementing the standard `led_strip` API behind a devicetree
