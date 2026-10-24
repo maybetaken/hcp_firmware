@@ -25,4 +25,24 @@ config HCP_PROVISION_LED_BRIGHTNESS
 	  every state. The LED sits on for half of each blink cycle, so 10 is already
 	  clearly visible in a normal room; raise it for a panel-mounted enclosure.
 
+config HCP_PROVISION_BAKEIN_SSID
+	string "network to join when storage holds no credentials (bench / factory)"
+	default ""
+	help
+	  Pre-provisioning. With both these empty - the default, and what ships - a device
+	  with nothing in storage waits for a phone over BluFi. Set them and the first
+	  boot instead joins this network and writes the pair into storage, so from then
+	  on it behaves like any provisioned device (the phone, the button and Home
+	  Assistant can all still replace it).
+
+	  The passphrase is compiled into the image: anyone with the binary has the
+	  network key. It is therefore only ever meant to come from an untracked conf
+	  fragment - build.sh folds wificreds.conf (gitignored) into the build - and the
+	  build directory carries _wifi so such an image cannot be mistaken for the
+	  shipping one.
+
+config HCP_PROVISION_BAKEIN_PSK
+	string "passphrase for that network (empty = open network)"
+	default ""
+
 endif

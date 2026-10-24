@@ -128,17 +128,34 @@ build_one() {
     SLUG="${SLUG}_signed-${HCP_SIGN_KEY}"
   fi
 
+  # Bench/factory pre-provisioning: an untracked wificreds.conf next to prj.conf is
+  # folded into the same fragment - a second -DEXTRA_CONF_FILE on the command line
+  # would simply override the first one, not add to it. The file carries a Wi-Fi
+  # passphrase, so it is gitignored, and a build that contains it says so in its
+  # directory name rather than looking like the default image.
+  local WANT_WIFI_FRAG=0
+  if [ -f "${APP_DIR}/wificreds.conf" ]; then
+    confname="${confname:+${confname}_}wifi"
+    SLUG="${SLUG}_wifi"
+    WANT_WIFI_FRAG=1
+  fi
+
   local VERSION_ARGS=""
   if [ -n "$confname" ]; then
+    local FRAG="${APP_DIR}/build/.config-${confname}.conf"
     mkdir -p "${APP_DIR}/build"
-    : > "${APP_DIR}/build/.config-${confname}.conf"
+    : > "$FRAG"
     if [ -n "$VERSION" ]; then
       printf 'CONFIG_APP_VERSION="%s"\nCONFIG_MCUBOOT_IMGTOOL_SIGN_VERSION="%s"\n' \
-        "$VERSION" "$VERSION" >> "${APP_DIR}/build/.config-${confname}.conf"
+        "$VERSION" "$VERSION" >> "$FRAG"
     fi
     if [ "$SIGNED" = "1" ]; then
       printf 'CONFIG_MCUBOOT_GENERATE_UNSIGNED_IMAGE=n\nCONFIG_MCUBOOT_SIGNATURE_KEY_FILE="keys/%s.pem"\n' \
-        "$HCP_SIGN_KEY" >> "${APP_DIR}/build/.config-${confname}.conf"
+        "$HCP_SIGN_KEY" >> "$FRAG"
+    fi
+    if [ "$WANT_WIFI_FRAG" = "1" ]; then
+      cat "${APP_DIR}/wificreds.conf" >> "$FRAG"
+      echo "    pre-provisioning credentials from wificreds.conf (bench/factory image)"
     fi
     VERSION_ARGS="-DEXTRA_CONF_FILE='/workspace/hcp/build/.config-${confname}.conf'"
   fi

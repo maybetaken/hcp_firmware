@@ -28,6 +28,9 @@
 #ifdef CONFIG_HCP_SERIAL_LOOPBACK_TEST
 #include "hcp/serial/port.h"
 #endif
+#ifdef CONFIG_HCP_RTU_PROBE
+#include "hcp/serial/port.h"
+#endif
 #ifdef CONFIG_HCP_NET_DEMO
 #include "hcp/net/wifi.h"
 #endif
@@ -127,6 +130,143 @@ void BringupAids::LoopbackWorker(void* /*arg*/) {
 }
 #endif  // CONFIG_HCP_SERIAL_LOOPBACK_TEST
 
+#ifdef CONFIG_HCP_RTU_PROBE
+namespace {
+
+// Modbus CRC-16 (poly 0xA001, init 0xFFFF) - what the subsys computes too, written
+// here because the probe has to build a request without the subsys involved.
+uint16_t Crc16(const uint8_t* p, size_t n) {
+  uint16_t c = 0xFFFF;
+  for (size_t i = 0; i < n; i++) {
+    c ^= p[i];
+    for (int k = 0; k < 8; k++) {
+      c = (c & 1U) ? static_cast<uint16_t>((c >> 1) ^ 0xA001U)
+                   : static_cast<uint16_t>(c >> 1);
+    }
+  }
+  return c;
+}
+
+int Nibble(char c) {
+  if (c >= '0' && c <= '9') {
+    return c - '0';
+  }
+  if (c >= 'a' && c <= 'f') {
+    return c - 'a' + 10;
+  }
+  if (c >= 'A' && c <= 'F') {
+    return c - 'A' + 10;
+  }
+  return -1;
+}
+
+}  // namespace
+
+/* One request, and the raw bytes that came back.
+ *
+ * This exists because Zephyr's modbus_serial refuses a frame whose CRC does not
+ * match *before* it logs anything: with a real slave on the bus the result is
+ * "err=-5, nothing received shown" and no way forward. Printing the reply turns a
+ * guess into a measurement - and it also separates "the meter answered something
+ * unexpected" from "the bytes are corrupted on the wire", which no log level in
+ * the subsys can tell apart. */
+void BringupAids::RtuProbeWorker(void* /*arg*/) {
+  hcp::serial::Port p;
+  if (!p.Open(CONFIG_HCP_SERIAL_UART_BAUD)) {
+    HCP_LOGE(hcp::log::kDomainModbus, "rtu probe: uart open failed");
+    return;
+  }
+
+  static constexpr char kReq[] = CONFIG_HCP_RTU_PROBE_REQUEST;
+  uint8_t frame[40] = {};
+  size_t n = 0;
+  for (size_t i = 0; kReq[2 * i] != '\0' && n < sizeof(frame) - 2; i++) {
+    const int hi = Nibble(kReq[2 * i]);
+    const int lo = Nibble(kReq[2 * i + 1]);
+    if (hi < 0 || lo < 0) {
+      HCP_LOGE(hcp::log::kDomainModbus, "rtu probe: bad request hex");
+      return;
+    }
+    frame[n++] = static_cast<uint8_t>((hi << 4) | lo);
+  }
+  const uint16_t tx_crc = Crc16(frame, n);
+  frame[n++] = static_cast<uint8_t>(tx_crc & 0xFF);  // Modbus sends CRC low first
+  frame[n++] = static_cast<uint8_t>(tx_crc >> 8);
+
+  uint8_t rb[80] = {};
+  HCP_LOGI(hcp::log::kDomainModbus, "rtu probe: %u baud, %u byte request, every 2 s",
+           (unsigned)CONFIG_HCP_SERIAL_UART_BAUD, (unsigned)n);
+  while (true) {
+    uint8_t d = 0;
+    while (p.Read(&d, 1, 0) > 0) {  // start from a clean fifo
+    }
+    const int64_t t_tx = k_uptime_get();
+    p.Write(frame, n);
+    /* What is sitting in the receive FIFO the moment our write call returns. On a
+     * half-duplex line the master can hear its own request: Zephyr's modbus_serial
+     * has a rx_fifo_drain() that is only ever called from an RX interrupt that is
+     * disabled at that point - effectively dead code - so such bytes stay queued
+     * and shift the reply by 8 bytes, which shows up as a CRC error on a reply
+     * that is otherwise perfectly good. Log it rather than assume it. */
+    int echo = 0;
+    uint8_t eb = 0;
+    while (p.Read(&eb, 1, 0) > 0 && echo < (int)n + 4) {
+      echo++;
+    }
+    /* How long until the slave's first byte, and how much of it survives: a slave
+     * that starts answering within a millisecond or two of our last stop bit is
+     * exactly what a master that closes its receiver during TX and reopens it in
+     * the TX-complete interrupt will clip - and a clipped head byte looks like a
+     * CRC error, which is the symptom being chased. */
+    const int one = p.Read(rb, 1, 800);
+    const int64_t t_first = k_uptime_get();
+    int got = one > 0 ? 1 : 0;
+    if (got > 0) {
+      /* Byte-by-byte, with the arrival time of each gap. An RTU frame is defined by
+       * silence on the wire, so a slave that answers in two bursts separated by
+       * more than the receiver's inter-character timeout is torn into two frames -
+       * and the first half fails its CRC while a whole-byte read still looks
+       * perfect. Only the timing shows it. */
+      int64_t prev = t_first;
+      char gaps[120] = {};
+      int used = 0;
+      while (got < (int)sizeof(rb)) {
+        const int r = p.Read(rb + got, 1, 60);
+        if (r <= 0) {
+          break;
+        }
+        const int64_t now = k_uptime_get();
+        if (now - prev > 2 && used < (int)sizeof(gaps) - 12) {
+          used += snprintk(gaps + used, sizeof(gaps) - used, " +%lldms", (long long)(now - prev));
+        }
+        prev = now;
+        got++;
+      }
+      if (used > 0) {
+        HCP_LOGI(hcp::log::kDomainModbus, "gaps inside the reply:%s", gaps);
+      }
+    }
+
+    char text[sizeof(rb) * 3 + 1] = {};
+    int used = 0;
+    for (int i = 0; i < got && used < (int)sizeof(text) - 4; i++) {
+      used += snprintk(text + used, sizeof(text) - used, "%02X ", rb[i]);
+    }
+    bool crc_ok = false;
+    if (got >= 4) {
+      const uint16_t want = Crc16(rb, static_cast<size_t>(got - 2));
+      crc_ok = rb[got - 2] == static_cast<uint8_t>(want & 0xFF) &&
+               rb[got - 1] == static_cast<uint8_t>(want >> 8);
+    }
+    HCP_LOGI(hcp::log::kDomainModbus,
+             "first byte after %lld ms, echoed-own-tx %d, got %d, crc %s: %s",
+             static_cast<long long>(t_first - t_tx), echo, got,
+             crc_ok ? "GOOD" : "bad", text);
+    time::DelayMs(2000);
+  }
+}
+#endif  // CONFIG_HCP_RTU_PROBE
+
 #ifdef CONFIG_HCP_NET_DEMO
 void BringupAids::OnWifi(hcp::net::WifiEvent e, void* /*user*/) {
   using E = hcp::net::WifiEvent;
@@ -179,6 +319,11 @@ void BringupAids::Start() {
 #ifdef CONFIG_HCP_SERIAL_LOOPBACK_TEST
   Thread lb(LoopbackWorker, nullptr, "loopback");
   lb.Start();
+#endif
+
+#ifdef CONFIG_HCP_RTU_PROBE
+  Thread probe(RtuProbeWorker, nullptr, "rtuprobe");
+  probe.Start();
 #endif
 
 #ifdef CONFIG_HCP_NET_DEMO

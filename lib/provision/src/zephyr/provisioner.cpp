@@ -138,11 +138,31 @@ void LoadCreds() {
   if (g_have_creds) {
     HCP_LOGI(hcp::log::kDomainWifi, "provision: stored credentials for \"%s\"",
              g_ssid);
-  } else {
-    g_ssid[0] = '\0';
-    g_pass[0] = '\0';
-    HCP_LOGI(hcp::log::kDomainWifi, "provision: no stored credentials");
+    return;
   }
+
+  /* Pre-provisioning for the bench and for factory images: a network compiled into
+   * the build is used and then written to storage, so from the next boot on this is
+   * an ordinary stored-credentials device (provisioning, the button and Home
+   * Assistant can all still change it). Empty - the default - keeps the shipped
+   * behaviour: wait for a phone. */
+  if (CONFIG_HCP_PROVISION_BAKEIN_SSID[0] != '\0') {
+    strncpy(g_ssid, CONFIG_HCP_PROVISION_BAKEIN_SSID, sizeof(g_ssid) - 1);
+    g_ssid[sizeof(g_ssid) - 1] = '\0';
+    strncpy(g_pass, CONFIG_HCP_PROVISION_BAKEIN_PSK, sizeof(g_pass) - 1);
+    g_pass[sizeof(g_pass) - 1] = '\0';
+    g_have_creds = true;
+    const bool saved =
+        g_store.SetString(kKeySsid, g_ssid) && g_store.SetString(kKeyPass, g_pass);
+    HCP_LOGI(hcp::log::kDomainWifi,
+             "provision: pre-provisioned from the build for \"%s\" (%s)", g_ssid,
+             saved ? "saved" : "NOT saved, asked again next boot");
+    return;
+  }
+
+  g_ssid[0] = '\0';
+  g_pass[0] = '\0';
+  HCP_LOGI(hcp::log::kDomainWifi, "provision: no stored credentials");
 }
 
 void ConnectNow() {

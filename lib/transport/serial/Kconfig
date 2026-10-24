@@ -20,4 +20,25 @@ config HCP_SERIAL_LOOPBACK_TEST
 	  back. Short the port's TX and RX pins (e.g. c6 TTL: GPIO22<->GPIO23) to
 	  verify the physical serial path without any Modbus slave attached.
 
+config HCP_RTU_PROBE
+	bool "Bench: send one raw Modbus RTU request and hexdump the reply"
+	default n
+	help
+	  Goes straight through hcp::serial::Port, bypassing Zephyr's modbus subsys,
+	  because the subsys rejects a CRC-failing reply before it logs anything - so
+	  when a real slave answers but the frame is refused, there is no way to see
+	  what actually arrived. This prints it.
+
+	  Owns the uart1 pins: do not run it with hcp::collector enabled (two masters
+	  on one bus), which is why it has no default and is not part of HCP_BENCH.
+
+config HCP_RTU_PROBE_REQUEST
+	string "request frame to send, as hex characters (CRC appended by the probe)"
+	depends on HCP_RTU_PROBE
+	default "01040001000C"
+	help
+	  CRC is appended by the probe. The default asks unit 1 for 12 input
+	  registers starting at 1 - the first segment Home Assistant publishes for
+	  the meter on the bench.
+
 endif

@@ -55,6 +55,11 @@ class BringupAids {
 #ifdef CONFIG_HCP_SERIAL_LOOPBACK_TEST
   static void LoopbackWorker(void* arg);
 #endif
+#ifdef CONFIG_HCP_RTU_PROBE
+  // Raw RTU request/reply with the bytes printed - for the case where a real
+  // slave answers and Zephyr's subsys refuses the frame before logging it.
+  static void RtuProbeWorker(void* arg);
+#endif
 #ifdef CONFIG_HCP_NET_DEMO
   static void NetWorker(void* arg);
   static void OnWifi(hcp::net::WifiEvent e, void* user);
