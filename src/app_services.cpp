@@ -60,18 +60,35 @@ void Services::OnMqttCommand(const uint8_t* payload, size_t len, void* /*user*/)
 }
 #endif  // CONFIG_HCP_MQTT
 
-#ifdef CONFIG_HCP_OTA
-/* Adds "ota" to the periodic <sn>/diagnostics document while an update has been
- * tried. */
-int Services::OtaStateExtra(char* buf, size_t cap) {
-  char status[48];
-
-  if (hcp::ota::StatusText(status, sizeof(status)) == 0) {
-    return 0;
+#if defined(CONFIG_HCP_OTA) || defined(CONFIG_HCP_PROVISION)
+/* Two fields hcp::mqtt cannot know about, appended to the periodic
+ * <sn>/diagnostics document:
+ *   "led"  - Home Assistant's light entity reads its state from here
+ *            (light.py: value == "on"), so a device that answers control/led has to
+ *            report it back or the UI drifts from the device.
+ *   "ota"  - present only while an update has been attempted.
+ * Returns the number of bytes written (0 = nothing to add). */
+int Services::StateExtra(char* buf, size_t cap) {
+  size_t used = 0;
+#ifdef CONFIG_HCP_PROVISION
+  const int n = snprintk(buf, cap, ",\"led\":\"%s\"",
+                         hcp::provision::LedEnabled() ? "on" : "off");
+  if (n > 0 && static_cast<size_t>(n) < cap) {
+    used += static_cast<size_t>(n);
   }
-  return snprintk(buf, cap, ",\"ota\":\"%s\"", status);
+#endif
+#ifdef CONFIG_HCP_OTA
+  char status[48];
+  if (hcp::ota::StatusText(status, sizeof(status)) != 0) {
+    const int n = snprintk(buf + used, cap - used, ",\"ota\":\"%s\"", status);
+    if (n > 0 && static_cast<size_t>(n) < cap - used) {
+      used += static_cast<size_t>(n);
+    }
+  }
+#endif
+  return static_cast<int>(used);
 }
-#endif  // CONFIG_HCP_OTA
+#endif  // CONFIG_HCP_OTA || CONFIG_HCP_PROVISION
 
 void Services::Start() {
   /* The state machine decides: credentials in storage -> join the network with
@@ -99,11 +116,13 @@ void Services::Start() {
 #ifdef CONFIG_HCP_MQTT
   hcp::mqtt::SetCommandHandler(OnMqttCommand, nullptr);
 #endif
+#if defined(CONFIG_HCP_OTA) || defined(CONFIG_HCP_PROVISION)
+  hcp::mqtt::SetStateExtraHandler(StateExtra);
+#endif
 #ifdef CONFIG_HCP_OTA
   /* Updates are version-gated downloads from the host Home Assistant announced,
    * and a trial swap until this session proves the new image can reach the
    * network. */
-  hcp::mqtt::SetStateExtraHandler(OtaStateExtra);
   hcp::ota::Start();
 #endif
 }

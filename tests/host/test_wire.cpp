@@ -84,7 +84,35 @@ TEST(WirePack, RefusesToOverflowOrToDisagreeWithTheTable) {
   EXPECT_EQ(PackBits(seg, nullptr, 4, out, sizeof(out)), 0u);
 }
 
-/* ------------------------------------------------------- control/cmd decode -- */
+TEST(LedCommand, TakesWhatHomeAssistantSends) {
+  /* base_device.set_led publishes the bare words "on"/"off" on <sn>/control/led;
+   * 2 and 3 bytes are the two lengths seen on the real device. */
+  const uint8_t on[2] = {'o', 'n'};
+  const uint8_t off[3] = {'o', 'f', 'f'};
+  EXPECT_EQ(ParseLedCommand(on, 2), LedSetting::kOn);
+  EXPECT_EQ(ParseLedCommand(off, 3), LedSetting::kOff);
+
+  // hand-written automations add a newline and mixed case
+  const uint8_t on_nl[3] = {'o', 'n', '\n'};
+  EXPECT_EQ(ParseLedCommand(on_nl, 3), LedSetting::kOn);
+  const uint8_t mixed[3] = {'O', 'F', 'F'};
+  EXPECT_EQ(ParseLedCommand(mixed, 3), LedSetting::kOff);
+}
+
+TEST(LedCommand, RejectsAnythingElse) {
+  const uint8_t toggle[6] = {'t', 'o', 'g', 'g', 'l', 'e'};
+  EXPECT_EQ(ParseLedCommand(toggle, 6), LedSetting::kInvalid);
+  const uint8_t true_[4] = {'t', 'r', 'u', 'e'};
+  EXPECT_EQ(ParseLedCommand(true_, 4), LedSetting::kInvalid);
+  const uint8_t one[1] = {'o'};
+  EXPECT_EQ(ParseLedCommand(one, 1), LedSetting::kInvalid);
+  EXPECT_EQ(ParseLedCommand(nullptr, 0), LedSetting::kInvalid);
+  // a longer payload that merely starts with "on" is not an LED command
+  const uint8_t onx[4] = {'o', 'n', 'x', '!'};
+  EXPECT_EQ(ParseLedCommand(onx, 4), LedSetting::kInvalid);
+}
+
+/* --------------------------------------------------------- control/cmd decode -- */
 
 TEST(WireParse, SingleRegisterWrite) {
   const uint8_t buf[6] = {0x01, 0x06, 0x00, 0x2A, 0x12, 0x34};

@@ -261,15 +261,27 @@ void Handle(Slot& slot) {
 #endif
       return;
 
-    case Command::kLed:
-      /* Not acted on, and that is a decision rather than a gap: the strip is the
-       * status readout hcp::provision drives from the connection state. Letting
-       * Home Assistant switch it off needs "who owns the LED, and should that
-       * survive a reboot" answered first - the previous firmware stored an NVS
-       * "led_state" for it, which is a feature decision, not a refactor. */
-      COL_LOGI("led command received (%u bytes), not acted on - the status light is "
-               "owned by hcp::provision", (unsigned)slot.len);
+    case Command::kLed: {
+      /* Home Assistant's light entity for this device. The strip itself belongs to
+       * hcp::provision (it is the status readout), so the honest meaning of "on"/
+       * "off" here is "show the status light / keep it dark" - and the answer goes
+       * back in diagnostics as "led":"on"|"off", which is exactly where the
+       * integration reads the light's state from. */
+      const registry::LedSetting s =
+          registry::ParseLedCommand(slot.data, slot.len);
+      if (s == registry::LedSetting::kInvalid) {
+        COL_LOGW("led command of %u bytes is neither \"on\" nor \"off\", ignored",
+                 (unsigned)slot.len);
+        return;
+      }
+#ifdef CONFIG_HCP_PROVISION
+      provision::SetLedEnabled(s == registry::LedSetting::kOn);
+#else
+      COL_LOGW("led command %s but hcp::provision is not in this build",
+               s == registry::LedSetting::kOn ? "on" : "off");
+#endif
       return;
+    }
 
     case Command::kOtaStart:
 #ifdef CONFIG_HCP_OTA

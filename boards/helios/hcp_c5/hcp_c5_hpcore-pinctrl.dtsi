@@ -30,11 +30,11 @@
 		};
 	};
 
-	/* WS2812 data on SPI2 MOSI=GPIO8; SCLK=GPIO15 (clock only; avoids c5 used
+	/* WS2812 data on SPI2 MOSI=GPIO8; SCLK=GPIO9 (clock only; avoids c5 used
 	 * pins: relays 0/3, button 28, modbus TX/RX 26/25, console 11/12). */
 	spi2_default: spi2_default {
 		group1 {
-			pinmux = <SPIM2_SCLK_GPIO15>;
+			pinmux = <SPIM2_SCLK_GPIO9>;
 		};
 		group2 {
 			pinmux = <SPIM2_MOSI_GPIO8>;

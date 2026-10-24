@@ -58,6 +58,10 @@ constexpr int kOwnDisconnectMs = 1500;
 
 constexpr char kKeySsid[] = "prov/ssid";
 constexpr char kKeyPass[] = "prov/pass";
+constexpr char kKeyLed[] = "prov/led";
+
+// The status light, as Home Assistant's light entity can switch it.
+bool g_led_enabled = true;
 
 Fsm g_fsm(kWifiAttempts);
 storage::Store g_store;
@@ -307,6 +311,13 @@ Color AlertColor() {
 }
 
 void PaintLed() {
+  if (!g_led_enabled) {
+    // Asked to be dark: no steady pattern and no alert. The state machine keeps
+    // running underneath - this function is only its output device.
+    g_strip.SetAll(kLedOff);
+    g_strip.Show();
+    return;
+  }
   Color c = kLedOff;
   if (g_alert_ticks > 0) {
     c = AlertColor();
@@ -365,6 +376,15 @@ void Start() {
     HCP_LOGW(hcp::log::kDomainWifi, "provision: storage open failed");
   }
   LoadCreds();
+
+  // Restore the LED setting before the first paint, so a device that was told to
+  // stay dark does not flash once on the way up.
+  {
+    char val[8];
+    if (g_store.GetString(kKeyLed, val, sizeof(val))) {
+      g_led_enabled = (val[0] != '0');
+    }
+  }
 
   if (g_strip.Open()) {
     g_strip.SetBrightness(CONFIG_HCP_PROVISION_LED_BRIGHTNESS);
@@ -452,6 +472,22 @@ void RequestReset() {
            "provision: reset requested over the network");
   Apply(g_fsm.OnResetRequested());
 }
+
+void SetLedEnabled(bool on) {
+  if (on == g_led_enabled) {
+    return;  // same as before: do not spend a flash write
+  }
+  g_led_enabled = on;
+  if (!g_store.SetString(kKeyLed, on ? "1" : "0")) {
+    HCP_LOGW(hcp::log::kDomainDevice,
+             "provision: LED setting changed but could not be stored, a reboot will "
+             "undo it");
+  }
+  HCP_LOGI(hcp::log::kDomainDevice, "provision: status light %s",
+           on ? "on" : "off");
+}
+
+bool LedEnabled() { return g_led_enabled; }
 
 }  // namespace provision
 }  // namespace hcp

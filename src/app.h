@@ -75,9 +75,11 @@ class Services {
   // <sn>/cmd: Home Assistant's text commands (hcp::ota owns "ota").
   static void OnMqttCommand(const uint8_t* payload, size_t len, void* user);
 #endif
-#ifdef CONFIG_HCP_OTA
-  // Adds "ota" to the periodic state document while an update has been tried.
-  static int OtaStateExtra(char* buf, size_t cap);
+#if defined(CONFIG_HCP_OTA) || defined(CONFIG_HCP_PROVISION)
+  /* The two fields Home Assistant expects on <sn>/diagnostics that hcp::mqtt does
+   * not know about: "led" (its light entity reads the state from there) and "ota"
+   * while an update has been tried. */
+  static int StateExtra(char* buf, size_t cap);
 #endif
 };
 

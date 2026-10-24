@@ -53,6 +53,19 @@ void NotifyServiceLost();
 // what "no credentials" means for the LED, BLE and the retry counters.
 void RequestReset();
 
+/*
+ * Home Assistant's light entity for this device: <sn>/control/led with "on"/"off"
+ * switches the status light up or blanks it. The state machine keeps running
+ * either way - this only silences its output, which is what a request to turn the
+ * LED "off" can honestly mean. Off means off, including the alert blinks.
+ *
+ * It is persisted, because Home Assistant restores the light's state on its side
+ * after a restart and an unremembered setting would disagree with the device after
+ * every power cycle (the previous firmware stored the same thing as "led_state").
+ */
+void SetLedEnabled(bool on);
+bool LedEnabled();
+
 // Current state, for logging/diagnostics (the MQTT session waits for kOnline).
 Fsm::State state();
 

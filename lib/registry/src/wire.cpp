@@ -6,6 +6,7 @@
  */
 #include "hcp/registry/wire.h"
 
+#include <ctype.h>
 #include <string.h>
 
 namespace hcp {
@@ -118,6 +119,34 @@ WriteParse ParseWriteRequest(const uint8_t* buf, size_t len, WriteRequest* out) 
     default:
       return WriteParse::kBad;
   }
+}
+
+LedSetting ParseLedCommand(const uint8_t* buf, size_t len) {
+  if (buf == nullptr) {
+    return LedSetting::kInvalid;
+  }
+  // Case-insensitive and tolerant of a trailing newline, because the payload is
+  // written by hand in YAML automations as often as it is by the integration.
+  auto Is = [&](const char* word) {
+    const size_t n = strlen(word);
+    if (len != n && len != n + 1) {
+      return false;
+    }
+    for (size_t i = 0; i < n; i++) {
+      char a = static_cast<char>(tolower(buf[i]));
+      if (a != word[i]) {
+        return false;
+      }
+    }
+    return len == n || buf[n] == '\n' || buf[n] == '\r';
+  };
+  if (Is("on")) {
+    return LedSetting::kOn;
+  }
+  if (Is("off")) {
+    return LedSetting::kOff;
+  }
+  return LedSetting::kInvalid;
 }
 
 }  // namespace registry

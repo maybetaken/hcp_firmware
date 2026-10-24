@@ -87,5 +87,20 @@ enum class WriteParse : uint8_t {
  */
 WriteParse ParseWriteRequest(const uint8_t* buf, size_t len, WriteRequest* out);
 
+/*
+ * <sn>/control/led, as Home Assistant's BaseDevice.set_led publishes it: the bare
+ * words "on" and "off" (2 and 3 bytes - both lengths show up on a real device).
+ * The same field comes back the other way in diagnostics as "led":"on"|"off",
+ * which is where the light entity reads its state from (light.py: value == "on"),
+ * so a device that answers this must also report it.
+ */
+enum class LedSetting : uint8_t {
+  kInvalid = 0,
+  kOff,
+  kOn,
+};
+
+LedSetting ParseLedCommand(const uint8_t* buf, size_t len);
+
 }  // namespace registry
 }  // namespace hcp

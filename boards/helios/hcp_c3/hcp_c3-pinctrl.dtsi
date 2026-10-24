@@ -30,11 +30,19 @@
 		};
 	};
 
-	/* WS2812 data on SPI2 MOSI=GPIO8; SCLK=GPIO11 (clock only; GPIO6/7/8 are
-	 * C3 strapping and GPIO6 is RX on the c3-485 variant, so avoid them). */
+	/* WS2812 data on SPI2 MOSI=GPIO8; the clock goes to GPIO7.
+	 *
+	 * GPIO7 and not GPIO11: on the board as wired, GPIO11 collides with the chip's
+	 * own RX, so the SPI clock was fighting the serial line. Measured, not assumed -
+	 * the LED was dark on two separate C3 units with SCLK on GPIO11.
+	 *
+	 * Free-ness is checked rather than trusted: the TTL variant uses TX=GPIO1/
+	 * RX=GPIO2, the RS485 variant TX=GPIO4/RX=GPIO6/DE=GPIO5, the button is GPIO10
+	 * and the relays GPIO0/GPIO3 - so GPIO7 belongs to the LED clock in both builds.
+	 * GPIO8 (data) is a C3 strapping pin and is left alone for that reason. */
 	spi2_default: spi2_default {
 		group1 {
-			pinmux = <SPIM2_SCLK_GPIO11>;
+			pinmux = <SPIM2_SCLK_GPIO7>;
 		};
 		group2 {
 			pinmux = <SPIM2_MOSI_GPIO8>;
