@@ -107,8 +107,9 @@ echo ">>> staged ${VERSION} ($(wc -c < "$SRV_DIR/firmware.bin" | tr -d ' ') byte
 if ! lsof -nP -iTCP:${SRV_PORT} -sTCP:LISTEN >/dev/null 2>&1; then
   cat >&2 <<EOF
 nothing is listening on :${SRV_PORT} - the device cannot fetch the image.
-Start the file server in another terminal:
-  cd ${HERE} && python3 -m http.server ${SRV_PORT} --bind 0.0.0.0 -d build/otasrv
+Start the file server in another terminal (threaded, so two boards do not queue behind
+each other - a queued GET is what an "ota":"error (-116)" on the device actually is):
+  cd ${HERE} && ./tools/ota_server.py
 EOF
   exit 1
 fi
