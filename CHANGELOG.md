@@ -40,7 +40,39 @@ HCP_SN=hcp-M1231 ./tools/ota_release.sh 2.0.3.15 hcp_c3 --bench
 a tree that does not compile. There is no git remote yet, so nothing is pushed: when
 one exists, `git push && git push --tags` after the release.
 
+## 2.0.3.18 — 2026-10-24
+
+The strip is driven now. Two more causes, both invisible from the completion bit that
+the previous two releases had been treating as proof:
+
+- **The symbols never entered the channel RAM.** In non-FIFO mode the write pointer
+  stayed at zero through all 24 DATA writes, so the counter ran over empty memory,
+  reached its limit and reported done — a successful transfer of nothing. The FIFO push
+  port is the right mode here: `tx_status` went from `0x00000000` to `0x00018000`
+  across the same writes.
+- **Carrier modulation is asserted in the channel's reset value** (`tx_conf` read back
+  `0x00710140`), and a modulated output with the carrier registers at reset is a flat
+  line on the pin. Disabled as IDF's own driver does in its channel reset; `tx_conf`
+  is now `0x00110140` after init.
+
+The lesson, since it is the third time this session that "the driver reported success"
+was not evidence about the hardware: a peripheral's completion flag says its state
+machine finished, and nothing else. Whether data arrived and whether the pin moved are
+separate facts, so the driver now prints them — channel status after the symbols are
+written and after completion — once per boot, and the first-frame measurement is at
+INF because two lines per boot is cheap next to a guess. One of those measurements also
+caught a flaw in itself: `int_raw` was being read after the status clear, which prints
+zero no matter what happened.
+
+Bench C3: 24 symbols, write pointer advanced, done with no error bit, zero failures
+across a window that included the 2 Hz blink.
+
 ## 2.0.3.17 — 2026-10-24
+
+> Correction, same day: this release fixed the reset gate (below) but **still did not
+> drive the strip** — the symbols never reached the channel RAM and the carrier was
+> modulating the output flat. See 2.0.3.18. What follows is accurate about the four
+> register facts it names, and those were real; they were not sufficient.
 
 The RMT driver now actually transmits; on the bench it went from "every frame fails"
 to zero failures over a window that included the 2 Hz blink, and the four things that
