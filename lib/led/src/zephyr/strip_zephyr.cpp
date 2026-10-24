@@ -18,6 +18,8 @@
 
 #include <string.h>
 
+#include "hcp/log/log.h"
+
 #if defined(CONFIG_HCP_LED_BACKEND_GPIO_BITBANG)
 #include <zephyr/drivers/gpio.h>
 namespace {
@@ -159,6 +161,12 @@ bool Strip::Show() {
     same = want.r == sent.r && want.g == sent.g && want.b == sent.b;
   }
   if (same) {
+    /* Deliberately silent, and measured before deciding: this is the normal path -
+     * the animation tick repaints every 50 ms and 19 times in 20 the colour did not
+     * change - so logging it puts twenty lines a second on the console and overflows
+     * the 1 KB log ring on the ESP32-C5, which would drop the boot messages that
+     * matter. The flush line below is the one worth having, because it is rare and it
+     * is the actual bytes that left for the strip. */
     return true;
   }
 
@@ -192,12 +200,19 @@ bool Strip::Show() {
   int rc = led_strip_update_rgb(impl_->dev, rgb, count_);
 #endif
   irq_unlock(key);
-  delete[] rgb;
 
   if (rc == 0) {
     memcpy(impl_->shown, impl_->fb, sizeof(Color) * count_);
     impl_->shown_brightness = brightness_;
+    /* Read while `rgb` is still alive: these are the bytes that actually went out,
+     * after the brightness scaling, which is the difference between "the application
+     * asked for violet" and "the strip was told rgb(17,0,25) at 10 %". */
+    HCP_LOGD(hcp::log::kDomainDevice, "led flush rgb(%u,%u,%u) at %u%% -> %s",
+             static_cast<unsigned>(rgb[0].r), static_cast<unsigned>(rgb[0].g),
+             static_cast<unsigned>(rgb[0].b), static_cast<unsigned>(brightness_),
+             impl_->dev != nullptr ? "led_strip" : "bit-bang");
   }
+  delete[] rgb;
   return rc == 0;
 }
 

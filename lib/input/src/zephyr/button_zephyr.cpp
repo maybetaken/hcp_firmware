@@ -20,6 +20,8 @@
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/gpio.h>
 
+#include "hcp/log/log.h"
+
 #ifndef CONFIG_HCP_INPUT_DEBOUNCE_MS
 #define CONFIG_HCP_INPUT_DEBOUNCE_MS 30
 #endif
@@ -53,8 +55,17 @@ void EdgeIsr(const struct device* dev, struct gpio_callback* cb, uint32_t pins) 
 void DebounceWork(struct k_work* /*work*/) {
   const bool raw = gpio_pin_get_dt(&g_btn) > 0;
   const int ev = g_debouncer.Update(raw, static_cast<uint64_t>(k_uptime_get()));
-  if (ev != Debouncer::kNone && g_cb != nullptr) {
-    g_cb(g_debouncer.stable(), g_arg);
+  if (ev != Debouncer::kNone) {
+    /* Every settled edge, at debug. "The button does nothing" splits in two here:
+     * no line at all when the pin is pressed means the interrupt never fires (wrong
+     * pin, nothing wired, pull configured against the board); a line that appears
+     * but produces no short/long action means the tick that samples it is the
+     * problem, not the input. */
+    HCP_LOGD(hcp::log::kDomainDevice, "input: button settled %s (raw %d)",
+             g_debouncer.stable() ? "pressed" : "released", raw ? 1 : 0);
+    if (g_cb != nullptr) {
+      g_cb(g_debouncer.stable(), g_arg);
+    }
   }
   /* Update() commits a change only once it has seen the new level twice with the
    * settle window in between - so the first look at it must schedule another.
@@ -76,8 +87,17 @@ bool Button::Init(Callback cb, void* arg) {
 
   /* Seed the debouncer with the level at boot so a button held when power comes up
    * is not reported as a fresh press. */
-  g_debouncer.Update(gpio_pin_get_dt(&g_btn) > 0,
-                     static_cast<uint64_t>(k_uptime_get()));
+  const bool boot_raw = gpio_pin_get_dt(&g_btn) > 0;
+  g_debouncer.Update(boot_raw, static_cast<uint64_t>(k_uptime_get()));
+
+  /* The idle reading is worth a line, because it is the one measurement that says
+   * whether the pin can work at all: with the DT's GPIO_ACTIVE_LOW applied, a free
+   * line reads "not pressed". If it reads pressed with nobody touching it, the
+   * debouncer will be waiting for a release that never comes and no press event can
+   * ever be produced - which looks exactly like a dead button. */
+  HCP_LOGD(hcp::log::kDomainDevice, "input: button pin %d idle raw %d (ready %d)",
+           g_btn.pin, gpio_pin_get(g_btn.port, g_btn.pin) > 0 ? 1 : 0,
+           gpio_is_ready_dt(&g_btn) ? 1 : 0);
 
   g_cb = cb;
   g_arg = arg;

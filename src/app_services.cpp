@@ -26,6 +26,8 @@
 #include "hcp/ota/ota.h"
 #endif
 #ifdef CONFIG_HCP_PROVISION
+#include "hcp/net/wifi.h"  // diagnostics carries the live ssid/rssi (HCP_PROVISION
+                            // depends on HCP_NET, so this is never a dangling include)
 #include "hcp/provision/provision.h"
 #endif
 #ifdef CONFIG_HCP_SSDP
@@ -61,8 +63,14 @@ void Services::OnMqttCommand(const uint8_t* payload, size_t len, void* /*user*/)
 #endif  // CONFIG_HCP_MQTT
 
 #if defined(CONFIG_HCP_OTA) || defined(CONFIG_HCP_PROVISION)
-/* Two fields hcp::mqtt cannot know about, appended to the periodic
- * <sn>/diagnostics document:
+/* Fields hcp::mqtt cannot know about, appended to the periodic <sn>/diagnostics
+ * document. Home Assistant's diagnostics card reads exactly these keys and nothing
+ * else (plugins/base_device.py: update_diagnostics takes "ssid", "rssi" and
+ * "led" == "on"), which is the whole specification for this function:
+ *   "ssid", "rssi" - the AP as the driver sees it, live, so the card cannot drift
+ *                    into showing the network we were asked to join rather than the
+ *                    one we are on, and the signal reading is current rather than
+ *                    remembered from the scan that found it.
  *   "led"  - Home Assistant's light entity reads its state from here
  *            (light.py: value == "on"), so a device that answers control/led has to
  *            report it back or the UI drifts from the device.
@@ -71,9 +79,31 @@ void Services::OnMqttCommand(const uint8_t* payload, size_t len, void* /*user*/)
 int Services::StateExtra(char* buf, size_t cap) {
   size_t used = 0;
 #ifdef CONFIG_HCP_PROVISION
-  const int n = snprintk(buf, cap, ",\"led\":\"%s\"",
+  /* A JSON string cannot carry a raw '"', a '\\' or a control byte, and an SSID is
+   * user data that can contain all three - an unescaped quote would not just lose
+   * this field, it would make the whole document unparseable and Home Assistant
+   * would drop the update (json.JSONDecodeError is logged and swallowed). So the two
+   * hostile classes become '?' and everything else, including UTF-8 SSIDs, is
+   * copied through untouched. */
+  net::LinkInfo link{};
+  if (hcp::net::wifi::GetLinkInfo(&link)) {
+    char safe[sizeof(link.ssid)];
+    size_t i = 0;
+    for (; i + 1 < sizeof(safe) && link.ssid[i] != '\0'; i++) {
+      const unsigned char ch = static_cast<unsigned char>(link.ssid[i]);
+      safe[i] = (ch < 0x20U || ch == '"' || ch == '\\') ? '?' : link.ssid[i];
+    }
+    safe[i] = '\0';
+    const int n = snprintk(buf + used, cap - used, ",\"ssid\":\"%s\",\"rssi\":%d",
+                           safe, static_cast<int>(link.rssi));
+    if (n > 0 && static_cast<size_t>(n) < cap - used) {
+      used += static_cast<size_t>(n);
+    }
+  }
+
+  const int n = snprintk(buf + used, cap - used, ",\"led\":\"%s\"",
                          hcp::provision::LedEnabled() ? "on" : "off");
-  if (n > 0 && static_cast<size_t>(n) < cap) {
+  if (n > 0 && static_cast<size_t>(n) < cap - used) {
     used += static_cast<size_t>(n);
   }
 #endif

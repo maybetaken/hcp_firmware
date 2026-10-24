@@ -10,6 +10,17 @@ if HCP_SWITCH
 
 config HCP_ENABLE_SWITCH_CONTROL
 	bool "Compile relay control into the application logic"
-	default n
+	default y
+	help
+	  Speaks the "<sn>-K" contract with Home Assistant: accepts
+	  <sn>-K/control/cmd, drives hcp-k1/hcp-k2, keeps their state across a reboot
+	  and reports it on <sn>-K/notify, and announces the device with its
+	  switch_count on every connect. This is the shape of the previous firmware's
+	  CONFIG_ENABLE_SWITCH_CONTROL path (main/solar_manager.cpp:108-122 plus
+	  components/switch_ctrl), which is what the integration in the field expects.
+
+	  Off on a board whose relays are not wired: the relay outputs are real pins on
+	  every Helios board, so turning this off is a statement about a build, not
+	  about hardware.
 
 endif

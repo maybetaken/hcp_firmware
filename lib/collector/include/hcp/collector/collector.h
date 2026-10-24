@@ -33,15 +33,22 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "hcp/mqtt/client.h"
 #include "hcp/registry/table.h"
 
 namespace hcp {
 namespace collector {
 
-/* What an inbound topic under "<sn>/" means. Kept as a pure function of the
- * suffix so the mapping - which is a contract with Home Assistant, not an
- * implementation detail - has host tests instead of only a switch buried in a
- * thread loop. */
+/* What an inbound topic under a device prefix means. Kept as a pure function of the
+ * tree and the suffix so the mapping - which is a contract with Home Assistant, not
+ * an implementation detail - has host tests instead of only a switch buried in a
+ * thread loop.
+ *
+ * The tree is part of the input because the same suffix means different things in
+ * the two identities a Helios board publishes: "control/cmd" under "<sn>" carries a
+ * raw Modbus write for the meter, and under "<sn>-K" it carries a JSON switch
+ * command for the relays. Answering either with the other's handler would not throw
+ * an exception, it would switch the wrong load. */
 enum class Command {
   kNone = 0,
   kConfig,       /* <sn>/config: the point table, as JSON */
@@ -54,10 +61,12 @@ enum class Command {
                   * firmware's own trigger: solar_manager.cpp registered this topic
                   * and did checkForUpdate() then startUpdate(), against
                   * http://<host from SSDP>:9998/firmware.bin + version.txt) */
+  kSwitchWrite,  /* <sn>-K/control/cmd: {"switch_01":"on"} for the relay outputs */
 };
 
 /* suffix is length-bounded and NOT NUL terminated (it comes off the MQTT packet). */
-Command Classify(const char* suffix, size_t len);
+Command Classify(const char* suffix, size_t len,
+                 mqtt::Tree tree = mqtt::Tree::kMain);
 
 /* Registers the MQTT routes, loads the persisted point table and starts the
  * worker. Idempotent; false if the thread could not start. */

@@ -22,6 +22,10 @@ Command Of(const char* suffix) {
   return Classify(suffix, strlen(suffix));
 }
 
+Command OnSwitch(const char* suffix) {
+  return Classify(suffix, strlen(suffix), hcp::mqtt::Tree::kSwitch);
+}
+
 }  // namespace
 
 TEST(CollectorTopics, MapWhatThePluginsPublish) {
@@ -62,4 +66,26 @@ TEST(CollectorTopics, AcceptsAnUnterminatedSlice) {
   const char* topic = "config and then some other bytes";
   EXPECT_EQ(Classify(topic, 6), Command::kConfig);
   EXPECT_EQ(Classify(topic, 7), Command::kNone); /* "config " */
+}
+
+/*
+ * The two identities a board publishes share suffix names, so the tree has to be
+ * part of the mapping. This is the pair that would be silently wrong without it: the
+ * same "control/cmd" carries a Modbus register write for the meter and a JSON
+ * command for the relays.
+ */
+TEST(CollectorTrees, SameSuffixDifferentDeviceMeansDifferentCommand) {
+  EXPECT_EQ(Of("control/cmd"), Command::kModbusWrite);
+  EXPECT_EQ(OnSwitch("control/cmd"), Command::kSwitchWrite);
+}
+
+TEST(CollectorTrees, TheSwitchDeviceClaimsNothingElse) {
+  /* Home Assistant publishes its point table to the meter only, and the relay
+   * device has no restart/heartbeat/ota channel of its own (the previous firmware
+   * subscribed exactly "<sn>-K/control/cmd"). */
+  EXPECT_EQ(OnSwitch("config"), Command::kNone);
+  EXPECT_EQ(OnSwitch("control/restart"), Command::kNone);
+  EXPECT_EQ(OnSwitch("host/heartbeat"), Command::kNone);
+  EXPECT_EQ(OnSwitch("online"), Command::kNone);
+  EXPECT_EQ(OnSwitch("notify"), Command::kNone);
 }

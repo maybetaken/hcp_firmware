@@ -23,6 +23,10 @@
 #ifdef CONFIG_HCP_PROVISION
 #include "hcp/provision/provision.h"
 #endif
+#ifdef CONFIG_HCP_ENABLE_SWITCH_CONTROL
+#include "hcp/switch/command.h"
+#include "hcp/switch/relay.h"
+#endif
 #include "hcp/registry/storage_kv.h"
 #include "hcp/registry/wire.h"
 
@@ -54,6 +58,76 @@ Schedule g_sched;
 BusHealth g_health;
 HeartbeatWatchdog g_hb;
 
+#ifdef CONFIG_HCP_ENABLE_SWITCH_CONTROL
+/*
+ * The relay outputs are a second device on the broker ("<sn>-K"), so they carry
+ * their own little world here: their own commands, their own state, their own
+ * report. They share this worker for one reason only - a relay that is switched from
+ * the MQTT session thread would be writing flash (its persisted state) from the
+ * thread that must never block, and the previous firmware's SwitchController did the
+ * same GPIO + NVS + publish sequence from its single event-loop task.
+ *
+ * Nothing here touches the Modbus bus: the relays are board GPIOs (hcp-k1/hcp-k2),
+ * not registers.
+ */
+switchctl::Relay g_relays[switchctl::kRelayCount];
+bool g_relays_ready = false;
+bool g_session_was_up = false;
+constexpr int kMaxSwitchCommands = 4;
+
+// Persisted per-relay state, under the same keys the previous firmware used for the
+// same purpose (its NVS namespace "switch_state", fields k1_state/k2_state).
+void RelayKey(int index, char* out, size_t cap) {
+  snprintk(out, cap, "relay/k%d", index + 1);
+}
+
+bool LoadRelayState(int index) {
+  char key[12];
+  RelayKey(index, key, sizeof(key));
+  char val[4];
+  return g_kv.GetString(key, val, sizeof(val)) && val[0] == '1';
+}
+
+void SaveRelayState(int index, bool on) {
+  char key[12];
+  RelayKey(index, key, sizeof(key));
+  if (!g_kv.SetString(key, on ? "1" : "0")) {
+    COL_LOGW("relay K%d switched but not persisted; it returns to %s on reboot", index + 1,
+             on ? "off" : "on");
+  }
+}
+
+/* "<sn>-K/notify": the only place Home Assistant reads relay state from
+ * (Switches.handle_notify). It is a full snapshot rather than a delta, because the
+ * plugin's own view is a dict it updates key by key - a partial report leaves the
+ * other switches showing whatever they last happened to hear. */
+void PublishRelayStates() {
+  bool states[switchctl::kRelayCount];
+  for (int i = 0; i < switchctl::kRelayCount; i++) {
+    states[i] = g_relays[i].Get();
+  }
+  char doc[80];
+  const int n = switchctl::FormatNotify(states, switchctl::kRelayCount, doc,
+                                        sizeof(doc));
+  if (n == 0) {
+    COL_LOGW("relay state document did not fit, nothing published");
+    return;
+  }
+  if (!mqtt::PublishTopic("notify", doc, static_cast<size_t>(n),
+                          mqtt::Tree::kSwitch)) {
+    COL_LOGD("relay report deferred: no session yet");
+  }
+}
+
+/* The availability document for the relay device, handed to hcp::mqtt so it goes out
+ * on every connect. Home Assistant creates the switch entities from "switch_count"
+ * and ignores the message without it (Switches.handle_online). */
+int SwitchOnlineDoc(char* buf, size_t cap) {
+  return switchctl::FormatOnline(switchctl::kRelayCount,
+                                 CONFIG_HCP_MQTT_FW_VERSION, buf, cap);
+}
+#endif  // CONFIG_HCP_ENABLE_SWITCH_CONTROL
+
 /* Scratch for one poll: the widest single read the table can ask for, and the
  * report built from it. Static rather than on the stack because this thread is the
  * only one that ever uses it, and the worker stack is 2 KB on the ESP32-C5. */
@@ -71,6 +145,7 @@ const char* Name(Command cmd) {
     case Command::kHeartbeat: return "heartbeat";
     case Command::kLed: return "led";
     case Command::kOtaStart: return "ota/start";
+    case Command::kSwitchWrite: return "switch write";
     default: return "unknown";
   }
 }
@@ -166,6 +241,51 @@ void ExecuteWrite(Slot& slot) {
   /* A slave that answers a write is alive, whatever its read history said. */
   g_health.NoteResult(req.unit_id, ok, (uint64_t)k_uptime_get());
 }
+
+#ifdef CONFIG_HCP_ENABLE_SWITCH_CONTROL
+/* "<sn>-K/control/cmd", applied here on the worker. The payload is JSON naming one or
+ * more switches, which is a different contract from the binary block the meter takes
+ * on <sn>/control/cmd - the two are kept apart by the topic tree, not by guessing
+ * from the payload shape. */
+void ExecuteSwitch(Slot& slot) {
+  switchctl::SwitchCommand cmds[kMaxSwitchCommands];
+  const int n =
+      switchctl::ParseCommands(slot.data, slot.len, cmds, kMaxSwitchCommands);
+  if (n == 0) {
+    /* Nothing usable, including for the truncated-object case: ParseCommands refuses a
+     * payload that ends mid-way rather than acting on the part it could read, because
+     * a relay controls a load and half a command is not a request anybody made. */
+    COL_LOGW("switch command of %u bytes names no switch, ignored", (unsigned)slot.len);
+    return;
+  }
+  if (!g_relays_ready) {
+    COL_LOGW("switch command refused: relays unavailable");
+    return;
+  }
+
+  for (int i = 0; i < n; i++) {
+    const unsigned index = cmds[i].index;
+    if (index < 1 || index > switchctl::kRelayCount) {
+      COL_LOGW("switch_%u is not an output of this board [1, %d], ignored", index,
+               switchctl::kRelayCount);
+      continue;
+    }
+    switchctl::Relay& relay = g_relays[index - 1];
+    if (relay.Get() != cmds[i].on) {
+      relay.Set(cmds[i].on);
+      SaveRelayState(static_cast<int>(index) - 1, cmds[i].on);
+    }
+    COL_LOGI("relay K%u -> %s", index, cmds[i].on ? "on" : "off");
+  }
+  if (n == kMaxSwitchCommands) {
+    COL_LOGW("switch command carried at least %d keys; any further ones ignored", n);
+  }
+  /* Reported whether or not something changed: this is the point where the device
+   * answers, and staying quiet when a command matched no output would leave Home
+   * Assistant showing whatever the UI last guessed. */
+  PublishRelayStates();
+}
+#endif  // CONFIG_HCP_ENABLE_SWITCH_CONTROL
 
 /* One segment, one transaction, one report. The payload is the raw block, in the
  * byte order Home Assistant decodes - registry::PackRegisters owns that layout and
@@ -301,6 +421,18 @@ void Handle(Slot& slot) {
 #endif
       return;
 
+    /* The case is compiled whether or not relay control is in the build, because
+     * Classify() claims the suffix either way - so a device that receives a switch
+     * command it cannot act on says so instead of going quiet. */
+    case Command::kSwitchWrite:
+#ifdef CONFIG_HCP_ENABLE_SWITCH_CONTROL
+      ExecuteSwitch(slot);
+#else
+      COL_LOGW("switch command received but relay control is not compiled in "
+               "(CONFIG_HCP_ENABLE_SWITCH_CONTROL=n)");
+#endif
+      return;
+
     default:
       return;
   }
@@ -333,6 +465,25 @@ void Worker(void* /*arg*/, void* /*p2*/, void* /*p3*/) {
   g_sched.Rebuild(g_table, (uint64_t)k_uptime_get(),
                   CONFIG_HCP_COLLECTOR_POLL_MS);
 
+#ifdef CONFIG_HCP_ENABLE_SWITCH_CONTROL
+  /* Relays come up in the state they were left in, before anything is reported - the
+   * previous firmware's SwitchController::init() did the same (NVS load, then
+   * setGpioLevel), and the order is what makes the first report truthful about the
+   * pins rather than about what Home Assistant last asked for. */
+  int ready = 0;
+  for (int i = 0; i < switchctl::kRelayCount; i++) {
+    if (!g_relays[i].Open(i)) {
+      COL_LOGW("relay K%d unavailable", i + 1);
+      continue;
+    }
+    const bool on = LoadRelayState(i);
+    g_relays[i].Set(on);
+    COL_LOGI("relay K%d restored to %s", i + 1, on ? "on" : "off");
+    ready++;
+  }
+  g_relays_ready = ready == switchctl::kRelayCount;
+#endif
+
   while (true) {
     Slot* slot = nullptr;
     if (k_msgq_get(&inbox, &slot,
@@ -360,6 +511,20 @@ void Worker(void* /*arg*/, void* /*p2*/, void* /*p3*/) {
         Poll(index);
       }
     }
+
+#ifdef CONFIG_HCP_ENABLE_SWITCH_CONTROL
+    /* Re-report the relay states each time the session comes up. Home Assistant
+     * subscribes QoS 0 and keeps no queue for a device that was away, so without this
+     * its switches would show whatever they remembered until the next command - and
+     * "the UI and the load disagree" is exactly the failure an owner cannot see.
+     * Detected as an edge rather than published every tick: the topic carries state,
+     * not a heartbeat. */
+    const bool link_up = mqtt::IsConnected();
+    if (link_up && !g_session_was_up && g_relays_ready) {
+      PublishRelayStates();
+    }
+    g_session_was_up = link_up;
+#endif
   }
 }
 
@@ -381,23 +546,49 @@ bool Start() {
   struct Bind {
     const char* suffix;
     Command cmd;
+    mqtt::Tree tree;
   };
   const Bind binds[] = {
-      {"config", Command::kConfig},
-      {"control/cmd", Command::kModbusWrite},
-      {"control/restart", Command::kRestart},
-      {"control/reconfig", Command::kReconfig},
-      {"control/led", Command::kLed},
-      {"host/heartbeat", Command::kHeartbeat},
-      {"ota/start", Command::kOtaStart},
+      {"config", Command::kConfig, mqtt::Tree::kMain},
+      {"control/cmd", Command::kModbusWrite, mqtt::Tree::kMain},
+      {"control/restart", Command::kRestart, mqtt::Tree::kMain},
+      {"control/reconfig", Command::kReconfig, mqtt::Tree::kMain},
+      {"control/led", Command::kLed, mqtt::Tree::kMain},
+      {"host/heartbeat", Command::kHeartbeat, mqtt::Tree::kMain},
+      {"ota/start", Command::kOtaStart, mqtt::Tree::kMain},
+#ifdef CONFIG_HCP_ENABLE_SWITCH_CONTROL
+      /* The relay device's channel, which shares the suffix name with the meter's
+       * binary write channel and is told apart by its tree. */
+      {"control/cmd", Command::kSwitchWrite, mqtt::Tree::kSwitch},
+#endif
   };
   for (const Bind& b : binds) {
     if (!mqtt::Subscribe(b.suffix, OnMessage,
-                         reinterpret_cast<void*>(static_cast<uintptr_t>(b.cmd)))) {
+                         reinterpret_cast<void*>(static_cast<uintptr_t>(b.cmd)),
+                         b.tree)) {
       COL_LOGW("cannot subscribe to <%s>", b.suffix);
       return false;
     }
   }
+
+#ifdef CONFIG_HCP_ENABLE_SWITCH_CONTROL
+  /* Announce the relay device on every connect (hcp::mqtt sends "<sn>-K/online"
+   * itself, because the session can come up long after this call and a document
+   * published once at boot would miss every session that follows). The direct publish
+   * below covers the other order - a session that came up between mqtt::Start() and
+   * here - and is harmless when it fails, since retained messages are replaced. */
+  if (!mqtt::AnnounceDevice(mqtt::Tree::kSwitch, SwitchOnlineDoc)) {
+    COL_LOGW("cannot announce the relay device on <sn>-K/online");
+    return false;
+  }
+  char online[80];
+  const int online_len = SwitchOnlineDoc(online, sizeof(online));
+  if (online_len > 0 &&
+      !mqtt::PublishRetainedTopic("online", online, static_cast<size_t>(online_len),
+                                  mqtt::Tree::kSwitch)) {
+    COL_LOGD("relay device not announced yet: no session (will be sent on connect)");
+  }
+#endif
 
   k_thread_create(&worker_thread, worker_stack, K_THREAD_STACK_SIZEOF(worker_stack),
                   Worker, nullptr, nullptr, nullptr,

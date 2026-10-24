@@ -330,12 +330,26 @@ Color AlertColor() {
   return ((12 - g_alert_ticks) % 4) < 2 ? c : kLedOff;
 }
 
+/* One frame to the strip.
+ *
+ * There is no log line here on purpose: hcp::led logs the frame it actually sends
+ * (with the brightness already applied), which is the wire-level truth, and printing
+ * the requested colour as well doubles the lines for the same event - four a second
+ * while the provisioning blink runs, on a board whose log ring is 1 KB. The one thing
+ * this function had to establish - "is the strip being told to change at all" - is
+ * answered by that flush line, and it was: the C3 alternates rgb(6,15,25) and
+ * rgb(0,0,0) every 250 ms in blue-fast, so a steady light means the state's pattern
+ * is steady (kGreenSolid), not a broken driver. */
+void Paint(Color c) {
+  g_strip.SetAll(c);
+  g_strip.Show();
+}
+
 void PaintLed() {
   if (!g_led_enabled) {
     // Asked to be dark: no steady pattern and no alert. The state machine keeps
     // running underneath - this function is only its output device.
-    g_strip.SetAll(kLedOff);
-    g_strip.Show();
+    Paint(kLedOff);
     return;
   }
   Color c = kLedOff;
@@ -347,14 +361,29 @@ void PaintLed() {
   } else {
     c = SteadyColor();
   }
-  g_strip.SetAll(c);
-  g_strip.Show();
+  Paint(c);
 }
 
 /* ---- 50 ms tick: button timing + LED ---- */
 
 void TickFn(struct k_work*) {
   g_tick_count++;
+
+  /* One line a second, at debug level. Two separate field reports - "the LED never
+   * blinks" and "the button does nothing" - are both, if true, symptoms of this
+   * tick not running: it is the only thing that repaints the strip and the only
+   * thing that asks the button what it thinks. They cannot be told apart from
+   * outside the box, so the log answers it: a count that advances means the repaint
+   * and the button sampling are both alive and the cause is somewhere else (a steady
+   * green, for instance, is the correct pattern when everything is connected). A
+   * count that stops names the culprit directly - the system workqueue is a
+   * cooperative thread here, so one work item that blocks takes this tick and the
+   * button debounce down with it. */
+  if ((g_tick_count % 20) == 0) {
+    HCP_LOGD(hcp::log::kDomainDevice, "provision: tick %u led=%s button=%d",
+             (unsigned)g_tick_count, PatternName(g_pattern),
+             input::Button::Pressed() ? 1 : 0);
+  }
 
   input::PressClassifier::Action act =
       g_press.Update(input::Button::Pressed(),

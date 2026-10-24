@@ -14,10 +14,11 @@
 #   ./build.sh <board> --bench       # bench/HIL image: LED cycle + Modbus poll,
 #                                    # provisioning off (see CONFIG_HCP_BENCH)
 #   ./build.sh <board> --rs485       # RS485 uart1 variant (per-board overlay)
-#   ./build.sh <board> --version 0.2.0
-#                                  # stamp this build as 0.2.0: both the version
+#   ./build.sh <board> --version 2.0.3.14
+#                                  # stamp this build as 2.0.3.14: both the version
 #                                  # the application reports and the version
-#                                  # imgtool writes into the MCUboot image header.
+#                                  # imgtool writes into the MCUboot image header
+#                                  # (spelled 2.0.3+14 there - see the note below).
 #                                  # Goes to its own build/<slug>_version dir, and
 #                                  # zephyr/zephyr.signed.bin is what an update
 #                                  # server should serve.
@@ -146,8 +147,19 @@ build_one() {
     mkdir -p "${APP_DIR}/build"
     : > "$FRAG"
     if [ -n "$VERSION" ]; then
+      # The application reports the version as written; the MCUboot image header has
+      # to be told the same number in the only spelling imgtool accepts. Its regex
+      # (boot/signtools/imgtool/version.py: ^maj(.min(.rev(+build)?)?)?$) rejects a
+      # dotted fourth field, and the header really does carry one - major(B) minor(B)
+      # revision(H) build(I) - so "2.0.3.14" has to arrive as "2.0.3+14". Without
+      # this a four-part --version fails the build inside imgtool with
+      # "Invalid version number, should be maj.min.rev+build".
+      local IMGTOOL_VERSION="$VERSION"
+      if [[ "$VERSION" =~ ^([0-9]+\.[0-9]+\.[0-9]+)\.([0-9]+)$ ]]; then
+        IMGTOOL_VERSION="${BASH_REMATCH[1]}+${BASH_REMATCH[2]}"
+      fi
       printf 'CONFIG_APP_VERSION="%s"\nCONFIG_MCUBOOT_IMGTOOL_SIGN_VERSION="%s"\n' \
-        "$VERSION" "$VERSION" >> "$FRAG"
+        "$VERSION" "$IMGTOOL_VERSION" >> "$FRAG"
     fi
     if [ "$SIGNED" = "1" ]; then
       printf 'CONFIG_MCUBOOT_GENERATE_UNSIGNED_IMAGE=n\nCONFIG_MCUBOOT_SIGNATURE_KEY_FILE="keys/%s.pem"\n' \

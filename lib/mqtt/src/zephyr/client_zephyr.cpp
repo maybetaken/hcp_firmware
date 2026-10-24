@@ -71,17 +71,25 @@ atomic_t broker_dirty;
 CommandHandler cmd_cb;
 void* cmd_user;
 
-/* One handler per topic suffix under "<sn>/". The client subscribes to the whole
- * "<sn>/#" tree once, so a route may be added after the session is up (a message
- * published before that is simply missed: QoS 0, no broker-side queue). */
+/* One handler per topic suffix under one device prefix. The client subscribes the
+ * whole tree of each identity ("<sn>/#" and "<sn>-K/#"), so a route may be added
+ * after the session is up (a message published before that is simply missed: QoS 0,
+ * no broker-side queue). */
 struct Route {
   char suffix[kMaxSuffixLen];
   MessageHandler cb;
   void* user;
+  Tree tree;
 };
 Route routes[CONFIG_HCP_MQTT_MAX_ROUTES];
 int route_count;
 StateExtraHandler state_extra;
+
+/* Second identities to announce on every new session, as "<prefix>/online": the
+ * document builder, indexed by Tree. Announcing from here rather than once at boot is
+ * the whole point - a retained message published while the session was down never
+ * reaches the broker, and Home Assistant builds the switch entities from it. */
+DocumentFn announce_doc[2];
 bool waiting_for_broker_logged;  // so the poll loop does not spam the console
 Backoff backoff(CONFIG_HCP_MQTT_RETRY_BASE_MS, CONFIG_HCP_MQTT_RETRY_CAP_MS);
 
@@ -96,15 +104,28 @@ mqtt_utf8 Utf8(const char* s) {
   return u;
 }
 
-/* Every topic is "<sn>/<suffix>", like the reference firmware. The serial number
+/* Every topic is "<prefix>/<suffix>", like the reference firmware. The serial number
  * itself is hcp::identity's business - the same string names this device on the
  * broker and on the LAN (DHCP hostname). */
-bool FullTopic(const char* suffix, char* out, size_t cap) {
+bool PrefixFor(Tree tree, char* out, size_t cap) {
   const char* sn = identity::serial_number();
-  if (sn[0] == '\0' || suffix == nullptr) {
+  if (sn[0] == '\0') {
     return false;
   }
-  const int n = snprintk(out, cap, "%s/%s", sn, suffix);
+  /* "-K" is the relay outputs' own identity, a sibling of the device rather than a
+   * part of it: Home Assistant creates a separate switch entity set from
+   * "<sn>-K/online" and only subscribes "<sn>/#" for the meter device. */
+  const int n = (tree == Tree::kSwitch) ? snprintk(out, cap, "%s-K", sn)
+                                       : snprintk(out, cap, "%s", sn);
+  return n > 0 && static_cast<size_t>(n) < cap;
+}
+
+bool FullTopic(Tree tree, const char* suffix, char* out, size_t cap) {
+  char prefix[kMaxTopicLen];
+  if (!PrefixFor(tree, prefix, sizeof(prefix)) || suffix == nullptr) {
+    return false;
+  }
+  const int n = snprintk(out, cap, "%s/%s", prefix, suffix);
   return n > 0 && static_cast<size_t>(n) < cap;
 }
 
@@ -149,20 +170,34 @@ bool ResolveBroker() {
 }
 
 void Subscribe() {
-  static mqtt_topic cmd_topic;
-  static char cmd_name[kMaxTopicLen];
   static mqtt_subscription_list list;
-  /* The whole tree, not one command topic: Home Assistant addresses a device over
-   * several suffixes (<sn>/config, <sn>/control/cmd, ...) and dispatch happens
-   * locally against the route table. */
-  if (!FullTopic("#", cmd_name, sizeof(cmd_name))) {
+  /* The whole tree of each identity, not one command topic: Home Assistant addresses
+   * a device over several suffixes (<sn>/config, <sn>/control/cmd, <sn>-K/control/cmd
+   * ...) and dispatch happens locally against the route table. Two wildcards in one
+   * SUBSCRIBE because "<sn>-K/#" is not covered by "<sn>/#" - the '#' matches the
+   * remaining levels of its own tree, and "-K" is one level up. */
+  static mqtt_topic topics[2];
+  static char name_main[kMaxTopicLen];
+  static char name_switch[kMaxTopicLen];
+  if (!FullTopic(Tree::kMain, "#", name_main, sizeof(name_main))) {
     MQTT_LOGW("subscription topic too long");
     return;
   }
-  cmd_topic.topic = Utf8(cmd_name);
-  cmd_topic.qos = MQTT_QOS_0_AT_MOST_ONCE;
-  list.list = &cmd_topic;
+  topics[0].topic = Utf8(name_main);
+  topics[0].qos = MQTT_QOS_0_AT_MOST_ONCE;
+  list.list = &topics[0];
   list.list_count = 1;
+
+  if (announce_doc[static_cast<int>(Tree::kSwitch)] != nullptr) {
+    if (!FullTopic(Tree::kSwitch, "#", name_switch, sizeof(name_switch))) {
+      MQTT_LOGW("switch subscription topic too long");
+    } else {
+      topics[1].topic = Utf8(name_switch);
+      topics[1].qos = MQTT_QOS_0_AT_MOST_ONCE;
+      list.list = topics;
+      list.list_count = 2;
+    }
+  }
   list.message_id = message_id++;
   int rc = mqtt_subscribe(&cli, &list);
   if (rc != 0) {
@@ -175,7 +210,7 @@ void Subscribe() {
  * we vanish without a clean disconnect. */
 void PublishOnline() {
   char topic[kMaxTopicLen];
-  if (!FullTopic(CONFIG_HCP_MQTT_TOPIC_ONLINE, topic, sizeof(topic))) {
+  if (!FullTopic(Tree::kMain, CONFIG_HCP_MQTT_TOPIC_ONLINE, topic, sizeof(topic))) {
     return;
   }
   const mqtt_publish_param param = {};
@@ -192,12 +227,53 @@ void PublishOnline() {
   }
 }
 
+/* The second identities, on the same connect. Their document comes from the
+ * application because it is the one that knows how many relays this board has -
+ * Home Assistant's Switches.handle_online reads "switch_count" from it and grows the
+ * entity set to match, so a device that never announces simply has no switches. */
+void PublishAnnouncements() {
+  static const Tree trees[] = {Tree::kSwitch};
+  for (const Tree tree : trees) {
+    const DocumentFn doc = announce_doc[static_cast<int>(tree)];
+    if (doc == nullptr) {
+      continue;
+    }
+    char payload[kMaxPayloadLen];
+    const int n = doc(payload, sizeof(payload));
+    if (n <= 0 || static_cast<size_t>(n) >= sizeof(payload)) {
+      MQTT_LOGW("announcement document for tree %d unavailable", static_cast<int>(tree));
+      continue;
+    }
+    char topic[kMaxTopicLen];
+    if (!FullTopic(tree, CONFIG_HCP_MQTT_TOPIC_ONLINE, topic, sizeof(topic))) {
+      continue;
+    }
+    mqtt_publish_param p = {};
+    p.message.topic.topic = Utf8(topic);
+    p.message.topic.qos = MQTT_QOS_0_AT_MOST_ONCE;
+    p.message.payload.data = reinterpret_cast<uint8_t*>(payload);
+    p.message.payload.len = static_cast<size_t>(n);
+    p.retain_flag = 1U;
+    p.message_id = message_id++;
+    if (mqtt_publish(&cli, &p) != 0) {
+      MQTT_LOGW("announcement on %s failed", topic);
+    }
+  }
+}
+
 /* Liveness signal that Home Assistant actually honours: the integration clears the
  * device's diagnostics and data 120 s after the last <sn>/diagnostics message, and
  * receiving one resets that timer. It also gives a debug subscriber something to
  * look at between events. */
 void PublishStateHeartbeat() {
-  char payload[128];
+  /* 192, and the arithmetic is worth stating because this document grows by whatever
+   * the extra handler adds: the fixed part is 38 bytes at its widest
+   * ({"up":4294967295,"fw":"255.255.255.255"), a 32-character ssid plus rssi is 49,
+   * "led" is 12 and an ota status of 47 is 56 - 156 in total, and an overflow here
+   * is not a crash but a silently missing field, which is the kind of bug that is
+   * only ever found by someone noticing Home Assistant has no signal sensor. It sits
+   * on the session thread's own stack (4 KB), so the bytes are not SRAM budget. */
+  char payload[192];
 
   int n = snprintk(payload, sizeof(payload), "{\"up\":%u,\"fw\":\"%s\"",
                    static_cast<unsigned>(k_uptime_get() / 1000),
@@ -221,13 +297,14 @@ void PublishStateHeartbeat() {
 }
 
 /* Queue a publish for the session thread; only that thread may touch the client. */
-bool Enqueue(const char* topic, const void* payload, size_t len, bool retain) {
+bool Enqueue(const char* topic, const void* payload, size_t len, bool retain,
+             Tree tree) {
   if (topic == nullptr || payload == nullptr || len == 0 ||
       len > kMaxPayloadLen || !connected) {
     return false;
   }
   TxItem item;
-  if (!FullTopic(topic, item.topic, sizeof(item.topic))) {
+  if (!FullTopic(tree, topic, item.topic, sizeof(item.topic))) {
     MQTT_LOGW("topic too long: %s", topic);
     return false;
   }
@@ -253,21 +330,39 @@ void DiscardPayload(uint32_t len) {
   }
 }
 
-/* Strip "<sn>/" from an inbound topic. The buffer comes straight off the packet and
- * is NOT NUL terminated, so every comparison here is length based. */
-bool TopicSuffix(const mqtt_utf8& topic, const char** out, size_t* out_len) {
+/* Strip the device prefix from an inbound topic and say which identity it was
+ * addressed to. The buffer comes straight off the packet and is NOT NUL terminated,
+ * so every comparison here is length based. */
+bool TopicSuffix(const mqtt_utf8& topic, Tree* tree, const char** out,
+                 size_t* out_len) {
   const char* sn = identity::serial_number();
   const size_t sn_len = strlen(sn);
-  const size_t prefix = sn_len + 1; /* "<sn>/" */
-  if (topic.size <= prefix || sn_len == 0) {
+  if (sn_len == 0 || topic.size <= sn_len) {
     return false;
   }
   const char* t = reinterpret_cast<const char*>(topic.utf8);
-  if (memcmp(t, sn, sn_len) != 0 || t[sn_len] != '/') {
+  if (memcmp(t, sn, sn_len) != 0) {
     return false; /* somebody else's topic on a shared broker */
   }
-  *out = t + prefix;
-  *out_len = static_cast<size_t>(topic.size - prefix);
+  /* Two shapes, and they cannot be confused: the device's own tree has '/' straight
+   * after the serial, the relay tree has the "-K" suffix there. Checked in that order
+   * so "<sn>-K/x" is never mistaken for "<sn>/...". */
+  const char* rest = nullptr;
+  size_t rest_len = 0;
+  if (topic.size > sn_len + 3 && t[sn_len] == '-' && t[sn_len + 1] == 'K' &&
+      t[sn_len + 2] == '/') {
+    *tree = Tree::kSwitch;
+    rest = t + sn_len + 3;
+    rest_len = static_cast<size_t>(topic.size - (sn_len + 3));
+  } else if (t[sn_len] == '/') {
+    *tree = Tree::kMain;
+    rest = t + sn_len + 1;
+    rest_len = static_cast<size_t>(topic.size - (sn_len + 1));
+  } else {
+    return false;
+  }
+  *out = rest;
+  *out_len = rest_len;
   return true;
 }
 
@@ -282,7 +377,8 @@ void HandleInbound(const mqtt_publish_param& pub) {
   char suffix_copy[kMaxSuffixLen];
   const char* suffix = nullptr;
   size_t suffix_len = 0;
-  if (!TopicSuffix(pub.message.topic.topic, &suffix, &suffix_len)) {
+  Tree tree = Tree::kMain;
+  if (!TopicSuffix(pub.message.topic.topic, &tree, &suffix, &suffix_len)) {
     /* Still consume the payload, or the stream desynchronises. */
     if (len > 0) {
       DiscardPayload(len);
@@ -318,14 +414,20 @@ void HandleInbound(const mqtt_publish_param& pub) {
 
   for (int i = 0; i < route_count; i++) {
     const size_t want = strlen(routes[i].suffix);
-    if (want == suffix_len && memcmp(routes[i].suffix, suffix_copy, want) == 0) {
+    /* The tree is part of the match, not a detail: "control/cmd" means the Modbus
+     * write channel under <sn> and the relay command under <sn>-K, and answering a
+     * relay request with a register write would be exactly the kind of silent
+     * confusion this dispatch exists to avoid. */
+    if (routes[i].tree == tree && want == suffix_len &&
+        memcmp(routes[i].suffix, suffix_copy, want) == 0) {
       if (routes[i].cb != nullptr) {
         routes[i].cb(buf, len, routes[i].user);
       }
       return;
     }
   }
-  MQTT_LOGD("%u bytes on unhandled topic '%s'", (unsigned)len, suffix_copy);
+  MQTT_LOGD("%u bytes on unhandled topic '%s%s'", (unsigned)len,
+            tree == Tree::kSwitch ? "<sn>-K/" : "<sn>/", suffix_copy);
 }
 
 /* Sends everything queued by other threads. Only called from the session thread,
@@ -358,6 +460,7 @@ void OnEvent(struct mqtt_client* /*client*/, const struct mqtt_evt* evt) {
         MQTT_LOGI("session up with %s:%u", host, static_cast<unsigned>(port));
         Subscribe();
         PublishOnline();
+        PublishAnnouncements();
         provision::NotifyServiceReady();
       } else {
         /* A rejected CONNACK is usually a wrong account or a client-id clash -
@@ -397,7 +500,8 @@ void InitClient() {
   static mqtt_topic will_topic;
   static mqtt_utf8 will_message;
   static char will_name[kMaxTopicLen];
-  if (FullTopic(CONFIG_HCP_MQTT_TOPIC_ONLINE, will_name, sizeof(will_name))) {
+  if (FullTopic(Tree::kMain, CONFIG_HCP_MQTT_TOPIC_ONLINE, will_name,
+                sizeof(will_name))) {
     will_topic.topic = Utf8(will_name);
     will_topic.qos = MQTT_QOS_0_AT_MOST_ONCE;
     will_message = Utf8("offline");
@@ -590,12 +694,13 @@ bool IsConnected() { return connected; }
 
 const char* serial_number() { return identity::serial_number(); }
 
-bool PublishTopic(const char* topic, const void* payload, size_t len) {
-  return Enqueue(topic, payload, len, false);
+bool PublishTopic(const char* topic, const void* payload, size_t len, Tree tree) {
+  return Enqueue(topic, payload, len, false, tree);
 }
 
-bool PublishRetainedTopic(const char* topic, const void* payload, size_t len) {
-  return Enqueue(topic, payload, len, true);
+bool PublishRetainedTopic(const char* topic, const void* payload, size_t len,
+                          Tree tree) {
+  return Enqueue(topic, payload, len, true, tree);
 }
 
 bool Publish(const void* payload, size_t len) {
@@ -616,7 +721,7 @@ void SetCommandHandler(CommandHandler cb, void* user) {
             user);
 }
 
-bool Subscribe(const char* suffix, MessageHandler cb, void* user) {
+bool Subscribe(const char* suffix, MessageHandler cb, void* user, Tree tree) {
   if (suffix == nullptr || cb == nullptr ||
       strlen(suffix) >= kMaxSuffixLen) {
     return false;
@@ -635,8 +740,21 @@ bool Subscribe(const char* suffix, MessageHandler cb, void* user) {
   r.suffix[sizeof(r.suffix) - 1] = '\0';
   r.cb = cb;
   r.user = user;
+  r.tree = tree;
   route_count++;
   return true;
+}
+
+bool AnnounceDevice(Tree tree, DocumentFn doc) {
+  const int i = static_cast<int>(tree);
+  if (i < 0 || static_cast<size_t>(i) >= sizeof(announce_doc) / sizeof(announce_doc[0])) {
+    return false;
+  }
+  /* Registering an announcement also subscribes that tree, and the subscription list
+   * is sent at connect - so like any route, this has to happen before Start() for the
+   * device to hear anything on its own topics. */
+  announce_doc[i] = doc;
+  return doc != nullptr;
 }
 
 void SetStateExtraHandler(StateExtraHandler cb) { state_extra = cb; }

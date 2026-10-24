@@ -61,19 +61,21 @@ config HCP_MQTT_TOPIC_CMD
 
 config HCP_MQTT_MAX_ROUTES
 	int "Number of topic suffixes a handler may be registered for"
-	default 8
+	default 10
 	help
-	  The client subscribes to "<sn>/#" once and dispatches locally, so this is how
-	  many handlers the application can register (Home Assistant uses one per
-	  function: config, the modbus write channel, restart, heartbeat, ...). A
-	  registration beyond this fails loudly at boot rather than silently ignoring
-	  the topic.
+	  The client subscribes to "<sn>/#" and "<sn>-K/#" and dispatches locally, so
+	  this is how many handlers the application can register (Home Assistant uses one
+	  per function: config, the modbus write channel, the relay channel, restart,
+	  heartbeat, ...). A registration beyond this fails loudly at boot rather than
+	  silently ignoring the topic.
 
-	  The ESP32-C5 used to default this to 1 to save SRAM while the collector was
-	  disabled there; the collector now registers seven suffixes, and a smaller table
-	  on that board would not have been a saving - it would have made the collector
-	  refuse to start, which the boot log says but which nobody reads on a board that
-	  is not at the bench. One entry costs 24 bytes.
+	  The count is not free to guess: nine are in use - seven for the meter device
+	  (config, control/cmd, control/restart, control/reconfig, control/led,
+	  host/heartbeat, ota/start), one for <sn>/cmd and one for <sn>-K/control/cmd -
+	  so two are headroom. The ESP32-C5 used to default this to 1 while its collector
+	  was disabled, which was not a saving: it made the collector refuse to start.
+	  One entry is 36 bytes (a 24-byte suffix, the callback, its user pointer and the
+	  topic tree it belongs to).
 
 config HCP_MQTT_MAX_INBOUND
 	int "Largest inbound payload kept (bytes)"

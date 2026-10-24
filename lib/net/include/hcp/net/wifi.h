@@ -34,6 +34,21 @@ struct ScanResult {
   uint8_t channel;
 };
 
+/*
+ * The AP the station is actually on, straight from the driver.
+ *
+ * Not the same thing as the credentials we asked for: this is what the association
+ * became, and the rssi is live rather than remembered from the scan that found it.
+ * Home Assistant's diagnostics sensors read exactly these two (ssid, rssi), so the
+ * value has to come from the driver and not from a cached copy that would silently
+ * go stale when the AP changes channel or the signal drops.
+ */
+struct LinkInfo {
+  char ssid[33];
+  int8_t rssi;      // dBm, meaningful only while associated
+  uint8_t channel;
+};
+
 using WifiCallback = void (*)(WifiEvent evt, void* user);
 // Scan callback: invoked once per AP, then once with count==0 to signal done.
 using ScanCallback = void (*)(const ScanResult* result, void* user);
@@ -68,6 +83,17 @@ bool LinkActive();
 // id / topic prefix) before a serial number is provisioned. False when the
 // interface is not up yet.
 bool GetHwAddr(uint8_t out[6]);
+
+/*
+ * Read the associated AP from the driver (NET_REQUEST_WIFI_IFACE_STATUS).
+ *
+ * False when there is no link, the interface is not up, or the driver does not
+ * implement the status call. Deliberately not "true with zeroes": a caller showing
+ * these on the network needs to know the difference between "no signal reading" and
+ * "signal reading of zero", which is a value rssi can legitimately almost never
+ * take but ssid certainly can.
+ */
+bool GetLinkInfo(LinkInfo* out);
 
 }  // namespace wifi
 }  // namespace net

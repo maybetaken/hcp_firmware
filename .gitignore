@@ -19,3 +19,6 @@ keys/
 
 # tools/make_sn_bin.py writes the blob here by default; it carries a serial number and is regenerable
 /sn.bin
+
+# python bytecode from the tools/ scripts (mqtt_watch is imported by ad-hoc publishers)
+__pycache__/

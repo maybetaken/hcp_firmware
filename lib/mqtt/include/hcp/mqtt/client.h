@@ -42,6 +42,22 @@ constexpr size_t kMaxInboundLen = CONFIG_HCP_MQTT_MAX_INBOUND;
 // announces as its DHCP hostname.
 const char* serial_number();
 
+/*
+ * Which topic tree a message belongs to.
+ *
+ * The device has two identities on the broker. Its own is "<sn>", and its relay
+ * outputs are addressed as "<sn>-K" - a SIBLING of "<sn>", not a child, so
+ * "<sn>/#" does not cover it and the switch device needs its own subscription. The
+ * suffix "-K" is not this module's invention: it is what the previous firmware used
+ * (main/solar_manager.cpp: _switch_topic_prefix = _serial_number + "-K") and what
+ * Home Assistant's Switches plugin matches on (plugins/Switches.py: ATTACHED_SUFFIX
+ * = "-K"), so changing it silently un-pairs the two.
+ */
+enum class Tree : uint8_t {
+  kMain = 0,   // "<sn>/..."
+  kSwitch,     // "<sn>-K/..."
+};
+
 // Learn or change the broker endpoint (host is a dotted-IPv4 string or a
 // hostname). Persisted so a reboot keeps it; empty host means "not known yet"
 // and the client keeps waiting instead of retrying forever.
@@ -58,13 +74,15 @@ bool IsConnected();
 // Publish on the configured state/telemetry topic. Returns false when there is
 // no session - the caller does not need to retry, the loop reconnects anyway.
 bool Publish(const void* payload, size_t len);
-bool PublishTopic(const char* topic, const void* payload, size_t len);
+bool PublishTopic(const char* topic, const void* payload, size_t len,
+                  Tree tree = Tree::kMain);
 
 // Same, but with the MQTT retain flag: the broker keeps the last value, so a
 // client that subscribes later (Home Assistant restart, a debug panel hitting
 // "listen") sees the current state immediately instead of waiting for the next
 // event. Used for the availability topic.
-bool PublishRetainedTopic(const char* topic, const void* payload, size_t len);
+bool PublishRetainedTopic(const char* topic, const void* payload, size_t len,
+                          Tree tree = Tree::kMain);
 
 // Command topic callback. Runs on the session thread: keep it short, and do not
 // block on networking from here.
@@ -88,7 +106,23 @@ void SetCommandHandler(CommandHandler cb, void* user = nullptr);
  */
 using MessageHandler = void (*)(const uint8_t* payload, size_t len, void* user);
 constexpr size_t kMaxSuffixLen = 24;
-bool Subscribe(const char* suffix, MessageHandler cb, void* user = nullptr);
+bool Subscribe(const char* suffix, MessageHandler cb, void* user = nullptr,
+               Tree tree = Tree::kMain);
+
+/*
+ * Announce a second identity on every new session: "<prefix>/online", retained, with
+ * the JSON document the provider writes.
+ *
+ * This exists because the relay outputs are a device of their own to Home Assistant,
+ * which creates their entities from that document (Switches.handle_online reads
+ * "switch_count" out of it and grows the device to match) - so it has to be repeated
+ * on every connect like the main availability message, and hcp::mqtt cannot know how
+ * many relays a board has. Unlike <sn>/online there is no last-will for it: Zephyr's
+ * client has room for exactly one will topic, and that one keeps the main
+ * availability message honest.
+ */
+using DocumentFn = int (*)(char* buf, size_t cap);
+bool AnnounceDevice(Tree tree, DocumentFn doc);
 
 // Extra fields for the periodic <sn>/state document. The provider writes a JSON
 // fragment that starts with ',' (e.g. ,"ota":"updating") or returns 0 when it has

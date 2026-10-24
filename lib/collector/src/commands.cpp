@@ -20,27 +20,32 @@ namespace {
 struct Entry {
   const char* suffix;
   Command cmd;
+  mqtt::Tree tree;
 };
 
 const Entry kTable[] = {
-    {"config", Command::kConfig},
-    {"control/cmd", Command::kModbusWrite},
-    {"control/restart", Command::kRestart},
-    {"control/reconfig", Command::kReconfig},
-    {"control/led", Command::kLed},
-    {"host/heartbeat", Command::kHeartbeat},
-    {"ota/start", Command::kOtaStart},
+    {"config", Command::kConfig, mqtt::Tree::kMain},
+    {"control/cmd", Command::kModbusWrite, mqtt::Tree::kMain},
+    {"control/restart", Command::kRestart, mqtt::Tree::kMain},
+    {"control/reconfig", Command::kReconfig, mqtt::Tree::kMain},
+    {"control/led", Command::kLed, mqtt::Tree::kMain},
+    {"host/heartbeat", Command::kHeartbeat, mqtt::Tree::kMain},
+    {"ota/start", Command::kOtaStart, mqtt::Tree::kMain},
+    /* The relay device's own tree. Only this one suffix is claimed: Home Assistant
+     * publishes nothing else here, and the previous firmware subscribed exactly
+     * "<sn>-K/control/cmd" (main/solar_manager.cpp:206). */
+    {"control/cmd", Command::kSwitchWrite, mqtt::Tree::kSwitch},
 };
 
 }  // namespace
 
-Command Classify(const char* suffix, size_t len) {
+Command Classify(const char* suffix, size_t len, mqtt::Tree tree) {
   if (suffix == nullptr) {
     return Command::kNone;
   }
   for (const Entry& e : kTable) {
     const size_t want = strlen(e.suffix);
-    if (want == len && memcmp(e.suffix, suffix, want) == 0) {
+    if (e.tree == tree && want == len && memcmp(e.suffix, suffix, want) == 0) {
       return e.cmd;
     }
   }

@@ -58,9 +58,10 @@ target_include_directories(test_serial PRIVATE ${T}/include)
 target_link_libraries(test_serial PRIVATE GTest::gtest_main pthread)
 add_test(NAME test_serial COMMAND test_serial)
 
-# ---- hcp::switchctl (posix fake) ----
+# ---- hcp::switchctl (posix fake + the "<sn>-K" JSON contract) ----
 set(W ${HCP_ROOT}/lib/switch)
-add_executable(test_switch ${W}/src/posix/relay_posix.cpp ${CMAKE_CURRENT_LIST_DIR}/test_switch.cpp)
+add_executable(test_switch ${W}/src/posix/relay_posix.cpp ${W}/src/command.cpp
+              ${CMAKE_CURRENT_LIST_DIR}/test_switch.cpp)
 target_include_directories(test_switch PRIVATE ${W}/include)
 target_link_libraries(test_switch PRIVATE GTest::gtest_main)
 add_test(NAME test_switch COMMAND test_switch)
@@ -108,7 +109,7 @@ set(CC ${HCP_ROOT}/lib/collector)
 add_executable(test_collector ${CC}/src/commands.cpp
               ${CMAKE_CURRENT_LIST_DIR}/test_collector.cpp)
 target_include_directories(test_collector PRIVATE
-  ${CC}/include ${HCP_ROOT}/lib/registry/include)
+  ${CC}/include ${HCP_ROOT}/lib/registry/include ${HCP_ROOT}/lib/mqtt/include)
 target_link_libraries(test_collector PRIVATE GTest::gtest_main)
 add_test(NAME test_collector COMMAND test_collector)
 

@@ -231,6 +231,38 @@ bool GetHwAddr(uint8_t out[6]) {
   return true;
 }
 
+/* The one driver call that carries both what this module needs for LinkActive()
+ * and what the product reports (ssid, rssi) - kept next to each other on purpose so
+ * the two cannot drift into asking the driver in different ways. */
+bool GetLinkInfo(LinkInfo* out) {
+  if (g.iface == nullptr || out == nullptr) {
+    return false;
+  }
+  struct wifi_iface_status status = {};
+  if (net_mgmt(NET_REQUEST_WIFI_IFACE_STATUS, g.iface, &status, sizeof(status)) !=
+      0) {
+    return false;
+  }
+  if (status.state == WIFI_STATE_INACTIVE ||
+      status.state == WIFI_STATE_DISCONNECTED) {
+    return false;
+  }
+  /* An empty ssid means the driver has no association to describe yet, which is not
+   * a reading a caller should be shown as "connected to ''". */
+  if (status.ssid_len == 0) {
+    return false;
+  }
+  size_t n = status.ssid_len;
+  if (n >= sizeof(out->ssid)) {
+    n = sizeof(out->ssid) - 1;
+  }
+  memcpy(out->ssid, status.ssid, n);
+  out->ssid[n] = '\0';
+  out->rssi = static_cast<int8_t>(status.rssi);
+  out->channel = static_cast<uint8_t>(status.channel);
+  return true;
+}
+
 bool LinkActive() {
   if (g.iface == nullptr) {
     return false;

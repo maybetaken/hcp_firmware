@@ -55,13 +55,22 @@ config HCP_BENCH
 	  image is running.
 
 config APP_VERSION
-	string "firmware version (dotted numeric: major.minor.patch)"
-	default "0.1.0"
+	string "firmware version (dotted numeric: major.minor.patch.build)"
+	default "2.0.3.14"
 	help
 	  The one version knob of a build. Reported on the <sn>/online topic and used
 	  by hcp::ota as "what am I running", so an update is only taken when the
-	  server offers something above it. MCUboot compares the version in the image
-	  header (CONFIG_MCUBOOT_IMGTOOL_SIGN_VERSION), not this string, so the two
-	  have to move together: ./build.sh <board> --version <x.y.z> sets both.
+	  server offers something above it (hcp::ota_client parses up to four dotted
+	  fields, so 2.0.3.14 compares correctly against an earlier 2.0.3.13).
+
+	  MCUboot compares the version in the image header
+	  (CONFIG_MCUBOOT_IMGTOOL_SIGN_VERSION), not this string, so the two have to
+	  move together: ./build.sh <board> --version <x.y.z.w> sets both. It spells
+	  the header version as x.y.z+w because that is all imgtool's regex accepts -
+	  see the note in prj.conf.
+
+	  The release line started at 2.0.0.0; it is deliberately four fields so a
+	  build number can be bumped without touching the version the hardware contract
+	  (Home Assistant's firmware sensor) sees as major.minor.patch.
 
 source "Kconfig.zephyr"
