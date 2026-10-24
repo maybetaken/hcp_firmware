@@ -40,6 +40,55 @@ HCP_SN=hcp-M1231 ./tools/ota_release.sh 2.0.3.15 hcp_c3 --bench
 a tree that does not compile. There is no git remote yet, so nothing is pushed: when
 one exists, `git push && git push --tags` after the release.
 
+## 2.0.3.19 — 2026-10-25
+
+One LED route for all three boards: the C5 and the C6 stop driving the strip over
+`worldsemi,ws2812-spi`, and the SPI2 pin groups disappear from every board's pinctrl
+with it.
+
+The reason is the second pin. The WS2812 has one wire; a SPI controller insists on
+driving a clock as well, and that pad was never free: on the C3 it landed on GPIO11,
+which is the chip's own RX (two boards dark before it moved to GPIO7), and on the C6 it
+sat on **GPIO6, which is that board's button**. The C5's GPIO9 was free only because it
+was picked by exclusion. RMT needs the data line and nothing else, so three boards now
+share one devicetree file and no board spends a pad on a signal nobody reads.
+
+Porting the driver to the other two parts turned up three differences, each read out of
+the HAL rather than assumed from the C3:
+
+| | ESP32-C3 | ESP32-C5 / C6 |
+|---|---|---|
+| symbol push register | `data_ch[ch]` | `chndata[ch].chndata` (still 32 bits: one write, one symbol) |
+| per-channel readback | `tx_conf[] / tx_status[] / tx_lim[]` | `chnconf0[] / chnstatus[] / chn_tx_lim[]` |
+| counter clock source | `RMT_CLK_SRC_APB` | `RMT_CLK_SRC_PLL_F80M` |
+
+Both clocks are 80 MHz, which is the only reason the tick arithmetic (32/64/100 ticks of
+12.5 ns) did not become per-board. The channel bound comes from the per-channel *config*
+array because the headers disagree about the data array (the C5 declares `chndata[4]`,
+`chnstatus[2]`); the resulting 2 also matches the SoC signal table, which lists TX
+signals only for channels 0 and 1.
+
+`Strip::Show()` also loses its `irq_lock()`. That blackout existed for the SPI route, where
+a gap of tens of microseconds inside a frame is read as the latch condition — the C6's
+stray green flash while violet was intended. RMT owns the waveform once started, so an
+ISR delays a frame rather than corrupting a bit in one, and keeping the lock would have
+meant running the driver's busy-wait — and its 200000-pass timeout — with interrupts off.
+
+**What this release does not do: the C6's strip still does not light.** The first run of
+this driver on C6 hardware says so plainly — `rmt ch0 never done` on every frame, with
+`limit=0x00000017` (correct), `chnstatus=0x00018000` and no done bit. Decoding that word
+against the C6 header is the whole diagnosis: bits [20:12] are the *APB write* address on
+this generation (24 symbols pushed, all of them) while the *read* address in [8:0] stayed
+at zero — the symbols reached the channel RAM and the counter never ran on them. The
+omission is the counter clock's own enable, `PCR.rmt_sclk_conf.rmt_sclk_en`, which the
+C5/C6 keep outside the RMT registers and which this driver never touched; the C3 gates it
+differently and worked regardless. Fixed in 2.0.3.20.
+
+Also measured here, because it is the point of the bench work: the C6 went from 0.3.5 to
+2.0.3.19 **over the network**, with no USB beyond a console capture — MCUboot is on it
+(its banner reads `MCUboot 2nd stage bootloader`), the swap ran, and the device came back
+announcing the new version.
+
 ## 2.0.3.18 — 2026-10-24
 
 The strip is driven now. Two more causes, both invisible from the completion bit that
