@@ -33,12 +33,17 @@ TEST(CollectorTopics, MapWhatThePluginsPublish) {
   EXPECT_EQ(Of("control/reconfig"), Command::kReconfig);
   EXPECT_EQ(Of("control/led"), Command::kLed);
   EXPECT_EQ(Of("host/heartbeat"), Command::kHeartbeat);
+  /* The previous firmware's OTA trigger, registered in solar_manager.cpp as
+   * <sn>/ota/start; without it Home Assistant cannot drive an update. */
+  EXPECT_EQ(Of("ota/start"), Command::kOtaStart);
 }
 
 TEST(CollectorTopics, NothingElseIsClaimed) {
   // <sn>/cmd belongs to hcp::ota's text commands and must not be grabbed here.
   EXPECT_EQ(Of("cmd"), Command::kNone);
   EXPECT_EQ(Of("state"), Command::kNone);
+  EXPECT_EQ(Of("ota"), Command::kNone);
+  EXPECT_EQ(Of("ota/stop"), Command::kNone);
   EXPECT_EQ(Of("online"), Command::kNone);
   EXPECT_EQ(Of(""), Command::kNone);
   EXPECT_EQ(Classify(nullptr, 0), Command::kNone);

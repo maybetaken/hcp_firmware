@@ -17,6 +17,9 @@
 #include "hcp/log/log.h"
 #include "hcp/modbus/master.h"
 #include "hcp/mqtt/client.h"
+#ifdef CONFIG_HCP_OTA
+#include "hcp/ota/ota.h"
+#endif
 #ifdef CONFIG_HCP_PROVISION
 #include "hcp/provision/provision.h"
 #endif
@@ -67,6 +70,7 @@ const char* Name(Command cmd) {
     case Command::kReconfig: return "reconfig";
     case Command::kHeartbeat: return "heartbeat";
     case Command::kLed: return "led";
+    case Command::kOtaStart: return "ota/start";
     default: return "unknown";
   }
 }
@@ -267,6 +271,24 @@ void Handle(Slot& slot) {
                "owned by hcp::provision", (unsigned)slot.len);
       return;
 
+    case Command::kOtaStart:
+#ifdef CONFIG_HCP_OTA
+      /* Home Assistant driving the update, which is the previous firmware's flow
+       * (it registered this topic and then did checkForUpdate/startUpdate against
+       * http://<host learned from discovery>:9998/firmware.bin). No URL arrives in
+       * the payload, so the endpoints come from the configured templates and the
+       * discovered host - and if nothing is serving that host, the failure is
+       * reported here rather than looking like a device that ignores its owner. */
+      COL_LOGI("ota/start: checking for an update from the discovered host");
+      if (!ota::Trigger(nullptr)) {
+        COL_LOGW("ota/start: not started (worker busy, no host discovered yet, or "
+                 "the version endpoint is unreachable)");
+      }
+#else
+      COL_LOGW("ota/start ignored: hcp::ota is not in this build");
+#endif
+      return;
+
     default:
       return;
   }
@@ -355,6 +377,7 @@ bool Start() {
       {"control/reconfig", Command::kReconfig},
       {"control/led", Command::kLed},
       {"host/heartbeat", Command::kHeartbeat},
+      {"ota/start", Command::kOtaStart},
   };
   for (const Bind& b : binds) {
     if (!mqtt::Subscribe(b.suffix, OnMessage,

@@ -50,6 +50,10 @@ enum class Command {
   kReconfig,     /* <sn>/control/reconfig: forget Wi-Fi, open BluFi */
   kHeartbeat,    /* <sn>/host/heartbeat: the host is watching */
   kLed,          /* <sn>/control/led: "on"/"off" */
+  kOtaStart,     /* <sn>/ota/start: check for an update and take it (the previous
+                  * firmware's own trigger: solar_manager.cpp registered this topic
+                  * and did checkForUpdate() then startUpdate(), against
+                  * http://<host from SSDP>:9998/firmware.bin + version.txt) */
 };
 
 /* suffix is length-bounded and NOT NUL terminated (it comes off the MQTT packet). */

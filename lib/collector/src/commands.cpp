@@ -29,6 +29,7 @@ const Entry kTable[] = {
     {"control/reconfig", Command::kReconfig},
     {"control/led", Command::kLed},
     {"host/heartbeat", Command::kHeartbeat},
+    {"ota/start", Command::kOtaStart},
 };
 
 }  // namespace

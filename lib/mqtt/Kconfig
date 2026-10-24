@@ -61,7 +61,6 @@ config HCP_MQTT_TOPIC_CMD
 
 config HCP_MQTT_MAX_ROUTES
 	int "Number of topic suffixes a handler may be registered for"
-	default 1 if BOARD_HCP_C5
 	default 8
 	help
 	  The client subscribes to "<sn>/#" once and dispatches locally, so this is how
@@ -70,11 +69,11 @@ config HCP_MQTT_MAX_ROUTES
 	  registration beyond this fails loudly at boot rather than silently ignoring
 	  the topic.
 
-	  Two on the ESP32-C5 - actually one, since that board links with a few tens of
-	  bytes of SRAM free (measured) and while hcp::collector is off there the only
-	  routed topic is the command one. Enabling the collector on a C5 means raising
-	  this, its own buffers, and the inbound limit below - see lib/collector/Kconfig
-	  for the SRAM arithmetic.
+	  The ESP32-C5 used to default this to 1 to save SRAM while the collector was
+	  disabled there; the collector now registers seven suffixes, and a smaller table
+	  on that board would not have been a saving - it would have made the collector
+	  refuse to start, which the boot log says but which nobody reads on a board that
+	  is not at the bench. One entry costs 24 bytes.
 
 config HCP_MQTT_MAX_INBOUND
 	int "Largest inbound payload kept (bytes)"
