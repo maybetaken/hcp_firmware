@@ -40,6 +40,46 @@ HCP_SN=hcp-M1231 ./tools/ota_release.sh 2.0.3.15 hcp_c3 --bench
 a tree that does not compile. There is no git remote yet, so nothing is pushed: when
 one exists, `git push && git push --tags` after the release.
 
+## 2.0.3.20 — 2026-10-25
+
+The C6's strip lights now: 2.0.3.19 pushed its symbols into the RMT channel RAM and never
+clocked the counter that reads them out.
+
+`rmt_ll_enable_group_clock()` is a third clock switch, not covered by the bus clock
+(`rmt_ll_enable_bus_clock`) or by the source select (`rmt_ll_set_group_clock_src`): it
+writes `sys_conf.sclk_active` on the C3 and `PCR.rmt_sclk_conf.rmt_sclk_en` on the C5/C6,
+and on those parts the bit comes out of reset cleared. The driver never called it. The C3
+ran anyway, so nothing before this release hinted that a second switch existed — which is
+the honest lesson here rather than the bug: a driver written against one part's register
+map and validated on that same part has no way to learn what a second part's clock tree
+requires. Porting it is the test.
+
+The reading that said so, from the bench, decoded against the C6 header:
+`chnstatus=0x00018000` with bits [20:12] being `apb_mem_waddr_chn` (24 symbols written, all
+of them) and [8:0] being `mem_raddr_ex_chn` (zero consumed). The same word on the C3 means
+`mem_raddr=24`, because that generation puts the read pointer in the upper half — so the
+first-frame log prints raw words and the comment now says which half means what on which
+part, instead of describing the C3 and letting a reader apply it to a C6.
+
+Also in this release, both bench-only:
+
+- **`./tools/ota_release.sh` stages one tree per board**: `build/otasrv/esp32c6/v2.0.3.20/`
+  instead of one shared `firmware.bin`. Two boards were on the bench at once and one
+  staging directory is one image — releasing the C3 over the C6's download would have
+  served a binary for the wrong chip from a URL that looked right. Typing `hcp_c6` as a
+  board name is also accepted now (it reached cmake as `-DBOARD=hcp_c6` and died on the
+  missing SoC/CPU qualifiers).
+- Three comments still described topics that no longer exist (`<sn>/state`, `<sn>/ack`);
+  `tools/mqtt_watch.py` now documents what is really on the wire, including the two
+  observation traps that cost time this month: `-K` is a sibling tree so `<sn>/#` does not
+  match it, and `<sn>/notify` is not retained so subscribing after publishing shows a
+  device that never reported.
+
+Verification in this release: the C6 goes from 2.0.3.19 to 2.0.3.20 over the air and is
+expected to report the frame as done with the read pointer at 24; the C3 is OTA'd to the
+same version to confirm the new call and the removal of `Strip::Show()`'s `irq_lock()`
+changed nothing on the part that already worked.
+
 ## 2.0.3.19 — 2026-10-25
 
 One LED route for all three boards: the C5 and the C6 stop driving the strip over
