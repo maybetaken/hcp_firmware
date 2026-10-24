@@ -2,14 +2,23 @@
 # SPDX-License-Identifier: Apache-2.0
 
 menuconfig HCP_INPUT
-	bool "HCP input (button debounce)"
+	bool "HCP input (button, debounced GPIO interrupt)"
 	default y
 	depends on GPIO
+	help
+	  User button on the devicetree `sw0` alias. The pin interrupts on both edges
+	  and the line is sampled once the contact has stopped bouncing, so an idle
+	  device runs nothing for the button (it used to poll every 5 ms). No wakeup
+	  source: this collector does not sleep.
 
 if HCP_INPUT
 
 config HCP_INPUT_DEBOUNCE_MS
 	int "Debounce settle time (ms)"
 	default 30
+	help
+	  Both the window an edge waits before the pin is sampled again and the time a
+	  level must hold before it is reported as settled (Debouncer). 30 ms is well
+	  below what a hand can produce and well above typical contact bounce.
 
 endif

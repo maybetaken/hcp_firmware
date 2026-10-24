@@ -32,6 +32,19 @@ TEST(Debouncer, ReleaseAfterHold) {
   EXPECT_FALSE(d.stable());
 }
 
+TEST(Debouncer, SettlingTellsAnEventDrivenCallerToSampleAgain) {
+  // The Zephyr backend samples the pin only after an edge interrupt, so it has to
+  // know that the first look at a new level is not a conclusion yet. This is the
+  // exact sequence button_zephyr.cpp runs: edge -> sample -> re-arm -> sample.
+  Debouncer d(30);
+  d.Update(false, 0);
+  EXPECT_FALSE(d.settling());
+  EXPECT_EQ(d.Update(true, 100), Debouncer::kNone);
+  EXPECT_TRUE(d.settling());
+  EXPECT_EQ(d.Update(true, 130), Debouncer::kPressed);
+  EXPECT_FALSE(d.settling());
+}
+
 // ---- PressClassifier: short press / long press / no-man's-land ----
 
 using PC = hcp::input::PressClassifier;

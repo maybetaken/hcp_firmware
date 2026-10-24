@@ -27,6 +27,11 @@ class Debouncer {
   int Update(bool raw_level, uint64_t now_ms);
   bool stable() const { return stable_; }
 
+  // A change has been seen but not yet settled. An event-driven caller (edge
+  // interrupt -> sample after the settle window) needs this to know whether to
+  // sample once more; a polling caller never looks at it.
+  bool settling() const { return pending_ != stable_; }
+
  private:
   uint32_t settle_ms_;
   bool pending_ = false;
@@ -36,8 +41,9 @@ class Debouncer {
 };
 
 #if defined(CONFIG_HCP_INPUT) || defined(__ZEPHYR__)
-// Target-side button bound to the devicetree `sw0` alias. Polls the gpio and
-// drives a Debouncer; the callback fires on each settled edge.
+// Target-side button bound to the devicetree `sw0` alias. The pin interrupts on
+// both edges; the ISR only reschedules a debounce work item, which samples the
+// line and drives a Debouncer. The callback fires on each settled edge.
 class Button {
  public:
   using Callback = void (*)(bool pressed, void* arg);
