@@ -24,31 +24,118 @@
 #include <zephyr/drivers/gpio.h>
 namespace {
 
-/* WS2812 bit cells in system-clock cycles. The clock here is 16 MHz, so one cycle
- * is 62.5 ns and the cells land at t0h=6, t1h=12, bit=20 - inside the datasheet's
- * 400/800/1250 ns with its +/-150 ns tolerance, and the same 1:2 ratio.
+/*
+ * WS2812 bit-banging on an ESP32-C3, timed by counting instructions.
  *
- * Each edge waits for an absolute deadline rather than for a duration, so the cost
- * of the gpio call and of the loop itself is absorbed instead of accumulating down
- * the 24 bits of a pixel. */
-constexpr uint32_t kCycPerUs = sys_clock_hw_cycles_per_sec() / 1000000U;
-constexpr uint32_t kT0h = kCycPerUs * 4U / 10U;
-constexpr uint32_t kT1h = kCycPerUs * 8U / 10U;
-constexpr uint32_t kBitCell = kCycPerUs * 12U / 10U;
+ * Why not by reading the clock: measured on the bench C3 (2.0.3.14) with the
+ * interrupt locked, one sys_clock_cycle_get_32() costs 687 ns and one
+ * gpio_pin_set_dt() 312 ns, while a whole bit period is 1250 ns and a zero's high
+ * phase is 400 ns. The clock read is longer than the phase it would have to bound,
+ * so a deadline-based loop cannot produce a valid frame however the constants are
+ * tuned - and what it does produce is observable: every bit came out at the same
+ * ~2000 ns floor (2 stores + 2 reads), which the strip reads as all-ones regardless
+ * of the data. That is the "lit, but never blinks and will not switch off" failure,
+ * and it is why the LED looked alive but ignored everything.
+ *
+ * So: one store per edge (gpio_port_set_bits_raw / clear_bits_raw, which are the
+ * driver's own unlocked single-register writes - the 312 ns above is pin_set's lock
+ * and flag checks, not the store), phases from a counted spin loop, and exactly two
+ * clock reads in the whole lifetime path: one calibration run long enough (0.5 ms)
+ * that the 687 ns granularity is 0.1 % rather than the whole budget.
+ */
+constexpr uint32_t kT0hNs = 400;   // datasheet 400 +/- 150
+constexpr uint32_t kT1hNs = 800;   // datasheet 800 +/- 150
+constexpr uint32_t kBitNs = 1250;  // period, so a one's low half is 450 ns
 
-void WaitUntil(uint32_t base, uint32_t target) {
-  while (static_cast<uint32_t>(sys_clock_cycle_get_32() - base) < target) {
+/* Keeps the loop body from being optimised away, and is the thing whose cost the
+ * calibration measures. */
+volatile uint32_t g_spin_sink;
+
+void Spin(uint32_t n) {
+  while (n != 0U) {
+    n--;
+    g_spin_sink = n;
   }
 }
 
-void BangByte(const gpio_dt_spec& led, uint8_t value, uint32_t base, uint32_t& cell) {
-  for (int bit = 7; bit >= 0; bit--) {
-    const bool one = ((value >> bit) & 1) != 0;
-    WaitUntil(base, cell * kBitCell);
-    gpio_pin_set_dt(&led, 1);
-    WaitUntil(base, cell * kBitCell + (one ? kT1h : kT0h));
-    gpio_pin_set_dt(&led, 0);
-    cell++;
+// Picoseconds per Spin(1) iteration, 0 until calibrated.
+uint32_t g_ps_per_iter = 0;
+
+bool CalibrateSpin() {
+  constexpr uint32_t kIters = 20000;
+  const uint32_t t0 = sys_clock_cycle_get_32();
+  Spin(kIters);
+  const uint32_t cycles = sys_clock_cycle_get_32() - t0;
+  if (cycles == 0U) {
+    return false;
+  }
+  g_ps_per_iter =
+      static_cast<uint32_t>((static_cast<uint64_t>(cycles) * 1000000000000ULL) /
+                            (static_cast<uint64_t>(sys_clock_hw_cycles_per_sec()) *
+                             kIters));
+  return g_ps_per_iter != 0U;
+}
+
+uint32_t ItersForNs(uint32_t ns) {
+  if (g_ps_per_iter == 0U) {
+    return 0U;
+  }
+  const uint32_t ps = ns * 1000U;
+  return (ps + g_ps_per_iter / 2U) / g_ps_per_iter;
+}
+
+uint32_t NsOfIters(uint32_t iters) {
+  /* Picoseconds per iteration, so nanoseconds is /1000 - and rounded, because this
+   * feeds a log line that is the only evidence of the phases on a bench with no
+   * scope. The first two versions of this were wrong in the same direction and both
+   * were caught by that line reading t0H == t1H: /1000000 made it return microseconds
+   * under a nanoseconds label, and truncation then reported a real 5-iteration
+   * (220 ns) phase as 0. */
+  return static_cast<uint32_t>(
+      (static_cast<uint64_t>(iters) * g_ps_per_iter + 500ULL) / 1000ULL);
+}
+
+uint32_t CyclesToNs(uint32_t cycles) {
+  return static_cast<uint32_t>(
+      (static_cast<uint64_t>(cycles) * 1000000000ULL) /
+      sys_clock_hw_cycles_per_sec());
+}
+
+/* One store, no lock, no argument checking: the same call gpio_esp32_port_set_bits_raw
+ * makes internally. */
+void Raise(const gpio_dt_spec& led) {
+  gpio_port_set_bits_raw(led.port, BIT(led.pin));
+}
+
+void Lower(const gpio_dt_spec& led) {
+  gpio_port_clear_bits_raw(led.port, BIT(led.pin));
+}
+
+/* How long one store takes, because it lands inside the high phase and has to come
+ * out of the target. 4096 of them is tens of microseconds, which puts the 687 ns
+ * clock granularity under 2 %; the batch is also what shows the store is cheap - the
+ * 312 ns measured for gpio_pin_set_dt() was the driver's lock and checks, and if that
+ * number came back here, this approach would still be out of budget and the answer
+ * would be RMT. */
+uint32_t MeasureStoreNs(const gpio_dt_spec& led) {
+  constexpr uint32_t kStores = 4096;
+  const uint32_t t0 = sys_clock_cycle_get_32();
+  for (uint32_t i = 0; i < kStores; i++) {
+    Raise(led);
+  }
+  const uint32_t cycles = sys_clock_cycle_get_32() - t0;
+  return CyclesToNs(cycles / kStores);
+}
+
+/* A run of identical bits, with the falling-edge delay held at `low` for every one of
+ * them. Used by the calibration self-test, where a constant bit cell would hide
+ * exactly what is being measured. */
+void SendUniform(const gpio_dt_spec& led, uint32_t hi, uint32_t low, uint32_t bits) {
+  for (uint32_t i = 0; i < bits; i++) {
+    Raise(led);
+    Spin(hi);
+    Lower(led);
+    Spin(low);
   }
 }
 
@@ -65,6 +152,10 @@ struct Strip::Impl {
   const struct device* dev = nullptr;
 #if defined(CONFIG_HCP_LED_BACKEND_GPIO_BITBANG)
   gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_NODELABEL(led_0), gpios);
+  /* Spin iterations for the four timings, derived from the boot calibration. Kept
+   * per-pixel-instance rather than recomputed because Show() runs with interrupts
+   * locked and should not be doing 64-bit division there. */
+  uint32_t hi0 = 0, hi1 = 0, lo0 = 0, lo1 = 0;
 #endif
 };
 
@@ -92,6 +183,44 @@ bool Strip::Open() {
   if (gpio_pin_configure_dt(&impl_->led, GPIO_OUTPUT_INACTIVE) < 0) {
     return false;
   }
+
+  /* Calibrate once, here, before anything can be displayed. */
+  if (!CalibrateSpin()) {
+    HCP_LOGW(hcp::log::kDomainDevice, "led: spin calibration failed, giving up");
+    return false;
+  }
+  const unsigned int key = irq_lock();
+  const uint32_t store_ns = MeasureStoreNs(impl_->led);
+  irq_unlock(key);
+  /* The store happens before the line is high and the next one before it is low
+   * again, so each high phase is the target minus one store. */
+  impl_->hi0 = ItersForNs(kT0hNs > store_ns ? kT0hNs - store_ns : 0U);
+  impl_->hi1 = ItersForNs(kT1hNs > store_ns ? kT1hNs - store_ns : 0U);
+  impl_->lo0 = ItersForNs(kBitNs - kT0hNs);
+  impl_->lo1 = ItersForNs(kBitNs - kT1hNs);
+
+  /* Prove the two phases really differ, without a scope: hold the falling-edge delay
+   * fixed and send 24 bits at the one phase, then 24 at the zero phase. The delta is
+   * then 24 x (t1H - t0H) = 9600 ns, and the two clock reads bound it by about
+   * +/- 1.4 us - enough to tell "a one is wider than a zero" from the previous
+   * approach's failure, where every bit came out at the same 2000 ns floor and the
+   * strip could not read a single one of them. */
+  const uint32_t low = impl_->lo0;
+  const unsigned int test_key = irq_lock();
+  const uint32_t t0 = sys_clock_cycle_get_32();
+  SendUniform(impl_->led, impl_->hi0, low, 24);
+  const uint32_t t1 = sys_clock_cycle_get_32();
+  SendUniform(impl_->led, impl_->hi1, low, 24);
+  const uint32_t t2 = sys_clock_cycle_get_32();
+  irq_unlock(test_key);
+  HCP_LOGI(hcp::log::kDomainDevice,
+           "led bit-bang: store %u ns, spin %u ns/iter, t0H %u ns t1H %u ns, "
+           "24-bit delta %u ns (want ~9600)",
+           static_cast<unsigned>(store_ns),
+           static_cast<unsigned>(g_ps_per_iter / 1000U),
+           static_cast<unsigned>(store_ns + NsOfIters(impl_->hi0)),
+           static_cast<unsigned>(store_ns + NsOfIters(impl_->hi1)),
+           static_cast<unsigned>(CyclesToNs(t2 - t1) - CyclesToNs(t1 - t0)));
   open_ = true;
   return true;
 #else
@@ -186,13 +315,18 @@ bool Strip::Show() {
    * reset condition is met by the time the next frame begins, and spending it inside
    * irq_lock() would only extend an interrupt blackout on a board that also runs
    * BLE. */
-  {
-    const uint32_t base = sys_clock_cycle_get_32();
-    uint32_t cell = 0;
-    for (uint16_t i = 0; i < count_; ++i) {
-      BangByte(impl_->led, rgb[i].g, base, cell);
-      BangByte(impl_->led, rgb[i].r, base, cell);
-      BangByte(impl_->led, rgb[i].b, base, cell);
+  for (uint16_t i = 0; i < count_; ++i) {
+    const uint8_t bytes[3] = {rgb[i].g, rgb[i].r, rgb[i].b};
+    for (uint8_t b = 0; b < 3; b++) {
+      for (int bit = 7; bit >= 0; bit--) {
+        const bool one = ((bytes[b] >> bit) & 1U) != 0U;
+        Raise(impl_->led);
+        Spin(one ? impl_->hi1 : impl_->hi0);
+        Lower(impl_->led);
+        /* The low half is the rest of the 1250 ns cell, so a one and a zero take the
+         * same time and the strip's frame length depends only on the bit count. */
+        Spin(one ? impl_->lo1 : impl_->lo0);
+      }
     }
   }
   const int rc = 0;
