@@ -40,6 +40,51 @@ HCP_SN=hcp-M1231 ./tools/ota_release.sh 2.0.3.15 hcp_c3 --bench
 a tree that does not compile. There is no git remote yet, so nothing is pushed: when
 one exists, `git push && git push --tags` after the release.
 
+## 2.0.3.16 — 2026-10-24
+
+The C3's WS2812 is driven by a real driver now: `modules/drivers/ws2812_rmt`, a
+Zephyr module implementing the standard `led_strip` API behind a devicetree
+compatible (`espressif,esp32-ws2812-rmt`), in the same shape as `modules/lib/blufi`.
+`lib/led` went back to one code path — the `hcp-led-strip` alias — so the application
+no longer knows or cares which peripheral produces the waveforms.
+
+- **Why a driver and not a branch.** The previous fix attempt put bit-bang code inside
+  `lib/led` behind a `CONFIG_HCP_LED_BACKEND_GPIO_BITBANG` #ifdef. That measured
+  in-spec phases (t0H 407 ns, t1H 804 ns) and the strip still took nothing, because
+  the loop can only be as accurate as the primitives it times itself with — a GPIO
+  store costs 312 ns and a system-clock read 687 ns against a 400 ns phase. RMT counts
+  ticks off a hardware clock, so the phase widths do not depend on the CPU at all, and
+  the frame needs no interrupt blackout (which the SPI route does need, and still
+  keeps). Dead bit-bang code that referenced a devicetree node no board provides was
+  removed rather than left compiling-by-accident.
+- **The module wiring needed two things that are not obvious.** `ZEPHYR_EXTRA_MODULES`
+  brings in a module's CMakeLists and Kconfig but *not* its devicetree bindings —
+  those are collected from the west manifest, and this application is not a west
+  module — so the app also lists the module in `DTS_ROOT` (documented in
+  `pre_dt.cmake`). Without that the node's properties were silently ignored, no
+  `DT_HAS_*` symbol existed, and the failure surfaced much later as an undefined
+  device object at link time. And `LED_DEVICE_DT_INST_DEFINE` does not exist in this
+  Zephyr; the in-tree `ws2812_spi.c` uses plain `DEVICE_DT_INST_DEFINE`.
+- **The GPIO-matrix signal index comes from the SoC's own table**
+  (`esp_hal_rmt/<soc>/rmt_periph.c`, compiled in) rather than from arithmetic on
+  `RMT_SIG_OUT0_IDX`. "The channel signals are contiguous" is the kind of reasonable
+  assumption whose symptom is an LED that never answers.
+- **`color-mapping` is honoured, not hardcoded.** The shared `led-strip.yaml` binding
+  requires it, so the driver reads it and rejects a repeated or non-RGB id at init — a
+  wrong order otherwise shows wrong colours while looking perfectly healthy.
+- **ESP32-C5 and C6 stay on the SPI route, on purpose.** Their RMT is a later hardware
+  generation: the channel-data member is `chndata[]` rather than the C3's `data_ch[]`
+  (4 channels per instance on the C5, 2 on the C6). Making that compile is trivial and
+  cannot be verified without one of those boards on the bench, and a driver writing the
+  wrong generation's register reports itself as a dead LED — the exact symptom this
+  started from. So the driver `#error`s for any part it does not describe, and
+  `hcp_ws2812_rmt.dtsi` says so in its header. The C6's LED is verified working on SPI;
+  it was not going to be traded for an unverified change on a board that is not here.
+- Also corrected while here: `boards/helios/hcp_c3/hcp_c3-pinctrl.dtsi`'s comment
+  claimed GPIO7 is the LED's SPI clock, which stopped being true the moment the C3
+  moved to RMT. It now says the group is applied by nothing and keeps the reason the
+  clock was moved off GPIO11 (that pin is the chip's own RX; two boards were dark).
+
 ## 2.0.3.15 — 2026-10-24
 
 The C3's status LED could light up but not blink or switch - and now it can, because

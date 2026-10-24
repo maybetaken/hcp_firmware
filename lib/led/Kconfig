@@ -5,41 +5,31 @@ menuconfig HCP_LED
 	bool "HCP LED strip (WS2812-class)"
 	default y
 	help
-	  Addressable LED strip support. The WS2812 node is described in each
-	  board's devicetree (see boards/helios/common/hcp_ws2812.dtsi) since the
-	  LED is physically present on all Helios boards; this option only decides
-	  whether the application drives it. Uses Zephyr's in-tree
-	  worldsemi,ws2812-spi backend. To also drop the driver from the binary,
-	  disable CONFIG_LED_STRIP / CONFIG_WS2812_STRIP_SPI.
+	  Addressable LED strip support. The WS2812 node is described in the shared
+	  board devicetree (boards/helios/common/hcp_ws2812.dtsi) since the LED is
+	  physically present on all Helios boards; this option only decides whether the
+	  application drives it, and the backend choice below decides through what. To
+	  also drop a driver from the binary, disable the CONFIG it selects
+	  (LED_STRIP, and LED_STRIP_ESP_RMT or WS2812_STRIP_SPI for the driver itself).
 
 if HCP_LED
 
 choice HCP_LED_BACKEND
 	prompt "LED backend"
-	default HCP_LED_BACKEND_GPIO_BITBANG if BOARD_HCP_C3
 	default HCP_LED_BACKEND_ZEPHYR
 
 config HCP_LED_BACKEND_ZEPHYR
-	bool "Zephyr led_strip (worldsemi,ws2812-spi)"
+	bool "Zephyr led_strip API on the hcp-led-strip alias"
 	select LED_STRIP
-	select SPI
+	help
+	  The strip is whatever the board's devicetree binds to that alias - today the
+	  espressif,esp32-ws2812-rmt driver (modules/drivers/ws2812_rmt) on all three
+	  Helios boards. Selecting this adds no SPI dependency of its own, because a
+	  driver's Kconfig brings its own bus: a board bound to RMT must not link an SPI
+	  controller it does not use.
 
 config HCP_LED_BACKEND_POSIX
 	bool "POSIX framebuffer (host tests)"
-
-config HCP_LED_BACKEND_GPIO_BITBANG
-	bool "GPIO bit-bang (one data pin, RMT-like timing)"
-	help
-	  Drives the strip's data line directly, which is the shape the previous
-	  firmware used on every board (RMT on GPIO8). Selected for the ESP32-C3: the SPI
-	  route there initialised cleanly but produced no light on two different boards,
-	  and Zephyr's own single-pin driver (worldsemi,ws2812-gpio) is nRF-only - its
-	  source stores to nRF OUTSET/OUTCLR and selects CLOCK_CONTROL_NRF - so there is
-	  nothing in-tree to reuse.
-
-	  Timing is expressed in system-clock cycles with interrupts locked across the
-	  frame, as on the other boards: a gap inside a frame reads as the latch
-	  condition and the colours come out shifted.
 
 endchoice
 

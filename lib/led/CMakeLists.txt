@@ -1,8 +1,8 @@
-# hcp::led module — Zephyr build integration (posix framebuffer built by host tests).
-# strip_zephyr.cpp serves both Zephyr-side backends: the led_strip/SPI one and the
-# single-pin bit-bang one C3 uses (Zephyr has no in-tree Espressif RMT led_strip).
+# hcp::led module - Zephyr build integration (posix framebuffer built by host tests).
+# One backend on target: the led_strip API on the hcp-led-strip alias, whose driver is
+# chosen per board in devicetree (worldsemi,ws2812-spi; espressif,esp32-ws2812-rmt on
+# the C3, from modules/drivers/ws2812_rmt). Nothing here knows which one it is.
 zephyr_include_directories(include)
-if(CONFIG_HCP_LED AND (CONFIG_HCP_LED_BACKEND_ZEPHYR OR
-                       CONFIG_HCP_LED_BACKEND_GPIO_BITBANG))
+if(CONFIG_HCP_LED AND CONFIG_HCP_LED_BACKEND_ZEPHYR)
   target_sources(app PRIVATE src/zephyr/strip_zephyr.cpp)
 endif()

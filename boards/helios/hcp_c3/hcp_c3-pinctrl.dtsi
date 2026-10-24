@@ -30,16 +30,20 @@
 		};
 	};
 
-	/* WS2812 data on SPI2 MOSI=GPIO8; the clock goes to GPIO7.
+	/* SPI2 pins, for the worldsemi,ws2812-spi route: MOSI=GPIO8 is the strip's data
+	 * line, SCLK=GPIO7 the clock the protocol does not use but the controller drives.
 	 *
-	 * GPIO7 and not GPIO11: on the board as wired, GPIO11 collides with the chip's
-	 * own RX, so the SPI clock was fighting the serial line. Measured, not assumed -
-	 * the LED was dark on two separate C3 units with SCLK on GPIO11.
+	 * Currently inert, and said so rather than left to be rediscovered: the C3 binds
+	 * its LED strip to the espressif,esp32-ws2812-rmt driver instead, which needs the
+	 * data pin only (see hcp_ws2812_rmt.dtsi), so spi2 is disabled and this group is
+	 * applied by nothing. It stays because the SPI route is still selectable, and
+	 * because where the clock lands was measured on hardware, not chosen from a
+	 * table: with SCLK on GPIO11 the C3 units were dark, and GPIO11 is the chip's own
+	 * RX - the clock and the serial line were fighting.
 	 *
 	 * Free-ness is checked rather than trusted: the TTL variant uses TX=GPIO1/
 	 * RX=GPIO2, the RS485 variant TX=GPIO4/RX=GPIO6/DE=GPIO5, the button is GPIO10
-	 * and the relays GPIO0/GPIO3 - so GPIO7 belongs to the LED clock in both builds.
-	 * GPIO8 (data) is a C3 strapping pin and is left alone for that reason. */
+	 * and the relays GPIO0/GPIO3 - so GPIO7 is otherwise unused in both builds. */
 	spi2_default: spi2_default {
 		group1 {
 			pinmux = <SPIM2_SCLK_GPIO7>;

@@ -65,7 +65,7 @@ done
 # LED-off is a pure Kconfig choice now (DT always describes the hardware).
 LED_ARGS=""
 if [ "$WANT_LED" = "0" ]; then
-  LED_ARGS="-DCONFIG_HCP_LED=n -DCONFIG_LED_STRIP=n -DCONFIG_WS2812_STRIP_SPI=n"
+  LED_ARGS="-DCONFIG_HCP_LED=n -DCONFIG_LED_STRIP=n -DCONFIG_LED_STRIP_ESP_RMT=n"
 fi
 
 build_one() {
