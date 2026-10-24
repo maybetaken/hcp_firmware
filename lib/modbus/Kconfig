@@ -4,44 +4,50 @@ menuconfig HCP_MODBUS
 	bool "HCP Modbus RTU master"
 	default y
 	depends on SERIAL
-	select MODBUS
+	select MODBUS if HCP_MODBUS_BACKEND_SUBSYS
 	select GPIO
 	help
 	  C++ facade over an RTU client, on the UART the board's `zephyr,modbus-serial`
 	  node names - which also carries the RS485 DE pin. No third-party Modbus
 	  implementation is involved either way.
 
-	  MODBUS is selected unconditionally, including for the native backend: prj.conf
-	  has to assign the MODBUS_ROLE_CLIENT choice symbol, a choice cannot be selected
-	  from another symbol, and leaving the subsys undefined would make that assignment
-	  an error. The cost on C3 is code we do not call; the alternative is a
-	  board-conditional prj.conf, which Zephyr does not have.
+	  MODBUS is only selected when the subsys backend is chosen on purpose: its
+	  modbus_serial driver instantiates for the same devicetree node and would claim
+	  the UART and the DE pin at init even when nothing calls it.
 
 if HCP_MODBUS
 
 choice HCP_MODBUS_BACKEND
 	prompt "RTU framing backend"
-	default HCP_MODBUS_BACKEND_NATIVE if BOARD_HCP_C3
-	default HCP_MODBUS_BACKEND_SUBSYS
+	default HCP_MODBUS_BACKEND_NATIVE
 
 config HCP_MODBUS_BACKEND_SUBSYS
 	bool "Zephyr's in-tree subsys/modbus"
 	help
 	  The subsys owns RTU framing, t3.5 inter-frame timing and the DE line.
 
+	  Not the default, and it is not a preference: on the bench meter it refused
+	  every reply although a raw read of the same wire showed a CRC-perfect frame each
+	  time (see rtu.h for the measurements), and it logs nothing about the bytes it
+	  rejected. It stays selectable because no board but the C3 has been run with
+	  hardware attached, so if the subsys turns out to work for another slave, that is
+	  a measured fact to compare against rather than an assumption.
+
+	  If you choose it, prj.conf must also assign CONFIG_MODBUS_ROLE_CLIENT=y (a
+	  choice symbol cannot be selected from another symbol); CMake stops the build
+	  with that instruction if it is missing.
+
 config HCP_MODBUS_BACKEND_NATIVE
 	bool "hcp's own RTU frame engine over hcp::serial::Port"
 	depends on HCP_SERIAL
 	help
-	  Frames a reply by the length its function code implies under one overall
-	  deadline, and shows the bytes it rejected. Selected for the ESP32-C3 because
-	  the subsys' idle-line framing does not work with the meter on the bench (it
-	  answers 200-480 ms after the request, and every poll came back -EIO while a
-	  raw read of the same wire produced a CRC-perfect frame every time). See
-	  include/hcp/modbus/rtu.h for the measurements that decided this.
+	  Frames a reply by the length its REQUEST implies, under one overall deadline,
+	  and prints the bytes it rejected. Ported behaviour from the previous firmware's
+	  master (esp-mb's portserial.c: flush the receiver, then read a length that is
+	  known rather than guessed from line idle).
 
-	  The subsys is not built when this is chosen, so MODBUS_BUFFER_SIZE no longer
-	  applies - kMaxRegisters comes from the same 256-byte ADU arithmetic instead.
+	  The default on every board. See include/hcp/modbus/rtu.h for the measurements
+	  that decided it; the C3 is the board where that was proven with a real slave.
 
 endchoice
 

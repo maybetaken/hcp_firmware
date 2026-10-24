@@ -19,7 +19,7 @@
 };
 
 #include "../common/hcp_base.dtsi"
-#include "../common/hcp_ws2812.dtsi"
+#include "../common/hcp_ws2812_gpio.dtsi"
 
 /*
  * Factory identity blob (hcp::identity reads "prodinfo" before falling back to

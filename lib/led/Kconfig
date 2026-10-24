@@ -16,6 +16,7 @@ if HCP_LED
 
 choice HCP_LED_BACKEND
 	prompt "LED backend"
+	default HCP_LED_BACKEND_GPIO_BITBANG if BOARD_HCP_C3
 	default HCP_LED_BACKEND_ZEPHYR
 
 config HCP_LED_BACKEND_ZEPHYR
@@ -25,6 +26,20 @@ config HCP_LED_BACKEND_ZEPHYR
 
 config HCP_LED_BACKEND_POSIX
 	bool "POSIX framebuffer (host tests)"
+
+config HCP_LED_BACKEND_GPIO_BITBANG
+	bool "GPIO bit-bang (one data pin, RMT-like timing)"
+	help
+	  Drives the strip's data line directly, which is the shape the previous
+	  firmware used on every board (RMT on GPIO8). Selected for the ESP32-C3: the SPI
+	  route there initialised cleanly but produced no light on two different boards,
+	  and Zephyr's own single-pin driver (worldsemi,ws2812-gpio) is nRF-only - its
+	  source stores to nRF OUTSET/OUTCLR and selects CLOCK_CONTROL_NRF - so there is
+	  nothing in-tree to reuse.
+
+	  Timing is expressed in system-clock cycles with interrupts locked across the
+	  frame, as on the other boards: a gap inside a frame reads as the latch
+	  condition and the colours come out shifted.
 
 endchoice
 

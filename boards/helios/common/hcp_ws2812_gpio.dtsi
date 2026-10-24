@@ -1,0 +1,35 @@
+/*
+ * HCP shared WS2812 binding - ESP32-C3 variant: one GPIO, bit-banged.
+ *
+ * The other Helios boards drive the strip through Zephyr's worldsemi,ws2812-spi
+ * (see hcp_ws2812.dtsi), which works on C6. On the C3 the same route initialised
+ * cleanly (no "LED unavailable" in the boot log) and still left the LED dark on two
+ * different boards, while the previous firmware lit this very pin with RMT - a
+ * single output line, no clock. That points at the SPI route on this part, not at
+ * the pin, so C3 uses the RMT-equivalent shape: GPIO bit-banging with
+ * CONFIG_HCP_LED_BACKEND_GPIO_BITBANG, whose timing is in strip_zephyr.cpp.
+ *
+ * The alias keeps the same name (hcp-led-strip) so the application code does not
+ * branch on which backend it is talking to; only the binding differs. The node is
+ * typed as gpio-leds so the gpios property is a real binding, and the child is what
+ * the driver looks up.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#include <zephyr/dt-bindings/gpio/gpio.h>
+
+/ {
+	aliases {
+		hcp-led-strip = &led_strip;
+	};
+
+	led_strip: led-strip {
+		compatible = "gpio-leds";
+
+		led_0: led-0 {
+			/* LED data, the same pin the old firmware drove with RMT. */
+			gpios = <&gpio0 8 GPIO_ACTIVE_HIGH>;
+		};
+	};
+};
