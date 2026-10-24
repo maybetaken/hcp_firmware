@@ -1,10 +1,11 @@
 /*
- * The running product: what happens after the link is up.
+ * HCP application - the running product's services, in the order they come up.
  *
- * Split out of main.cpp, where the Home Assistant command handler sat *inside*
- * the #ifdef CONFIG_BLUFI block. That was not reachable as a bug while
- * hcp::provision was on (its Kconfig depends on BLUFI), but it meant the
- * services could not start at all in a build without BLE - so they live here now.
+ * Split out of what used to be main.cpp, where the Home Assistant command handler
+ * sat *inside* the #ifdef CONFIG_BLUFI block. That was not reachable as a bug
+ * while hcp::provision was on (its Kconfig depends on BLUFI), but it meant a build
+ * without BLE could not start MQTT, SSDP, the collector or OTA at all - so the
+ * services live here now, under their own guard.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -31,20 +32,17 @@
 #include "hcp/ssdp/discovery.h"
 #endif
 
+#ifdef CONFIG_HCP_PROVISION
+
 namespace hcp {
 namespace app {
 
-/* Everything here belongs to the provisioning build: without that state machine
- * there is no session to serve, and the two handlers below would be dead weight
- * (and the compiler rightly says so). */
-#ifdef CONFIG_HCP_PROVISION
-
 #ifdef CONFIG_HCP_MQTT
-/* Commands arrive on <sn>/cmd. Nothing acts on them yet (relay/collection control
- * is the next phase), but the device logs them and echoes to <sn>/ack, so a
- * publish from Home Assistant is observable end to end even when the USB console
- * is not attached. */
-static void on_mqtt_command(const uint8_t* payload, size_t len, void* /*user*/) {
+/* Commands arrive on <sn>/cmd. hcp::ota owns the "ota" text command; the echo to
+ * <sn>/ack is there so a publish from Home Assistant is observable end to end even
+ * when the USB console is not attached - the relay and collection commands that
+ * would replace it are the next step. */
+void Services::OnMqttCommand(const uint8_t* payload, size_t len, void* /*user*/) {
   char text[65];
   size_t n = len < sizeof(text) - 1 ? len : sizeof(text) - 1;
   memcpy(text, payload, n);
@@ -63,7 +61,7 @@ static void on_mqtt_command(const uint8_t* payload, size_t len, void* /*user*/) 
 
 #ifdef CONFIG_HCP_OTA
 /* Adds "ota" to the periodic <sn>/state document while an update has been tried. */
-static int ota_state_extra(char* buf, size_t cap) {
+int Services::OtaStateExtra(char* buf, size_t cap) {
   char status[48];
 
   if (hcp::ota::StatusText(status, sizeof(status)) == 0) {
@@ -73,7 +71,7 @@ static int ota_state_extra(char* buf, size_t cap) {
 }
 #endif  // CONFIG_HCP_OTA
 
-void StartServices() {
+void Services::Start() {
   /* The state machine decides: credentials in storage -> join the network with
    * BLE off, otherwise (or after retries fail) -> open BluFi. It also owns the
    * status LED and the button from here on. */
@@ -97,18 +95,18 @@ void StartServices() {
   }
 #endif
 #ifdef CONFIG_HCP_MQTT
-  hcp::mqtt::SetCommandHandler(on_mqtt_command, nullptr);
+  hcp::mqtt::SetCommandHandler(OnMqttCommand, nullptr);
 #endif
 #ifdef CONFIG_HCP_OTA
   /* Updates are version-gated downloads from the host Home Assistant announced,
    * and a trial swap until this session proves the new image can reach the
    * network. */
-  hcp::mqtt::SetStateExtraHandler(ota_state_extra);
+  hcp::mqtt::SetStateExtraHandler(OtaStateExtra);
   hcp::ota::Start();
 #endif
 }
 
-#endif  // CONFIG_HCP_PROVISION
-
 }  // namespace app
 }  // namespace hcp
+
+#endif  // CONFIG_HCP_PROVISION

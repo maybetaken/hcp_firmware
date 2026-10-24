@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 menuconfig HCP_COLLECTOR
 	bool "HCP collector (one queue, one worker: config, polling, reporting)"
-	default n if BOARD_HCP_C5
 	default y
 	depends on HCP_MQTT && HCP_REGISTRY && HCP_STORAGE
 	help
@@ -11,14 +10,12 @@ menuconfig HCP_COLLECTOR
 	  only thread touching the bus and the point table. Replaces the old split
 	  where a polling task published to MQTT inside the hardware mutex.
 
-	  Off by default on the ESP32-C5 for now, and the reason is measured rather
-	  than assumed: enabling it overflows that board's SRAM by 6,288 bytes at
-	  link time. Its thread stack plus payload slots could be trimmed to about
-	  half that, but the rest would have to come out of the network buffers or the
-	  kernel thread pool on the one board nobody can re-test here (no C5 on the
-	  bench). Cutting blind to make a linker happy is how a board gets a subtle
-	  radio bug instead of an obvious build failure; it stays off until a C5 is
-	  wired up and the numbers can be taken for real.
+	  This fits the ESP32-C5 by 5,536 bytes of SRAM (372,848 of 378,384, 98.5 %),
+	  and only because the P0 boot self-test was removed - enabling it used to
+	  overflow by 6,288 bytes. Two things that leaves unsaid at link time: the C5
+	  worker stack is 2,048 B and its high-water mark has never been measured on
+	  real hardware (no C5 at the bench), and any future static allocation on that
+	  board now needs the same arithmetic done again.
 
 if HCP_COLLECTOR
 

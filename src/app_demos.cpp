@@ -1,21 +1,23 @@
 /*
- * Bring-up aids, each one behind its own CONFIG_* switch and none of them part
- * of what a shipped device does: poll a Modbus slave with no point table, echo
+ * HCP application - bring-up aids.
+ *
+ * Bench helpers, each behind its own CONFIG_* switch and none of them part of
+ * what a shipped device does: poll a Modbus slave with no point table, echo
  * bytes through the RS-485/UART pins, join a network from Kconfig credentials.
- * The button binding here is the fallback for a build without hcp::provision -
- * with provisioning on, that module owns the button (and the status LED).
+ * The button binding is the fallback for a build without hcp::provision - with
+ * provisioning on, that module owns the button (and the status LED).
  *
  * The P0 LED colour-cycle demo used to live here too. It is gone: what it proved
- * (the ws2812-spi path lights the strip) is now exercised by the status light in
- * hcp::provision, which is the LED logic the product actually has.
+ * (the ws2812-spi path lights the strip) is exercised continuously by the status
+ * light in hcp::provision, which is the LED logic the product actually has.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "app.h"
 
+#include "hcp/input/input.h"
 #include "hcp/kernel/kernel.h"
 #include "hcp/log/log.h"
-#include "hcp/input/input.h"
 
 #ifdef CONFIG_HCP_MODBUS_DEMO
 #include "hcp/modbus/master.h"
@@ -27,12 +29,13 @@
 #include "hcp/net/wifi.h"
 #endif
 
-using namespace hcp::kernel;
-
 namespace hcp {
 namespace app {
-#ifndef CONFIG_HCP_PROVISION  // hcp::provision owns the button when enabled
-static void OnButton(bool pressed, void* /*arg*/) {
+
+using namespace hcp::kernel;
+
+#ifndef CONFIG_HCP_PROVISION
+void BringupAids::OnButton(bool pressed, void* /*arg*/) {
   HCP_LOGI(hcp::log::kDomainDevice, "button %s",
            pressed ? "pressed" : "released");
 }
@@ -43,7 +46,7 @@ static void OnButton(bool pressed, void* /*arg*/) {
 // path on real hardware. With no slave attached this logs a timeout (-ENOTCONN),
 // which still proves the devicetree interface resolved, the uart was configured
 // and the RS485 DE line toggles.
-static void ModbusWorker(void* /*arg*/) {
+void BringupAids::ModbusWorker(void* /*arg*/) {
   hcp::modbus::Master bus;
   hcp::modbus::Config cfg;
   cfg.baud = CONFIG_HCP_MODBUS_DEFAULT_BAUD;
@@ -71,7 +74,7 @@ static void ModbusWorker(void* /*arg*/) {
 #ifdef CONFIG_HCP_SERIAL_LOOPBACK_TEST
 // Raw TX->RX loopback self-test on the modbus UART (hcp-uart alias = uart1).
 // Short the port's TX and RX pins to see echo_ok turn true. c6 TTL = GPIO22<->23.
-static void LoopbackWorker(void* /*arg*/) {
+void BringupAids::LoopbackWorker(void* /*arg*/) {
   hcp::serial::Port p;
   if (!p.Open(CONFIG_HCP_SERIAL_UART_BAUD)) {
     HCP_LOGE(hcp::log::kDomainModbus, "loopback: uart open failed");
@@ -98,9 +101,9 @@ static void LoopbackWorker(void* /*arg*/) {
 #endif  // CONFIG_HCP_SERIAL_LOOPBACK_TEST
 
 #ifdef CONFIG_HCP_NET_DEMO
-static void OnWifi(hcp::net::WifiEvent e, void* /*user*/) {
+void BringupAids::OnWifi(hcp::net::WifiEvent e, void* /*user*/) {
   using E = hcp::net::WifiEvent;
-  const char* s = (e == E::kConnected)      ? "connected (IP up)"
+  const char* s = (e == E::kConnected)       ? "connected (IP up)"
                   : (e == E::kConnecting)   ? "connecting"
                   : (e == E::kDisconnected) ? "disconnected"
                   : (e == E::kConnectFailed) ? "connect failed"
@@ -108,7 +111,7 @@ static void OnWifi(hcp::net::WifiEvent e, void* /*user*/) {
   HCP_LOGI(hcp::log::kDomainWifi, "wifi %s", s);
 }
 
-static void NetWorker(void* /*arg*/) {
+void BringupAids::NetWorker(void* /*arg*/) {
   hcp::net::wifi::SetCallback(OnWifi);
   if (!hcp::net::wifi::Init()) {
     HCP_LOGE(hcp::log::kDomainWifi, "wifi init failed");
@@ -127,7 +130,7 @@ static void NetWorker(void* /*arg*/) {
 }
 #endif  // CONFIG_HCP_NET_DEMO
 
-void StartBringupAids() {
+void BringupAids::Start() {
   // With hcp::provision on, that module owns the button and the status LED; the
   // binding below is for bench builds that run without it.
 #ifndef CONFIG_HCP_PROVISION

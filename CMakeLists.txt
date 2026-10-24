@@ -30,11 +30,10 @@ add_subdirectory(lib/ssdp)
 add_subdirectory(lib/ota)
 
 # Application. main.cpp is only the entry point: the start-up sequence is
-# hcp-app.cpp and the concerns it drives are the app_*.cpp beside it.
+# hcp-app.cpp, and the collaborators it drives are the app_*.cpp beside it.
 target_sources(app PRIVATE
   src/main.cpp
   src/hcp-app.cpp
-  src/app_bringup.cpp
   src/app_demos.cpp
   src/app_blufi.cpp
   src/app_services.cpp)
