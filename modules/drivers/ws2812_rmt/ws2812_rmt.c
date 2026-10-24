@@ -137,6 +137,27 @@ static int ws2812_rmt_flush_chunk(const struct device *dev, const uint8_t *bytes
 		}
 	}
 
+	/* The first frame of every boot, reported once: TX_DONE only proves the counter
+	 * ran, not that the symbols arrived. If the writes do not land, the channel
+	 * streams 24 empty symbols, reports done happily and the strip shows nothing -
+	 * which is precisely the failure this driver was written for, so the write and
+	 * read addresses are captured here rather than inferred. Raw words, because the
+	 * bitfield names are the SoC header's business; see RMT_TX_STATUS_REG in
+	 * soc/rmt_struct.h to decode: mem_waddr_ex[8:0], mem_raddr[20:12], state[23:21],
+	 * then owner_err/mem_full/mem_rd_err single bits.
+	 */
+	static bool first_reported;
+	if (!first_reported) {
+		first_reported = true;
+		LOG_INF("ch%lu after %u symbols: tx_status=0x%08x sys_conf=0x%08x "
+			"tx_conf=0x%08x limit=0x%08x",
+			(unsigned long)ch, (unsigned)symbols,
+			(unsigned)data->regs->tx_status[ch].val,
+			(unsigned)data->regs->sys_conf.val,
+			(unsigned)data->regs->tx_conf[ch].val,
+			(unsigned)data->regs->tx_lim[ch].val);
+	}
+
 	rmt_ll_tx_start(data->regs, ch);
 
 	/* The RAW status, not the masked one: rmt_ll_tx_get_interrupt_status() reads
@@ -190,7 +211,27 @@ static int ws2812_rmt_flush_chunk(const struct device *dev, const uint8_t *bytes
 	}
 
 	rmt_ll_tx_stop(data->regs, ch);
+	/* Measured before the status is cleared: reading it afterwards is how the first
+	 * version of this line printed raw=0 for a channel that had just reported done,
+	 * and an invalid measurement is worse than none. */
+	const uint32_t status_after = data->regs->tx_status[ch].val;
+	const uint32_t raw_after = rmt_ll_tx_get_interrupt_status_raw(data->regs, ch);
+
 	rmt_ll_clear_interrupt_status(data->regs, RMT_LL_EVENT_TX_MASK(ch) | err_bit);
+
+	/* The other half of the first-frame measurement: after the hardware says it is
+	 * done, the read address has to have moved as far as the write address, or the
+	 * channel ran on empty memory and the "done" meant nothing about the strip.
+	 */
+	if (rc == 0) {
+		static bool done_reported;
+
+		if (!done_reported) {
+			done_reported = true;
+			LOG_INF("ch%lu done: tx_status=0x%08x raw=0x%08x",
+				(unsigned long)ch, (unsigned)status_after, (unsigned)raw_after);
+		}
+	}
 	return rc;
 }
 
@@ -320,10 +361,28 @@ static int ws2812_rmt_init(const struct device *dev)
 	rmt_ll_mem_force_power_on(data->regs);
 
 	rmt_ll_set_group_clock_src(data->regs, ch, RMT_CLK_SRC_APB, 1, 1, 0);
-	rmt_ll_enable_mem_access_nonfifo(data->regs, true);
+	/* FIFO mode: each write to the channel DATA register appends one symbol and the
+	 * hardware advances the write address. The non-FIFO mode was tried first and the
+	 * channel's write pointer stayed at zero through 24 writes - the symbols never
+	 * arrived, the counter still ran to its limit and still reported done, which is
+	 * why "the driver succeeds and the LED does nothing" was not detectable from the
+	 * completion bit alone. */
+	rmt_ll_enable_mem_access_nonfifo(data->regs, false);
 	rmt_ll_tx_reset_channels_clock_div(data->regs, BIT(ch));
 	rmt_ll_tx_set_channel_clock_div(data->regs, ch, 1);
 	rmt_ll_tx_reset_pointer(data->regs, ch);
+
+	/* Carrier modulation is set in the channel's reset value - read back here on
+	 * the bench as tx_conf=0x00710140, with carrier_en, carrier_eff_en and
+	 * carrier_out_lv all asserted - and a modulated output with the carrier
+	 * registers left at reset is a flat line. The counter still runs, the limit is
+	 * still reached and done is still reported, so nothing above this line can tell
+	 * the difference between "waveform on the pin" and "nothing on the pin"; the
+	 * tx_conf value in the log below is what does. IDF's rmt driver disables the
+	 * carrier in its channel reset for the same reason. */
+	rmt_ll_tx_enable_carrier_modulation(data->regs, ch, false);
+	rmt_ll_tx_enable_carrier_always_on(data->regs, ch, false);
+	rmt_ll_tx_set_carrier_level(data->regs, ch, 0);
 
 	/* Rest low between frames, so the tail of one is never read as the head of
 	 * the next. */
@@ -339,9 +398,10 @@ static int ws2812_rmt_init(const struct device *dev)
 	esp_rom_gpio_connect_out_signal(
 		cfg->data.pin, soc_rmt_signals[0].channels[ch].tx_sig, false, false);
 
-	LOG_INF("ws2812 on rmt ch%lu gpio%u, %u px, %u ticks/bit",
-		(unsigned long)ch, cfg->data.pin, cfg->length,
-		(unsigned)kBitCellTicks);
+	LOG_INF("ws2812 on rmt ch%lu gpio%u, %u px, %u ticks/bit, tx_conf=0x%08x "
+		"sys_conf=0x%08x", (unsigned long)ch, cfg->data.pin, cfg->length,
+		(unsigned)kBitCellTicks, (unsigned)data->regs->tx_conf[ch].val,
+		(unsigned)data->regs->sys_conf.val);
 	return 0;
 }
 
