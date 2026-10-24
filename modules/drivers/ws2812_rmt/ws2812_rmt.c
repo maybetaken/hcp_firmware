@@ -49,17 +49,48 @@
 #include <soc/soc.h>
 #include <esp_rom_gpio.h>
 
-/* Append one symbol to a channel's RAM. The member name is not the same across
- * generations, and this file refuses to guess: an ESP32-C6 build that silently wrote
- * the C3's field would compile only by accident, and the symptom would be an LED that
- * never answers - indistinguishable from a hardware fault from outside the box. Parts
- * listed here are parts someone has run on hardware; adding one means checking its
- * channel count and data member, not just making the name compile. */
+/* Per-generation register access. The hal/ll layer absorbs almost all of the
+ * differences between these parts (identical function signatures for clock, limit,
+ * idle level, carrier, start and the raw status), but two things it does not hide:
+ * where a symbol is written, and which channel registers to read back. Getting either
+ * wrong would compile only by accident on a different part, and the symptom of that
+ * accident is an LED that never answers - indistinguishable from broken hardware from
+ * outside the box - so each is named per part rather than guessed.
+ *
+ *  - ESP32-C3: data_ch[] is a plain 32-bit push register, tx_conf/tx_status per channel.
+ *  - ESP32-C5 / C6: the newer block names these chndata[] / chnstatus[], with the
+ *    channel fields inside a union. The push register is still 32 bits wide, so one
+ *    write is still one symbol.
+ *
+ * The functional clock source is named differently per part too, and only one of the
+ * two spellings exists on each: the C3 takes APB, the C5/C6 take PLL_F80M. Both are 80
+ * MHz, which is what the tick arithmetic below depends on - the divider is what changes
+ * with a different source, not the constants.
+ *
+ * kChannelsPerInstance is deliberately the size of the per-channel *config* array, not
+ * of the data array, because the vendor headers disagree between them (the C5 declares
+ * chndata[4] but chnstatus[2]). Taking the smaller bound keeps every index this driver
+ * performs in range on every part; the boards here use channel 0. Note that the parts
+ * agree on the bound being 2 for a reason: the SoC signal table only has TX signals for
+ * channels 0 and 1, the upper two are RX. */
 #if defined(CONFIG_SOC_ESP32C3)
-#define RMT_CHANNEL_DATA(dev, ch) ((dev)->data_ch[ch])
-static const uint32_t kChannelsPerInstance = 4;
+#define RMT_CHANNEL_DATA(dev, ch)      ((dev)->data_ch[ch])
+#define RMT_CHANNEL_STATUS(dev, ch)    ((dev)->tx_status[ch].val)
+#define RMT_CHANNEL_CONF(dev, ch)      ((dev)->tx_conf[ch].val)
+#define RMT_CHANNEL_LIMIT(dev, ch)     ((dev)->tx_lim[ch].val)
+#define RMT_TX_CLK_SRC                 RMT_CLK_SRC_APB
+#define RMT_ARRAY_LEN(field) (sizeof(((rmt_dev_t *)0)->field) / sizeof(((rmt_dev_t *)0)->field[0]))
+static const uint32_t kChannelsPerInstance = RMT_ARRAY_LEN(tx_conf);
+#elif defined(CONFIG_SOC_ESP32C5) || defined(CONFIG_SOC_ESP32C6)
+#define RMT_CHANNEL_DATA(dev, ch)      ((dev)->chndata[ch].chndata)
+#define RMT_CHANNEL_STATUS(dev, ch)    ((dev)->chnstatus[ch].val)
+#define RMT_CHANNEL_CONF(dev, ch)      ((dev)->chnconf0[ch].val)
+#define RMT_CHANNEL_LIMIT(dev, ch)     ((dev)->chn_tx_lim[ch].val)
+#define RMT_TX_CLK_SRC                 RMT_CLK_SRC_PLL_F80M
+#define RMT_ARRAY_LEN(field) (sizeof(((rmt_dev_t *)0)->field) / sizeof(((rmt_dev_t *)0)->field[0]))
+static const uint32_t kChannelsPerInstance = RMT_ARRAY_LEN(chnconf0);
 #else
-#error "ws2812_rmt: this part's RMT channel-data register is not described here yet"
+#error "ws2812_rmt: this part's RMT register names are not described here yet"
 #endif
 
 LOG_MODULE_REGISTER(ws2812_rmt, CONFIG_LOG_DEFAULT_LEVEL);
@@ -152,10 +183,10 @@ static int ws2812_rmt_flush_chunk(const struct device *dev, const uint8_t *bytes
 		LOG_INF("ch%lu after %u symbols: tx_status=0x%08x sys_conf=0x%08x "
 			"tx_conf=0x%08x limit=0x%08x",
 			(unsigned long)ch, (unsigned)symbols,
-			(unsigned)data->regs->tx_status[ch].val,
+			(unsigned)RMT_CHANNEL_STATUS(data->regs, ch),
 			(unsigned)data->regs->sys_conf.val,
-			(unsigned)data->regs->tx_conf[ch].val,
-			(unsigned)data->regs->tx_lim[ch].val);
+			(unsigned)RMT_CHANNEL_CONF(data->regs, ch),
+			(unsigned)RMT_CHANNEL_LIMIT(data->regs, ch));
 	}
 
 	rmt_ll_tx_start(data->regs, ch);
@@ -194,17 +225,18 @@ static int ws2812_rmt_flush_chunk(const struct device *dev, const uint8_t *bytes
 			 * one round trip instead of four: every RMT register reading zero means
 			 * the block is not being clocked or is held in reset (the actual cause
 			 * found on the bench), while non-zero registers with no done bit point
-			 * at the symbol path or the limit. */
+			 * at the symbol path or the limit. The bus-clock and reset bits are not
+			 * dumped as well, deliberately: on the C3 they sit in the SYSTEM block
+			 * and on the C5/C6 in PCR, so naming them would put a fourth per-part
+			 * difference in a diagnostic whose whole job is to be portable - and an
+			 * all-zero register file already says the same thing. */
 			LOG_ERR("rmt ch%lu never done: tx_conf=0x%08x limit=0x%08x "
-				"status=0x%08x raw=0x%08x sys_conf=0x%08x clk_en=%d "
-				"rst_en0=0x%08x",
-				(unsigned long)ch, (unsigned)data->regs->tx_conf[ch].val,
-				(unsigned)data->regs->tx_lim[ch].val,
-				(unsigned)data->regs->tx_status[ch].val,
+				"status=0x%08x raw=0x%08x sys_conf=0x%08x",
+				(unsigned long)ch, (unsigned)RMT_CHANNEL_CONF(data->regs, ch),
+				(unsigned)RMT_CHANNEL_LIMIT(data->regs, ch),
+				(unsigned)RMT_CHANNEL_STATUS(data->regs, ch),
 				(unsigned)data->regs->int_raw.val,
-				(unsigned)data->regs->sys_conf.val,
-				(int)SYSTEM.perip_clk_en0.reg_rmt_clk_en,
-				(unsigned)*(const volatile uint32_t *)&SYSTEM.perip_rst_en0);
+				(unsigned)data->regs->sys_conf.val);
 			rc = -EIO;
 			break;
 		}
@@ -214,7 +246,7 @@ static int ws2812_rmt_flush_chunk(const struct device *dev, const uint8_t *bytes
 	/* Measured before the status is cleared: reading it afterwards is how the first
 	 * version of this line printed raw=0 for a channel that had just reported done,
 	 * and an invalid measurement is worse than none. */
-	const uint32_t status_after = data->regs->tx_status[ch].val;
+	const uint32_t status_after = RMT_CHANNEL_STATUS(data->regs, ch);
 	const uint32_t raw_after = rmt_ll_tx_get_interrupt_status_raw(data->regs, ch);
 
 	rmt_ll_clear_interrupt_status(data->regs, RMT_LL_EVENT_TX_MASK(ch) | err_bit);
@@ -360,7 +392,11 @@ static int ws2812_rmt_init(const struct device *dev)
 	 * driver then depends on no PMU configuration at all. */
 	rmt_ll_mem_force_power_on(data->regs);
 
-	rmt_ll_set_group_clock_src(data->regs, ch, RMT_CLK_SRC_APB, 1, 1, 0);
+	/* RMT_CLK_SRC_DEFAULT would be the unexciting choice, but the two spellings this
+	 * part understands are stated per part above rather than inherited: a source the
+	 * divider arithmetic was not reasoned about is a frame whose bit cell is quietly
+	 * the wrong length, and that is a dark LED again. */
+	rmt_ll_set_group_clock_src(data->regs, ch, RMT_TX_CLK_SRC, 1, 1, 0);
 	/* FIFO mode: each write to the channel DATA register appends one symbol and the
 	 * hardware advances the write address. The non-FIFO mode was tried first and the
 	 * channel's write pointer stayed at zero through 24 writes - the symbols never
@@ -400,7 +436,7 @@ static int ws2812_rmt_init(const struct device *dev)
 
 	LOG_INF("ws2812 on rmt ch%lu gpio%u, %u px, %u ticks/bit, tx_conf=0x%08x "
 		"sys_conf=0x%08x", (unsigned long)ch, cfg->data.pin, cfg->length,
-		(unsigned)kBitCellTicks, (unsigned)data->regs->tx_conf[ch].val,
+		(unsigned)kBitCellTicks, (unsigned)RMT_CHANNEL_CONF(data->regs, ch),
 		(unsigned)data->regs->sys_conf.val);
 	return 0;
 }

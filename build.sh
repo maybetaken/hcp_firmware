@@ -4,7 +4,7 @@
 #
 # The WS2812 LED is described in each board's devicetree and driven by the app
 # by default (CONFIG_HCP_LED=y). No extra overlay args are needed. Opt out with
-# --no-led (also drops the led_strip/SPI drivers from the binary).
+# --no-led (also drops the led_strip driver itself from the binary).
 #
 # Usage:
 #   ./build.sh                       # default board (hcp_c6), LED on

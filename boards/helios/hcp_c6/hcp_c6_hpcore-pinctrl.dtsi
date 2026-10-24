@@ -31,14 +31,15 @@
 		};
 	};
 
-	/* WS2812 data on SPI2 MOSI=GPIO8; SCLK=GPIO6 (clock only, not wired). */
-	spi2_default: spi2_default {
-		group1 {
-			pinmux = <SPIM2_SCLK_GPIO6>;
-		};
-		group2 {
-			pinmux = <SPIM2_MOSI_GPIO8>;
-			output-high;
-		};
-	};
+	/* No SPI2 group: the WS2812 is driven by RMT on its data line alone
+	 * (../common/hcp_ws2812.dtsi), so there is nothing here to configure.
+	 *
+	 * The pin that gives back matters on this part: the SPI route had spent GPIO6 on
+	 * a clock the WS2812 protocol never reads, and GPIO6 is the button on the C6
+	 * (HCP_BTN_GPIO in hcp_c6_hpcore.dts). That is the whole argument against the SPI
+	 * route in one collision - the C3's version was a clock landing on GPIO11, the
+	 * chip's own RX, with two boards dark before it moved to GPIO7. Pins this board
+	 * really uses, so the claim is checkable rather than assumed: console 16/17,
+	 * modbus 22/23 (TTL) or 18/20 + DE 19 (RS485 variant), relays 0/3, button 6,
+	 * LED 8. */
 };

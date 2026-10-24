@@ -10,7 +10,7 @@ menuconfig HCP_LED
 	  physically present on all Helios boards; this option only decides whether the
 	  application drives it, and the backend choice below decides through what. To
 	  also drop a driver from the binary, disable the CONFIG it selects
-	  (LED_STRIP, and LED_STRIP_ESP_RMT or WS2812_STRIP_SPI for the driver itself).
+	  (LED_STRIP, and LED_STRIP_ESP_RMT for the driver itself).
 
 if HCP_LED
 

@@ -1,13 +1,13 @@
 /*
  * hcp::led - Zephyr backend: framebuffer plus flush through the led_strip API.
  *
- * The board decides which driver sits behind the `hcp-led-strip` alias - the in-tree
- * worldsemi,ws2812-spi one on the C6 and C5, the espressif,esp32-ws2812-rmt driver on
- * the C3 - and nothing here asks. That indirection is the reason the C3's timing fix
- * lives in modules/drivers/ws2812_rmt instead of in this file: an application facade
- * that grows a #ifdef per SoC ends up knowing more about the hardware than the drivers
- * do, and the shared parts (the framebuffer, the brightness scaling, the "do not
- * resend an unchanged frame" check below) start to differ between branches.
+ * The board decides which driver sits behind the `hcp-led-strip` alias - the
+ * espressif,esp32-ws2812-rmt driver on all three Helios boards - and nothing here asks.
+ * That indirection is the reason the C3's timing fix lives in
+ * modules/drivers/ws2812_rmt instead of in this file: an application facade that grows
+ * a #ifdef per SoC ends up knowing more about the hardware than the drivers do, and the
+ * shared parts (the framebuffer, the brightness scaling, the "do not resend an unchanged
+ * frame" check below) start to differ between branches.
  *
  * No STL (Zephyr minimal C++). Google C++ Style naming.
  * SPDX-License-Identifier: Apache-2.0
@@ -18,7 +18,6 @@
 
 #include <zephyr/device.h>
 #include <zephyr/drivers/led_strip.h>
-#include <zephyr/irq.h>
 
 #include <string.h>
 
@@ -94,9 +93,8 @@ bool Strip::Show() {
   }
 
   /* A blink only changes the framebuffer on its edges, so skipping an unchanged
-   * frame keeps the driver's work (and, on the SPI route, its interrupt-off window)
-   * down to the few per second that actually alter the strip rather than every
-   * animation tick. */
+   * frame keeps the driver's work down to the few per second that actually alter the
+   * strip rather than every animation tick. */
   bool same = impl_->shown_brightness == brightness_;
   for (uint16_t i = 0; same && i < count_; ++i) {
     const Color& want = impl_->fb[i];
@@ -119,17 +117,17 @@ bool Strip::Show() {
     rgb[i].b = static_cast<uint8_t>((impl_->fb[i].b * scale) / 100u);
   }
 
-  /* Interrupts off across the transfer, on the SPI route. A worldsemi,ws2812-spi
-   * frame tolerates no gap inside it: a pause of a few tens of microseconds reads as
-   * the latch condition, the pixels re-sync on the remaining bits and the colours come
-   * out shifted - seen on the C6 as a stray green flash while violet was intended.
-   * Zephyr's driver takes no critical section of its own, so this is where it has to
-   * happen. (The RMT route does not need it and its driver does not do it: the
-   * peripheral owns the waveform once started, so an ISR there delays a frame instead
-   * of corrupting a bit inside one.) */
-  const unsigned int key = irq_lock();
+  /* No critical section around the flush. The SPI route required one: a
+   * worldsemi,ws2812-spi frame tolerates no gap inside it, because a pause of a few
+   * tens of microseconds reads as the latch condition and the pixels re-sync on the
+   * remaining bits - seen on the C6 as a stray green flash while violet was intended.
+   * RMT has no such constraint (the peripheral owns the waveform once started, so an
+   * ISR delays a frame rather than corrupting a bit inside one), and keeping the lock
+   * would cost more than it buys: this call busy-waits on the hardware through a chunk
+   * and then holds the line low to latch, so on the failure it is built to report - a
+   * channel that never finishes - interrupts would stay locked for the whole timeout
+   * while the radio and the 485 driver were still expected to run. */
   const int rc = led_strip_update_rgb(impl_->dev, rgb, count_);
-  irq_unlock(key);
 
   if (rc == 0) {
     memcpy(impl_->shown, impl_->fb, sizeof(Color) * count_);

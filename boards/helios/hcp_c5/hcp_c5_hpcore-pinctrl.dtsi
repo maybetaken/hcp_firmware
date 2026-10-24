@@ -30,15 +30,10 @@
 		};
 	};
 
-	/* WS2812 data on SPI2 MOSI=GPIO8; SCLK=GPIO9 (clock only; avoids c5 used
-	 * pins: relays 0/3, button 28, modbus TX/RX 26/25, console 11/12). */
-	spi2_default: spi2_default {
-		group1 {
-			pinmux = <SPIM2_SCLK_GPIO9>;
-		};
-		group2 {
-			pinmux = <SPIM2_MOSI_GPIO8>;
-			output-high;
-		};
-	};
+	/* No SPI2 group: the WS2812 is driven by RMT on its data line alone
+	 * (../common/hcp_ws2812.dtsi), so there is nothing here to configure. The clock pad
+	 * the SPI route reserved was GPIO9, chosen by exclusion rather than by luck - the
+	 * pins this board uses are console 11/12, modbus 26/25, relays 0/3, button 28 and
+	 * LED 8. No collision on the C5, unlike the C3 (clock on its own RX) and the C6
+	 * (clock on its button); still a pad spent on a line the protocol never reads. */
 };
