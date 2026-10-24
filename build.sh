@@ -149,7 +149,8 @@ build_one() {
     if [ -n "$VERSION" ]; then
       # The application reports the version as written; the MCUboot image header has
       # to be told the same number in the only spelling imgtool accepts. Its regex
-      # (boot/signtools/imgtool/version.py: ^maj(.min(.rev(+build)?)?)?$) rejects a
+      # (scripts/imgtool/version.py in the MCUboot tree: ^maj(.min(.rev(+build)?)?)?$)
+      # rejects a
       # dotted fourth field, and the header really does carry one - major(B) minor(B)
       # revision(H) build(I) - so "2.0.3.14" has to arrive as "2.0.3+14". Without
       # this a four-part --version fails the build inside imgtool with
