@@ -173,9 +173,15 @@ static int ws2812_rmt_flush_chunk(const struct device *dev, const uint8_t *bytes
 	 * streams 24 empty symbols, reports done happily and the strip shows nothing -
 	 * which is precisely the failure this driver was written for, so the write and
 	 * read addresses are captured here rather than inferred. Raw words, because the
-	 * bitfield names are the SoC header's business; see RMT_TX_STATUS_REG in
-	 * soc/rmt_struct.h to decode: mem_waddr_ex[8:0], mem_raddr[20:12], state[23:21],
-	 * then owner_err/mem_full/mem_rd_err single bits.
+	 * bitfield names are the SoC header's business - and because the two generations
+	 * do not even agree on which half of the word means what, so decoding has to be
+	 * done against the header for the part in front of you:
+	 *   ESP32-C3 tx_status:  mem_waddr_ex[8:0], mem_raddr[20:12], state[23:21],
+	 *                        then owner_err/mem_full/mem_rd_err.
+	 *   C5/C6 chnstatus:     mem_raddr_ex_chn[8:0], state_chn[11:9],
+	 *                        apb_mem_waddr_chn[20:12], then rd_err/empty/wr_err.
+	 * The same 0x00018000 therefore means "the read pointer reached 24" on the C3 and
+	 * "the write pointer reached 24, the read pointer is still at 0" on the C6.
 	 */
 	static bool first_reported;
 	if (!first_reported) {
@@ -397,6 +403,18 @@ static int ws2812_rmt_init(const struct device *dev)
 	 * divider arithmetic was not reasoned about is a frame whose bit cell is quietly
 	 * the wrong length, and that is a dark LED again. */
 	rmt_ll_set_group_clock_src(data->regs, ch, RMT_TX_CLK_SRC, 1, 1, 0);
+	/* The counter clock has its own switch, separate from the bus clock and from the
+	 * source select: rmt_ll_enable_group_clock() writes sys_conf.sclk_active on the C3
+	 * and PCR.rmt_sclk_conf.rmt_sclk_en on the C5/C6, and on those parts it comes out of
+	 * reset cleared. Left alone on the C6 the symbols reached the channel RAM (its
+	 * chnstatus read back an APB write address of 24, the number pushed) while the read
+	 * address stayed at zero: nothing was ever driven onto the pin, no done bit was ever
+	 * set, and every register this driver writes read back exactly as written - which is
+	 * why the failure is invisible from the register values alone and had to be read off
+	 * the two address fields. The C3 tolerates the omission (its sclk_active is
+	 * apparently not what gates the counter), so this is only found by trying a second
+	 * part. */
+	rmt_ll_enable_group_clock(data->regs, true);
 	/* FIFO mode: each write to the channel DATA register appends one symbol and the
 	 * hardware advances the write address. The non-FIFO mode was tried first and the
 	 * channel's write pointer stayed at zero through 24 writes - the symbols never
