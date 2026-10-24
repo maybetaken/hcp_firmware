@@ -273,6 +273,32 @@ bool TopicSuffix(const mqtt_utf8& topic, const char** out, size_t* out_len) {
 
 void HandleInbound(const mqtt_publish_param& pub) {
   uint32_t len = pub.message.payload.len;
+  /* The topic has to be copied out BEFORE the payload is read: topic.utf8 points
+   * into the client's own receive buffer, and mqtt_readall_publish_payload() writes
+   * over it. Taking the pointer first and matching on it later produced suffixes
+   * like "notifyeartbeat" - which silently made every topic longer than a few bytes
+   * (host/heartbeat, control/restart, control/reconfig) unreachable from Home
+   * Assistant while short ones like config still happened to match. */
+  char suffix_copy[kMaxSuffixLen];
+  const char* suffix = nullptr;
+  size_t suffix_len = 0;
+  if (!TopicSuffix(pub.message.topic.topic, &suffix, &suffix_len)) {
+    /* Still consume the payload, or the stream desynchronises. */
+    if (len > 0) {
+      DiscardPayload(len);
+    }
+    return;
+  }
+  if (suffix_len >= sizeof(suffix_copy)) {
+    MQTT_LOGW("topic suffix of %u bytes does not fit, dropped", (unsigned)suffix_len);
+    if (len > 0) {
+      DiscardPayload(len);
+    }
+    return;
+  }
+  memcpy(suffix_copy, suffix, suffix_len);
+  suffix_copy[suffix_len] = '\0';
+
   if (len > kMaxInboundLen) {
     MQTT_LOGW("dropping inbound payload of %u bytes", len);
     DiscardPayload(len);
@@ -290,21 +316,16 @@ void HandleInbound(const mqtt_publish_param& pub) {
     return;
   }
 
-  const char* suffix;
-  size_t suffix_len;
-  if (!TopicSuffix(pub.message.topic.topic, &suffix, &suffix_len)) {
-    return;
-  }
   for (int i = 0; i < route_count; i++) {
     const size_t want = strlen(routes[i].suffix);
-    if (want == suffix_len && memcmp(routes[i].suffix, suffix, want) == 0) {
+    if (want == suffix_len && memcmp(routes[i].suffix, suffix_copy, want) == 0) {
       if (routes[i].cb != nullptr) {
         routes[i].cb(buf, len, routes[i].user);
       }
       return;
     }
   }
-  MQTT_LOGD("%u bytes on unhandled topic '%s'", (unsigned)len, suffix);
+  MQTT_LOGD("%u bytes on unhandled topic '%s'", (unsigned)len, suffix_copy);
 }
 
 /* Sends everything queued by other threads. Only called from the session thread,
