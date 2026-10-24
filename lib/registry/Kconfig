@@ -1,0 +1,16 @@
+# hcp::registry module Kconfig
+# SPDX-License-Identifier: Apache-2.0
+menuconfig HCP_REGISTRY
+	bool "HCP registry (Modbus point table, downloaded config, persistence)"
+	default y
+	help
+	  The point table the collector polls: what to read, from which slave, how
+	  often, and where to report it. Holds the rules for a table downloaded from
+	  Home Assistant (a re-download always wins, only a change is persisted, a
+	  payload with no segments array is ignored) and its serialized form in
+	  hcp::storage. Pure logic - no kernel, no hardware - so the rules are covered
+	  by the host test suite.
+
+if HCP_REGISTRY
+
+endif

@@ -80,6 +80,14 @@ add_test(NAME test_led COMMAND test_led)
 # CONFIG_HCP_MODBUS_DEMO=y and read the log (see lib/modbus/Kconfig). test_serial
 # above still covers the UART path the loopback self-test uses.
 
+# ---- hcp::registry (point table, download rules) ----
+set(RG ${HCP_ROOT}/lib/registry)
+add_executable(test_registry ${RG}/src/table.cpp
+              ${CMAKE_CURRENT_LIST_DIR}/test_registry.cpp)
+target_include_directories(test_registry PRIVATE ${RG}/include)
+target_link_libraries(test_registry PRIVATE GTest::gtest_main)
+add_test(NAME test_registry COMMAND test_registry)
+
 # ---- hcp::blufi frames + security handshake ----
 set(BF ${HCP_ROOT}/modules/lib/blufi)
 
