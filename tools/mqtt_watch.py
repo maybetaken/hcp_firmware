@@ -107,8 +107,18 @@ def loop(sock: socket.socket, seconds: float) -> None:
         if kind == 3 and len(body) >= 2:
             topic_len = struct.unpack("!H", body[:2])[0]
             topic = body[2:2 + topic_len].decode(errors="replace")
-            payload = body[2 + topic_len:].decode(errors="replace")
-            print(f"[{time.strftime('%H:%M:%S')}] {topic}  ->  {payload}", flush=True)
+            payload = body[2 + topic_len:]
+            # <sn>/notify carries a raw Modbus ADU, not text. Decoding it as UTF-8
+            # is not enough to tell: a frame like 01 04 00 1A ... is valid UTF-8 made
+            # of control characters, and printed as text it looks like an empty
+            # message - which reads as "the device sent nothing". Anything with a
+            # non-printable byte is shown as hex with its length.
+            printable = payload and all(32 <= b < 127 for b in payload)
+            if printable:
+                shown = payload.decode("ascii")
+            else:
+                shown = f"[{len(payload)} B] {payload.hex(' ').upper()}"
+            print(f"[{time.strftime('%H:%M:%S')}] {topic}  ->  {shown}", flush=True)
         elif kind == 13:
             pass  # PINGRESP
         elif kind == 9:

@@ -1,18 +1,49 @@
 # hcp::modbus module Kconfig
 # SPDX-License-Identifier: Apache-2.0
 menuconfig HCP_MODBUS
-	bool "HCP Modbus RTU master (Zephyr's own Modbus subsys)"
+	bool "HCP Modbus RTU master"
 	default y
 	depends on SERIAL
 	select MODBUS
 	select GPIO
 	help
-	  C++ facade over Zephyr's in-tree Modbus client (subsys/modbus), on the
-	  UART the board's `zephyr,modbus-serial` node names - which also carries the
-	  RS485 DE pin, so the subsys drives the transceiver itself. No third-party
-	  Modbus implementation is involved.
+	  C++ facade over an RTU client, on the UART the board's `zephyr,modbus-serial`
+	  node names - which also carries the RS485 DE pin. No third-party Modbus
+	  implementation is involved either way.
+
+	  MODBUS is selected unconditionally, including for the native backend: prj.conf
+	  has to assign the MODBUS_ROLE_CLIENT choice symbol, a choice cannot be selected
+	  from another symbol, and leaving the subsys undefined would make that assignment
+	  an error. The cost on C3 is code we do not call; the alternative is a
+	  board-conditional prj.conf, which Zephyr does not have.
 
 if HCP_MODBUS
+
+choice HCP_MODBUS_BACKEND
+	prompt "RTU framing backend"
+	default HCP_MODBUS_BACKEND_NATIVE if BOARD_HCP_C3
+	default HCP_MODBUS_BACKEND_SUBSYS
+
+config HCP_MODBUS_BACKEND_SUBSYS
+	bool "Zephyr's in-tree subsys/modbus"
+	help
+	  The subsys owns RTU framing, t3.5 inter-frame timing and the DE line.
+
+config HCP_MODBUS_BACKEND_NATIVE
+	bool "hcp's own RTU frame engine over hcp::serial::Port"
+	depends on HCP_SERIAL
+	help
+	  Frames a reply by the length its function code implies under one overall
+	  deadline, and shows the bytes it rejected. Selected for the ESP32-C3 because
+	  the subsys' idle-line framing does not work with the meter on the bench (it
+	  answers 200-480 ms after the request, and every poll came back -EIO while a
+	  raw read of the same wire produced a CRC-perfect frame every time). See
+	  include/hcp/modbus/rtu.h for the measurements that decided this.
+
+	  The subsys is not built when this is chosen, so MODBUS_BUFFER_SIZE no longer
+	  applies - kMaxRegisters comes from the same 256-byte ADU arithmetic instead.
+
+endchoice
 
 comment "The role choice (MODBUS_ROLE_CLIENT) is set in prj.conf: Kconfig"
 comment "choices cannot be selected from a symbol like this one."

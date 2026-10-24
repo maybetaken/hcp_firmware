@@ -82,6 +82,7 @@ add_test(NAME test_led COMMAND test_led)
 
 # ---- hcp::registry (point table, download rules) ----
 set(RG ${HCP_ROOT}/lib/registry)
+set(MB ${HCP_ROOT}/lib/modbus)
 add_executable(test_registry ${RG}/src/table.cpp
               ${CMAKE_CURRENT_LIST_DIR}/test_registry.cpp)
 target_include_directories(test_registry PRIVATE ${RG}/include)
@@ -94,6 +95,13 @@ add_executable(test_wire ${RG}/src/wire.cpp
 target_include_directories(test_wire PRIVATE ${RG}/include)
 target_link_libraries(test_wire PRIVATE GTest::gtest_main)
 add_test(NAME test_wire COMMAND test_wire)
+
+# ---- hcp::modbus RTU frame engine (pure; scripted transport) ----
+add_executable(test_rtu ${MB}/src/rtu.cpp
+              ${CMAKE_CURRENT_LIST_DIR}/test_rtu.cpp)
+target_include_directories(test_rtu PRIVATE ${MB}/include)
+target_link_libraries(test_rtu PRIVATE GTest::gtest_main)
+add_test(NAME test_rtu COMMAND test_rtu)
 
 # ---- hcp::collector topic mapping (pure part) ----
 set(CC ${HCP_ROOT}/lib/collector)

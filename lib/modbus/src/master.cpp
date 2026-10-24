@@ -1,9 +1,13 @@
 /*
  * hcp::modbus::Master — facade over Zephyr's in-tree Modbus RTU client.
+ * Compiled only when the subsys backend is selected; the native (c3) backend is in
+ * src/zephyr/master_native.cpp, and both implement the same class in master.h.
  * Google C++ Style naming.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
+#if !defined(CONFIG_HCP_MODBUS_BACKEND_NATIVE)
+
 #include "hcp/modbus/master.h"
 
 #include <errno.h>
@@ -176,3 +180,5 @@ bool Master::WriteMultipleRegisters(uint8_t addr, uint16_t reg, uint16_t count,
 
 }  // namespace modbus
 }  // namespace hcp
+
+#endif /* !CONFIG_HCP_MODBUS_BACKEND_NATIVE */
