@@ -23,8 +23,9 @@
 # watchdog hcp::ota arms at boot reverts it otherwise - so a bad release comes
 # back by itself, and the USB port stays in the drawer.
 #
-# The MCUboot swap takes ~70 s on this flash and prints nothing while it runs;
-# watch for the device reappearing on <sn>/online with the new version.
+# The MCUboot swap takes ~70 s on this flash and prints nothing while it runs; the
+# script below waits for <sn>/online to come back carrying the version it was given,
+# so a trigger is either confirmed or reported as unconfirmed - never assumed.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"   # .../hcp
@@ -90,4 +91,37 @@ fi
 
 echo ">>> triggering ${SN} from http://${SRV_HOST}:${SRV_PORT}/"
 "${HERE}/tools/mqtt_watch.py" pub "${SN}/cmd" "ota http://${SRV_HOST}:${SRV_PORT}/"
-echo ">>> watch it: ${HERE}/tools/mqtt_watch.py sub '${SN}/#'   (swap takes ~70 s, silent)"
+
+# Confirm it, or say so. This used to end by printing "watch it yourself", and that
+# is how a release got reported as failed on the strength of a log window that had
+# closed two minutes before the interesting part: the swap and the reboot land
+# whenever they land, and a triggered-but-unverified OTA is neither of the two
+# answers anyone needs. So the script waits for the device to come back announcing
+# THIS version, and only then calls it done.
+#
+# Budget: the download plus MCUboot's ~70 s silent swap plus the trial's confirm
+# window. 6 minutes is generous without being infinite.
+echo ">>> waiting for ${SN}/online to report ${VERSION} (download + swap, up to 6 min)"
+DEADLINE=$(( $(date +%s) + 360 ))
+while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+  # Match the value the device published, not just any occurrence: <sn>/online is
+  # retained, so a subscriber gets the last version immediately whether or not the
+  # device ever came back. Only a line whose payload IS the new version counts.
+  if "${HERE}/tools/mqtt_watch.py" sub "${SN}/online" 20 2>/dev/null |
+     grep -qE " -> +${VERSION}[[:space:]]*$"; then
+    echo ">>> ${SN} is running ${VERSION}"
+    echo "    (it confirms the image ~60 s after its broker session comes up; do not"
+    echo "     reset it before that, or MCUboot rolls the trial back by design)"
+    exit 0
+  fi
+  sleep 5
+done
+
+cat >&2 <<EOF
+>>> ${SN} never came back reporting ${VERSION}.
+Either the download failed or it is still swapping. Check without touching the box:
+  ${HERE}/tools/mqtt_watch.py sub '${SN}/#' 60          # "ota":"error (-nnn)" says how it failed
+  ${HERE}/tools/mqtt_watch.py sub '${SN}/online' 60     # a rollback shows the old version return
+Do not reset it while a trial swap is pending - that is what rollback is for.
+EOF
+exit 1
