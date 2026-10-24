@@ -4,7 +4,7 @@
 # implements over hcp::storage, which keeps every rule in the host tests.
 zephyr_include_directories(include)
 if(CONFIG_HCP_REGISTRY)
-  target_sources(app PRIVATE src/table.cpp)
+  target_sources(app PRIVATE src/table.cpp src/wire.cpp)
   # The one part that touches flash, kept out of the pure logic so the rules stay
   # host-testable against a fake store.
   target_sources_ifdef(CONFIG_HCP_STORAGE app PRIVATE src/zephyr/storage_kv.cpp)

@@ -182,7 +182,15 @@ bool ReadSegmentObject(Cursor* c, Segment* out) {
     }
     if (KeyIs(key, klen, "slave_id")) {
       have[0] = ReadUint(c, &slave, 247U);
-      if (!have[0]) return false;
+      /* unit 0 is the broadcast address: it can never answer a read, so a segment
+       * carrying it would cost a timeout on every poll cycle. Reject it here, at
+       * the moment the table arrives, where the reason can still be reported. */
+      if (have[0] && slave == 0U) {
+        return false;
+      }
+      if (!have[0]) {
+        return false;
+      }
     } else if (KeyIs(key, klen, "start_address")) {
       have[1] = ReadUint(c, &start, 0xFFFFU);
       if (!have[1]) return false;
@@ -430,11 +438,50 @@ Apply Table::ApplyConfig(const char* payload, size_t len, KeyValue& kv) {
   }
 
   Table next;
-  for (int i = 0; i < n; i++) {
-    next.segs_[i] = parsed[i];
+
+  if (n == 0) {
+    /* {"segments":[]}: an explicit "do not poll anything", which overrides even the
+     * segments of slaves this payload says nothing about - an empty table is a
+     * statement about the bus, not about one slave. */
+    next.source_ = Source::kDownloaded;
+  } else {
+    /* Per-unit merge: the slaves this payload mentions get their segments replaced
+     * wholesale, everyone else keeps theirs. Without this, the second meter
+     * Home Assistant configures wipes the first one off the bus. */
+    uint8_t touched[kMaxSegments];
+    int tn = 0;
+    for (int i = 0; i < n; i++) {
+      bool seen = false;
+      for (int j = 0; j < tn; j++) {
+        if (touched[j] == parsed[i].slave_id) {
+          seen = true;
+          break;
+        }
+      }
+      if (!seen) {
+        touched[tn++] = parsed[i].slave_id;
+      }
+    }
+    for (int i = 0; i < count_; i++) {
+      bool replace = false;
+      for (int j = 0; j < tn; j++) {
+        if (touched[j] == segs_[i].slave_id) {
+          replace = true;
+          break;
+        }
+      }
+      if (!replace) {
+        next.segs_[next.count_++] = segs_[i];
+      }
+    }
+    for (int i = 0; i < n; i++) {
+      if (next.count_ >= kMaxSegments) {
+        return Apply::kRejected;  /* refuse, rather than drop a slave's points */
+      }
+      next.segs_[next.count_++] = parsed[i];
+    }
+    next.source_ = Source::kDownloaded;
   }
-  next.count_ = n;
-  next.source_ = Source::kDownloaded;
 
   if (next == *this) {
     /* HA re-sends config on every start; NVS is flash. Say so and write nothing. */

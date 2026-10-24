@@ -21,6 +21,15 @@ config HCP_MODBUS_DEFAULT_BAUD
 	int "Default modbus baud"
 	default 9600
 
+config HCP_MODBUS_TIMEOUT_MS
+	int "Milliseconds to wait for a slave's reply"
+	default 500
+	help
+	  Passed to Zephyr's subsys as rx_timeout (in microseconds). Long enough for a
+	  meter to answer at 9600 baud, short enough that one absent slave costs half a
+	  second and not more - and after three such costs in a row the collector leaves
+	  that unit alone for a cooldown (see hcp::collector::BusHealth).
+
 config HCP_MODBUS_DEMO
 	bool "Run a periodic Modbus poll demo in main"
 	default y if HCP_BENCH

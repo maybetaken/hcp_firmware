@@ -38,10 +38,12 @@ namespace hcp {
 namespace app {
 
 #ifdef CONFIG_HCP_MQTT
-/* Commands arrive on <sn>/cmd. hcp::ota owns the "ota" text command; the echo to
- * <sn>/ack is there so a publish from Home Assistant is observable end to end even
- * when the USB console is not attached - the relay and collection commands that
- * would replace it are the next step. */
+/* Commands arrive on <sn>/cmd, the topic this firmware owns for text commands
+ * (the previous firmware had no such topic; Home Assistant's own commands arrive on
+ * <sn>/config and under <sn>/control and are handled by hcp::collector). hcp::ota
+ * owns the "ota" verb. Nothing is echoed back: an <sn>/ack topic was added here once
+ * and removed again, because no subscriber exists on either side and it was only bus
+ * traffic. The observable result of a command is the state change it causes. */
 void Services::OnMqttCommand(const uint8_t* payload, size_t len, void* /*user*/) {
   char text[65];
   size_t n = len < sizeof(text) - 1 ? len : sizeof(text) - 1;
@@ -50,17 +52,17 @@ void Services::OnMqttCommand(const uint8_t* payload, size_t len, void* /*user*/)
   HCP_LOGI(hcp::log::kDomainMqtt, "command: %s", text);
 #ifdef CONFIG_HCP_OTA
   /* "ota" / "ota <base-url>" belongs to hcp::ota, which reports how it went on the
-   * state topic rather than echoing the command back. */
+   * diagnostics topic rather than echoing the command back. */
   if (hcp::ota::HandleCommand(text, n)) {
     return;
   }
 #endif
-  hcp::mqtt::PublishTopic("ack", payload, len);
 }
 #endif  // CONFIG_HCP_MQTT
 
 #ifdef CONFIG_HCP_OTA
-/* Adds "ota" to the periodic <sn>/state document while an update has been tried. */
+/* Adds "ota" to the periodic <sn>/diagnostics document while an update has been
+ * tried. */
 int Services::OtaStateExtra(char* buf, size_t cap) {
   char status[48];
 

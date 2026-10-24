@@ -88,6 +88,13 @@ target_include_directories(test_registry PRIVATE ${RG}/include)
 target_link_libraries(test_registry PRIVATE GTest::gtest_main)
 add_test(NAME test_registry COMMAND test_registry)
 
+# ---- hcp::registry wire format (notify packing, control/cmd decode) ----
+add_executable(test_wire ${RG}/src/wire.cpp
+              ${CMAKE_CURRENT_LIST_DIR}/test_wire.cpp)
+target_include_directories(test_wire PRIVATE ${RG}/include)
+target_link_libraries(test_wire PRIVATE GTest::gtest_main)
+add_test(NAME test_wire COMMAND test_wire)
+
 # ---- hcp::collector topic mapping (pure part) ----
 set(CC ${HCP_ROOT}/lib/collector)
 add_executable(test_collector ${CC}/src/commands.cpp
@@ -96,6 +103,13 @@ target_include_directories(test_collector PRIVATE
   ${CC}/include ${HCP_ROOT}/lib/registry/include)
 target_link_libraries(test_collector PRIVATE GTest::gtest_main)
 add_test(NAME test_collector COMMAND test_collector)
+
+# ---- hcp::collector polling schedule and per-slave backoff (pure part) ----
+add_executable(test_schedule ${CC}/src/schedule.cpp ${RG}/src/table.cpp
+              ${CMAKE_CURRENT_LIST_DIR}/test_schedule.cpp)
+target_include_directories(test_schedule PRIVATE ${CC}/include ${RG}/include)
+target_link_libraries(test_schedule PRIVATE GTest::gtest_main)
+add_test(NAME test_schedule COMMAND test_schedule)
 
 # ---- hcp::blufi frames + security handshake ----
 set(BF ${HCP_ROOT}/modules/lib/blufi)

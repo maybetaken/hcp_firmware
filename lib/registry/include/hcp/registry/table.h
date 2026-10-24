@@ -19,6 +19,10 @@
  *   - A downloaded table always wins over the built-in default, and wins again on
  *     every re-download (the old firmware latched the first one and ignored the
  *     rest, so changing a table needed a reboot).
+ *   - A download replaces **the unit addresses it mentions**, and leaves other
+ *     slaves' segments alone. That is what lets one RS-485 bus carry several
+ *     sub-devices: Home Assistant publishes one plugin's segments at a time, and
+ *     the last one published must not erase the meters before it.
  *   - A download that differs from what is running is written to storage, and what
  *     is running is what gets polled. A download identical to the current table is
  *     dropped WITHOUT writing - NVS is flash, and HA re-sends config on every
@@ -57,14 +61,18 @@ namespace registry {
 
 /* One contiguous register read. Mirrors the four fields HA sends. */
 struct Segment {
-  uint8_t slave_id;       /* Modbus unit address */
+  uint8_t slave_id;       /* Modbus unit address, 1..247 (0 is broadcast) */
   uint16_t start_address; /* first register/coil of the block */
   uint16_t length;        /* count, in registers (or bits for fc 1/2) */
   uint8_t read_command;   /* 0x01/0x02/0x03/0x04 */
+
+  bool IsBitAccess() const { return read_command == 0x01 || read_command == 0x02; }
 };
 
-constexpr int kMaxSegments = 8; /* sized for the payloads in use; a download with
-                                 * more is rejected rather than silently truncated */
+constexpr int kMaxSegments = 16; /* the widest single table in use is jkbms.json at
+                                   * 5 segments; 16 leaves room for three sub-devices
+                                   * on one bus. A download that would exceed it is
+                                   * refused rather than silently truncated. */
 
 /* Per-segment count limits, so an impossible table is rejected when it arrives
  * instead of failing every poll. The collector reads through Zephyr's subsys/modbus,

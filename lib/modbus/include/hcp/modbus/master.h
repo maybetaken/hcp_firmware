@@ -54,6 +54,9 @@ class Master {
   bool ReadInputRegisters(uint8_t addr, uint16_t reg, uint16_t count,
                           uint16_t* out);
   bool WriteSingleRegister(uint8_t addr, uint16_t reg, uint16_t value);
+  // FC05. The subsys takes the state as a bool, so the 0xFF00/0x0000 wire encoding
+  // is decoded before this is called (see registry::ParseWriteRequest).
+  bool WriteCoil(uint8_t addr, uint16_t reg, bool on);
   bool WriteMultipleRegisters(uint8_t addr, uint16_t reg, uint16_t count,
                               const uint16_t* values);
 

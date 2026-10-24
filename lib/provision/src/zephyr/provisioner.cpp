@@ -441,5 +441,17 @@ void NotifyPhoneCredentials(const char* ssid, const char* pass) {
 
 Fsm::State state() { return g_fsm.state(); }
 
+void RequestReset() {
+  // The same action as a long press on the button, reached from the network instead
+  // (Home Assistant's <sn>/control/reconfig). Going through the state machine and
+  // not doing our own erase-and-advertise is the point: the FSM owns what "no
+  // credentials" means for the LED, for BLE and for the retry counters, and a
+  // second path that half-does it is how a device ends up advertising BLE while it
+  // still thinks it is connected.
+  HCP_LOGI(hcp::log::kDomainWifi,
+           "provision: reset requested over the network");
+  Apply(g_fsm.OnResetRequested());
+}
+
 }  // namespace provision
 }  // namespace hcp

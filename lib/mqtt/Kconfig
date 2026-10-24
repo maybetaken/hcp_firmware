@@ -43,9 +43,17 @@ config HCP_MQTT_USER
 config HCP_MQTT_PASS
 	string "broker password"
 
-config HCP_MQTT_TOPIC_STATE
-	string "state/telemetry topic suffix (published as <sn>/<this>)"
-	default "state"
+config HCP_MQTT_TOPIC_DIAGNOSTICS
+	string "diagnostics topic suffix (published as <sn>/<this>)"
+	default "diagnostics"
+	help
+	  The topic Home Assistant's solar_manager integration subscribes for its
+	  diagnostics sensors (base_device.handle_diagnostics). It used to be "state",
+	  a name this firmware invented: nothing on the other side listened to it, so the
+	  heartbeat was published into the void while the 120 s clear timer on the
+	  integration kept running down. Payload keys the integration reads are ssid,
+	  rssi and led; unknown keys are ignored, so uptime/firmware/ota travel safely
+	  alongside them.
 
 config HCP_MQTT_TOPIC_CMD
 	string "command topic suffix (subscribed as <sn>/<this>)"
@@ -94,13 +102,16 @@ config HCP_MQTT_KEEPALIVE_SEC
 	int "keepalive interval (seconds)"
 	default 30
 
-config HCP_MQTT_STATE_INTERVAL_SEC
-	int "periodic state publish interval (seconds, 0 = event-driven only)"
+config HCP_MQTT_DIAG_INTERVAL_SEC
+	int "periodic diagnostics publish interval (seconds, 0 = event-driven only)"
 	default 30
 	help
-	  Publishes a small JSON status document on <sn>/state while the session is up.
-	  Without it the device is silent on the broker between events, which makes
-	  Home Assistant's MQTT debug view look empty and gives no liveness signal.
+	  Publishes the small JSON status document on <sn>/diagnostics while the session
+	  is up. Two reasons it must stay well under 120: Home Assistant clears the
+	  diagnostics and device data after 120 s without an update (CLEAR_INTERVAL in
+	  plugins/base_device.py), and without a periodic message the device is silent on
+	  the broker between events - which leaves the MQTT debug view empty and gives no
+	  liveness signal.
 
 config HCP_MQTT_CONNECT_TIMEOUT_MS
 	int "how long to wait for CONNACK"

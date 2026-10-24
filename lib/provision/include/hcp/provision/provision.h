@@ -47,6 +47,12 @@ void NotifyServiceReady();
 // LED goes back to violet-slow.
 void NotifyServiceLost();
 
+// Forget the stored network and go back to waiting for provisioning - the same
+// action as a long press on the button, reached over the network
+// (<sn>/control/reconfig). Routed through the state machine on purpose: it owns
+// what "no credentials" means for the LED, BLE and the retry counters.
+void RequestReset();
+
 // Current state, for logging/diagnostics (the MQTT session waits for kOnline).
 Fsm::State state();
 

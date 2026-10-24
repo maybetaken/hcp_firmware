@@ -78,6 +78,18 @@ Parsed Wire(const char* text, size_t len, Segment* out, int max, int* n) {
   return ParseWire(text, len, out, max, n);
 }
 
+// Order after a per-unit merge depends on which slaves the payload mentioned, so
+// the merge tests count per unit instead of asserting positions.
+int CountUnit(const Table& t, uint8_t unit) {
+  int n = 0;
+  for (int i = 0; i < t.count(); i++) {
+    if (t.at(i).slave_id == unit) {
+      n++;
+    }
+  }
+  return n;
+}
+
 }  // namespace
 
 /* ---- the wire shape ---- */
@@ -188,20 +200,88 @@ TEST(RegistryApply, RedownloadWinsButDoesNotRewriteWhenUnchanged) {
   EXPECT_EQ(kv.writes, 1); /* HA re-sends on every start: no extra flash wear */
 }
 
-TEST(RegistryApply, LaterDownloadOverridesEarlierOne) {
-  // The old firmware latched the first table it saw and needed a reboot to change.
+TEST(RegistryApply, RedownloadReplacesOnlyTheSlavesItMentions) {
+  /* One RS-485 bus, several meters: DDSU666 (unit 1) then JKBMS (unit 15) must both
+   * end up polled. Whole-table replacement here would mean the second meter
+   * Home Assistant configures switches the first one off the bus. */
   Table t;
   FakeStore kv;
   ASSERT_EQ(t.ApplyConfig(kDdsu666, strlen(kDdsu666), kv), Apply::kUpdated);
   ASSERT_EQ(t.ApplyConfig(kJkbms, strlen(kJkbms), kv), Apply::kUpdated);
-  EXPECT_EQ(t.count(), 5);
-  EXPECT_EQ(t.at(0).slave_id, 15);
+  EXPECT_EQ(t.count(), 7);
+  EXPECT_EQ(CountUnit(t, 1), 2);   /* unit 1 untouched by the second payload */
+  EXPECT_EQ(CountUnit(t, 15), 5);  /* and unit 15's five segments added */
   EXPECT_EQ(kv.writes, 2);
+
   char blob[kMaxSegments * 24];
   ASSERT_TRUE(kv.GetString(kTableKey, blob, sizeof(blob)));
   Table reloaded;
   EXPECT_TRUE(reloaded.Deserialize(blob));
   EXPECT_TRUE(reloaded == t); /* storage holds what is running */
+
+  /* and re-sending the first plugin replaces unit 1 in place, leaving 15 alone */
+  ASSERT_EQ(t.ApplyConfig(kDdsu666, strlen(kDdsu666), kv), Apply::kUpdated);
+  ASSERT_EQ(t.count(), 7);
+  EXPECT_EQ(CountUnit(t, 1), 2);
+  EXPECT_EQ(CountUnit(t, 15), 5);
+}
+
+TEST(RegistryApply, SameSlaveAgainIsUnchangedAndNotRewritten) {
+  Table t;
+  FakeStore kv;
+  ASSERT_EQ(t.ApplyConfig(kDdsu666, strlen(kDdsu666), kv), Apply::kUpdated);
+  ASSERT_EQ(t.ApplyConfig(kJkbms, strlen(kJkbms), kv), Apply::kUpdated);
+  const int writes = kv.writes;
+  EXPECT_EQ(t.ApplyConfig(kJkbms, strlen(kJkbms), kv), Apply::kUnchanged);
+  EXPECT_EQ(kv.writes, writes);
+}
+
+TEST(RegistryApply, ExplicitEmptyTableClearsEverySlave) {
+  Table t;
+  FakeStore kv;
+  ASSERT_EQ(t.ApplyConfig(kDdsu666, strlen(kDdsu666), kv), Apply::kUpdated);
+  ASSERT_EQ(t.ApplyConfig(kJkbms, strlen(kJkbms), kv), Apply::kUpdated);
+  const char empt[] = "{\"segments\":[]}";
+  ASSERT_EQ(t.ApplyConfig(empt, strlen(empt), kv), Apply::kUpdated);
+  EXPECT_EQ(t.count(), 0);
+  EXPECT_FALSE(t.pollable());
+  EXPECT_GT(kv.writes_erase, 0); /* stored as "no table", so a reboot will not revive */
+}
+
+TEST(RegistryApply, RefusesABroadcastSegment) {
+  /* unit 0 can never answer a read; accepting it would burn a timeout every poll */
+  Table t;
+  FakeStore kv;
+  const char bcast[] =
+      "{\"segments\":[{\"slave_id\":0,\"start_address\":0,\"length\":2,"
+      "\"read_command\":3}]}";
+  EXPECT_EQ(t.ApplyConfig(bcast, strlen(bcast), kv), Apply::kRejected);
+  EXPECT_EQ(t.count(), 0);
+  EXPECT_EQ(kv.writes, 0);
+}
+
+TEST(RegistryApply, RefusesToOverflowRatherThanDropASlave) {
+  Table t;
+  FakeStore kv;
+  std::string text = "{\"segments\":[";
+  for (int i = 0; i < kMaxSegments; i++) {
+    char piece[96];
+    snprintf(piece, sizeof(piece),
+             "%s{\"slave_id\":%d,\"start_address\":0,\"length\":2,"
+             "\"read_command\":3}",
+             i ? "," : "", 1 + i);
+    text += piece;
+  }
+  text += "]}";
+  ASSERT_EQ(t.ApplyConfig(text.c_str(), text.size(), kv), Apply::kUpdated);
+  ASSERT_EQ(t.count(), kMaxSegments);
+
+  std::string one_more =
+      text.substr(0, text.size() - 3) +
+      ",{\"slave_id\":99,\"start_address\":0,\"length\":2,\"read_command\":3}]}";
+  EXPECT_EQ(t.ApplyConfig(one_more.c_str(), one_more.size(), kv),
+            Apply::kRejected);
+  EXPECT_EQ(t.count(), kMaxSegments);
 }
 
 TEST(RegistryApply, EmptyObjectLeavesTheTableAlone) {

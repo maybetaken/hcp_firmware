@@ -3,7 +3,7 @@
 menuconfig HCP_COLLECTOR
 	bool "HCP collector (one queue, one worker: config, polling, reporting)"
 	default y
-	depends on HCP_MQTT && HCP_REGISTRY && HCP_STORAGE
+	depends on HCP_MQTT && HCP_REGISTRY && HCP_STORAGE && HCP_MODBUS
 	help
 	  The business loop between Home Assistant and the Modbus bus: inbound topics
 	  are routed onto one queue and acted on by one worker thread, which is the
@@ -42,6 +42,17 @@ config HCP_COLLECTOR_MAX_MSG
 	help
 	  Matches the MQTT module's inbound limit; a config download with several
 	  segments is a few hundred bytes of JSON.
+
+config HCP_COLLECTOR_POLL_MS
+	int "Milliseconds between two polls of the same segment"
+	default 2000
+	help
+	  Every segment in the point table is read once per this period, staggered so a
+	  multi-slave bus does not answer everything in the same tick. This replaces the
+	  previous firmware's "one segment per second" round-robin, whose real purpose
+	  was bounding the bus time per cycle; the schedule in schedule.cpp does that
+	  explicitly now, and a dead slave additionally gets a 30 s backoff so it cannot
+	  eat every cycle with its timeout.
 
 config HCP_COLLECTOR_STACK_SIZE
 	int "Worker stack size"

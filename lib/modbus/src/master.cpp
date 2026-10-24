@@ -137,6 +137,15 @@ bool Master::ReadInputRegisters(uint8_t addr, uint16_t reg, uint16_t count,
   return last_error_ == 0;
 }
 
+bool Master::WriteCoil(uint8_t addr, uint16_t reg, bool on) {
+  const int iface = Iface();
+  if (iface < 0) {
+    return false;
+  }
+  last_error_ = modbus_write_coil(iface, addr, reg, on);
+  return last_error_ == 0;
+}
+
 bool Master::WriteSingleRegister(uint8_t addr, uint16_t reg, uint16_t value) {
   const int iface = Iface();
   if (iface < 0) {

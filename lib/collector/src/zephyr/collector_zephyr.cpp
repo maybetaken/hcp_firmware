@@ -12,9 +12,16 @@
 
 #include <zephyr/kernel.h>
 
+#include "hcp/collector/schedule.h"
+#include "hcp/kernel/kernel.h"
 #include "hcp/log/log.h"
+#include "hcp/modbus/master.h"
 #include "hcp/mqtt/client.h"
+#ifdef CONFIG_HCP_PROVISION
+#include "hcp/provision/provision.h"
+#endif
 #include "hcp/registry/storage_kv.h"
+#include "hcp/registry/wire.h"
 
 #define COL_LOGI(...) HCP_LOGI(hcp::log::kDomainModbus, __VA_ARGS__)
 #define COL_LOGW(...) HCP_LOGW(hcp::log::kDomainModbus, __VA_ARGS__)
@@ -39,6 +46,18 @@ K_MSGQ_DEFINE(inbox, sizeof(Slot*), CONFIG_HCP_COLLECTOR_QUEUE_DEPTH,
 
 registry::Table g_table;
 registry::StorageKeyValue g_kv;
+modbus::Master g_bus;
+Schedule g_sched;
+BusHealth g_health;
+HeartbeatWatchdog g_hb;
+
+/* Scratch for one poll: the widest single read the table can ask for, and the
+ * report built from it. Static rather than on the stack because this thread is the
+ * only one that ever uses it, and the worker stack is 2 KB on the ESP32-C5. */
+uint16_t g_regs[registry::kMaxRegisters];
+uint8_t g_report[registry::kNotifyHeaderBytes + 2 * registry::kMaxRegisters];
+
+bool g_bus_open = false;
 
 const char* Name(Command cmd) {
   switch (cmd) {
@@ -100,10 +119,100 @@ void ApplyConfig(Slot& slot) {
     case registry::Apply::kUpdatedVolatile:
       COL_LOGW("config applied (%d segment(s)) but NOT saved: it is lost on reboot",
                g_table.count());
-      return;
+      break;
     case registry::Apply::kUpdated:
       COL_LOGI("config applied: %d segment(s) saved", g_table.count());
-      return;
+      break;
+  }
+  /* New points mean a new polling plan, and the old failure counts belong to the
+   * devices that are no longer on the list. */
+  g_sched.Rebuild(g_table, (uint64_t)k_uptime_get(),
+                  CONFIG_HCP_COLLECTOR_POLL_MS);
+}
+
+/* A write request from <sn>/control/cmd, executed on this thread - which is the
+ * only one allowed on the bus, so a write can never interleave with a poll. */
+void ExecuteWrite(Slot& slot) {
+  registry::WriteRequest req{};
+  if (registry::ParseWriteRequest(slot.data, slot.len, &req) !=
+      registry::WriteParse::kOk) {
+    COL_LOGW("write request rejected (%u bytes, fc 0x%02x)", (unsigned)slot.len,
+             slot.len > 1 ? slot.data[1] : 0);
+    return;
+  }
+  if (!g_bus_open) {
+    COL_LOGW("write to unit %u refused: bus not open", req.unit_id);
+    return;
+  }
+
+  bool ok = false;
+  if (req.function == 0x05) {
+    ok = g_bus.WriteCoil(req.unit_id, req.start_address, req.coil_on);
+  } else if (req.function == 0x06) {
+    ok = g_bus.WriteSingleRegister(req.unit_id, req.start_address, req.values[0]);
+  } else {
+    ok = g_bus.WriteMultipleRegisters(req.unit_id, req.start_address, req.count,
+                                      req.values);
+  }
+  COL_LOGI("write unit %u fc 0x%02x addr %u n %u -> %s", req.unit_id,
+           req.function, req.start_address, req.count, ok ? "ok" : "failed");
+  /* A slave that answers a write is alive, whatever its read history said. */
+  g_health.NoteResult(req.unit_id, ok, (uint64_t)k_uptime_get());
+}
+
+/* One segment, one transaction, one report. The payload is the raw block, in the
+ * byte order Home Assistant decodes - registry::PackRegisters owns that layout and
+ * its host tests pin it, so nothing here is free to "improve" it. */
+void Poll(int index) {
+  const registry::Segment& seg = g_table.at(index);
+  const uint64_t now = (uint64_t)k_uptime_get();
+
+  if (!g_bus_open) {
+    return;
+  }
+  if (seg.IsBitAccess()) {
+    /* FC01/FC02 accepted by the table, deliberately not polled: the packed-bit
+     * layout the response would need has no vector to check it against (none of
+     * the device_protocol JSONs uses bit access), and guessing an order here is
+     * exactly the silent-garbage failure the packing tests exist to prevent. */
+    COL_LOGW("segment unit %u fc 0x%02x needs bit access, not implemented",
+             seg.slave_id, seg.read_command);
+    g_sched.Done(index, now, CONFIG_HCP_COLLECTOR_POLL_MS);
+    return;
+  }
+
+  bool ok;
+  if (seg.read_command == 0x04) {
+    ok = g_bus.ReadInputRegisters(seg.slave_id, seg.start_address, seg.length,
+                                 g_regs);
+  } else {
+    ok = g_bus.ReadHoldingRegisters(seg.slave_id, seg.start_address, seg.length,
+                                   g_regs);
+  }
+
+  const uint64_t after = (uint64_t)k_uptime_get();
+  g_health.NoteResult(seg.slave_id, ok, after);
+  g_sched.Done(index, after, CONFIG_HCP_COLLECTOR_POLL_MS);
+
+  if (!ok) {
+    COL_LOGW("poll unit %u fc 0x%02x addr %u n %u failed (err=%d, %llu ms)",
+             seg.slave_id, seg.read_command, seg.start_address, seg.length,
+             g_bus.last_error(), (unsigned long long)(after - now));
+    return;
+  }
+
+  const size_t n =
+      registry::PackRegisters(seg, g_regs, seg.length, g_report, sizeof(g_report));
+  if (n == 0) {
+    COL_LOGW("unit %u: %u registers do not fit the report buffer", seg.slave_id,
+             seg.length);
+    return;
+  }
+  if (!mqtt::PublishTopic("notify", g_report, n)) {
+    COL_LOGW("notify publish failed (%u bytes)", (unsigned)n);
+  } else {
+    COL_LOGD("notify unit %u addr %u n %u (%u bytes)", seg.slave_id,
+             seg.start_address, seg.length, (unsigned)n);
   }
 }
 
@@ -112,18 +221,49 @@ void Handle(Slot& slot) {
     case Command::kConfig:
       ApplyConfig(slot);
       return;
+
     case Command::kModbusWrite:
-    case Command::kRestart:
-    case Command::kReconfig:
-    case Command::kHeartbeat:
-    case Command::kLed:
-      /* Received on the right topic, routed, on the right thread - deliberately
-       * not acted on yet: each of those needs the subsystem it belongs to wired to
-       * this queue (polling/reporting is the next step). Said out loud so nobody
-       * reads a silent topic as a working feature. */
-      COL_LOGI("%s received (%u bytes), not wired up yet", Name(slot.cmd),
-               (unsigned)slot.len);
+      ExecuteWrite(slot);
       return;
+
+    case Command::kHeartbeat: {
+      const uint64_t now = (uint64_t)k_uptime_get();
+      const bool was_armed = g_hb.armed();
+      g_hb.Beat(now);
+      if (!was_armed) {
+        COL_LOGI("supervision heartbeat from Home Assistant: armed (60 s timeout)");
+      }
+      return;
+    }
+
+    case Command::kRestart:
+      COL_LOGI("restart requested; rebooting in 250 ms so the log gets out");
+      k_msleep(250);
+      kernel::Reboot();
+      return;
+
+    case Command::kReconfig:
+#ifdef CONFIG_HCP_PROVISION
+      /* Same action as a long press on the button: forget the network and open
+       * BLE again. Done through hcp::provision, which owns those keys. */
+      COL_LOGI("reconfig requested: forgetting credentials, reopening BLE");
+      provision::RequestReset();
+#else
+      COL_LOGW("reconfig requested but hcp::provision is not in this build; "
+               "nothing erased");
+#endif
+      return;
+
+    case Command::kLed:
+      /* Not acted on, and that is a decision rather than a gap: the strip is the
+       * status readout hcp::provision drives from the connection state. Letting
+       * Home Assistant switch it off needs "who owns the LED, and should that
+       * survive a reboot" answered first - the previous firmware stored an NVS
+       * "led_state" for it, which is a feature decision, not a refactor. */
+      COL_LOGI("led command received (%u bytes), not acted on - the status light is "
+               "owned by hcp::provision", (unsigned)slot.len);
+      return;
+
     default:
       return;
   }
@@ -143,6 +283,19 @@ void Worker(void* /*arg*/, void* /*p2*/, void* /*p3*/) {
       break;
   }
 
+  /* The bus is opened here rather than in Start() so the (possibly failing) device
+   * lookup happens on this thread and the point table is already loaded when the
+   * first poll is scheduled. */
+  modbus::Config cfg;
+  cfg.baud = CONFIG_HCP_MODBUS_DEFAULT_BAUD;
+  cfg.response_timeout_ms = CONFIG_HCP_MODBUS_TIMEOUT_MS;
+  g_bus_open = g_bus.Open(cfg);
+  if (!g_bus_open) {
+    COL_LOGW("modbus bus unavailable; polling disabled (config still accepted)");
+  }
+  g_sched.Rebuild(g_table, (uint64_t)k_uptime_get(),
+                  CONFIG_HCP_COLLECTOR_POLL_MS);
+
   while (true) {
     Slot* slot = nullptr;
     if (k_msgq_get(&inbox, &slot,
@@ -152,8 +305,24 @@ void Worker(void* /*arg*/, void* /*p2*/, void* /*p3*/) {
         k_mem_slab_free(&slot_pool, slot);
       }
     }
-    /* The tick is the seam the poller will hang off next: waiting on the queue
-     * with a timeout is what lets one thread serve both. */
+
+    const uint64_t now = (uint64_t)k_uptime_get();
+    if (g_hb.Expired(now)) {
+      /* One-shot by construction: rebooting never returns, so there is no
+       * "expired again next tick" state to guard. */
+      COL_LOGW("no supervision heartbeat for %llu ms - Home Assistant is gone, "
+               "rebooting",
+               (unsigned long long)g_hb.SinceBeat(now));
+      k_msleep(250);
+      kernel::Reboot();
+    }
+
+    if (g_bus_open && g_table.pollable()) {
+      const int index = g_sched.NextDue(g_table, g_health, now);
+      if (index >= 0) {
+        Poll(index);
+      }
+    }
   }
 }
 

@@ -192,8 +192,10 @@ void PublishOnline() {
   }
 }
 
-/* Liveness signal for the broker/Home Assistant: without a periodic message the
- * device is silent between events and a debug subscriber sees nothing. */
+/* Liveness signal that Home Assistant actually honours: the integration clears the
+ * device's diagnostics and data 120 s after the last <sn>/diagnostics message, and
+ * receiving one resets that timer. It also gives a debug subscriber something to
+ * look at between events. */
 void PublishStateHeartbeat() {
   char payload[128];
 
@@ -214,7 +216,7 @@ void PublishStateHeartbeat() {
   if (snprintk(payload + n, sizeof(payload) - n, "}") <= 0) {
     return;
   }
-  PublishTopic(CONFIG_HCP_MQTT_TOPIC_STATE, payload,
+  PublishTopic(CONFIG_HCP_MQTT_TOPIC_DIAGNOSTICS, payload,
                strnlen(payload, sizeof(payload)));
 }
 
@@ -444,10 +446,10 @@ bool Pump() {
   }
   if (connected) {
     DrainTxQueue();
-#if CONFIG_HCP_MQTT_STATE_INTERVAL_SEC > 0
+#if CONFIG_HCP_MQTT_DIAG_INTERVAL_SEC > 0
     static int64_t last_state_ms;
     const int64_t now = k_uptime_get();
-    if (now - last_state_ms >= CONFIG_HCP_MQTT_STATE_INTERVAL_SEC * 1000) {
+    if (now - last_state_ms >= CONFIG_HCP_MQTT_DIAG_INTERVAL_SEC * 1000) {
       last_state_ms = now;
       PublishStateHeartbeat();
     }
@@ -576,7 +578,7 @@ bool PublishRetainedTopic(const char* topic, const void* payload, size_t len) {
 }
 
 bool Publish(const void* payload, size_t len) {
-  return PublishTopic(CONFIG_HCP_MQTT_TOPIC_STATE, payload, len);
+  return PublishTopic(CONFIG_HCP_MQTT_TOPIC_DIAGNOSTICS, payload, len);
 }
 
 void SetCommandHandler(CommandHandler cb, void* user) {
