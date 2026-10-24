@@ -88,6 +88,15 @@ target_include_directories(test_registry PRIVATE ${RG}/include)
 target_link_libraries(test_registry PRIVATE GTest::gtest_main)
 add_test(NAME test_registry COMMAND test_registry)
 
+# ---- hcp::collector topic mapping (pure part) ----
+set(CC ${HCP_ROOT}/lib/collector)
+add_executable(test_collector ${CC}/src/commands.cpp
+              ${CMAKE_CURRENT_LIST_DIR}/test_collector.cpp)
+target_include_directories(test_collector PRIVATE
+  ${CC}/include ${HCP_ROOT}/lib/registry/include)
+target_link_libraries(test_collector PRIVATE GTest::gtest_main)
+add_test(NAME test_collector COMMAND test_collector)
+
 # ---- hcp::blufi frames + security handshake ----
 set(BF ${HCP_ROOT}/modules/lib/blufi)
 

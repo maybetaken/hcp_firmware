@@ -70,6 +70,17 @@ atomic_t broker_dirty;
 
 CommandHandler cmd_cb;
 void* cmd_user;
+
+/* One handler per topic suffix under "<sn>/". The client subscribes to the whole
+ * "<sn>/#" tree once, so a route may be added after the session is up (a message
+ * published before that is simply missed: QoS 0, no broker-side queue). */
+struct Route {
+  char suffix[kMaxSuffixLen];
+  MessageHandler cb;
+  void* user;
+};
+Route routes[CONFIG_HCP_MQTT_MAX_ROUTES];
+int route_count;
 StateExtraHandler state_extra;
 bool waiting_for_broker_logged;  // so the poll loop does not spam the console
 Backoff backoff(CONFIG_HCP_MQTT_RETRY_BASE_MS, CONFIG_HCP_MQTT_RETRY_CAP_MS);
@@ -141,8 +152,11 @@ void Subscribe() {
   static mqtt_topic cmd_topic;
   static char cmd_name[kMaxTopicLen];
   static mqtt_subscription_list list;
-  if (!FullTopic(CONFIG_HCP_MQTT_TOPIC_CMD, cmd_name, sizeof(cmd_name))) {
-    MQTT_LOGW("command topic too long");
+  /* The whole tree, not one command topic: Home Assistant addresses a device over
+   * several suffixes (<sn>/config, <sn>/control/cmd, ...) and dispatch happens
+   * locally against the route table. */
+  if (!FullTopic("#", cmd_name, sizeof(cmd_name))) {
+    MQTT_LOGW("subscription topic too long");
     return;
   }
   cmd_topic.topic = Utf8(cmd_name);
@@ -223,22 +237,72 @@ bool Enqueue(const char* topic, const void* payload, size_t len, bool retain) {
   return k_msgq_put(&tx_queue, &item, K_NO_WAIT) == 0;
 }
 
+/* Consumes a payload without keeping it. Every PUBLISH must be read to the end -
+ * returning early would leave the bytes in the stream and desynchronise the next
+ * packet - so an oversized message is discarded here rather than dropped. */
+void DiscardPayload(uint32_t len) {
+  static uint8_t scratch[64];
+  while (len > 0) {
+    const uint32_t chunk = (len < sizeof(scratch)) ? len : sizeof(scratch);
+    if (mqtt_read_publish_payload(&cli, scratch, chunk) < 0) {
+      return;
+    }
+    len -= chunk;
+  }
+}
+
+/* Strip "<sn>/" from an inbound topic. The buffer comes straight off the packet and
+ * is NOT NUL terminated, so every comparison here is length based. */
+bool TopicSuffix(const mqtt_utf8& topic, const char** out, size_t* out_len) {
+  const char* sn = identity::serial_number();
+  const size_t sn_len = strlen(sn);
+  const size_t prefix = sn_len + 1; /* "<sn>/" */
+  if (topic.size <= prefix || sn_len == 0) {
+    return false;
+  }
+  const char* t = reinterpret_cast<const char*>(topic.utf8);
+  if (memcmp(t, sn, sn_len) != 0 || t[sn_len] != '/') {
+    return false; /* somebody else's topic on a shared broker */
+  }
+  *out = t + prefix;
+  *out_len = static_cast<size_t>(topic.size - prefix);
+  return true;
+}
+
 void HandleInbound(const mqtt_publish_param& pub) {
   uint32_t len = pub.message.payload.len;
-  if (len > kMaxPayloadLen) {
+  if (len > kMaxInboundLen) {
     MQTT_LOGW("dropping inbound payload of %u bytes", len);
+    DiscardPayload(len);
     return;
   }
-  uint8_t buf[kMaxPayloadLen];
+  /* Static, not stack: the session thread is the only user, and this runs inside
+   * the event callback, so 512 bytes on a config-sized thread stack is the kind of
+   * thing that breaks later without warning. */
+  static uint8_t buf[kMaxInboundLen];
   int rc = mqtt_readall_publish_payload(&cli, buf, len);
   if (rc != 0) {
+    /* A failed read means the stream is out of step with the client; nothing here
+     * can recover it, and the keepalive/reconnect path will. */
     MQTT_LOGW("payload read failed (%d)", rc);
     return;
   }
-  MQTT_LOGD("%u bytes on %s", (unsigned)len, CONFIG_HCP_MQTT_TOPIC_CMD);
-  if (cmd_cb != nullptr) {
-    cmd_cb(buf, len, cmd_user);
+
+  const char* suffix;
+  size_t suffix_len;
+  if (!TopicSuffix(pub.message.topic.topic, &suffix, &suffix_len)) {
+    return;
   }
+  for (int i = 0; i < route_count; i++) {
+    const size_t want = strlen(routes[i].suffix);
+    if (want == suffix_len && memcmp(routes[i].suffix, suffix, want) == 0) {
+      if (routes[i].cb != nullptr) {
+        routes[i].cb(buf, len, routes[i].user);
+      }
+      return;
+    }
+  }
+  MQTT_LOGD("%u bytes on unhandled topic '%s'", (unsigned)len, suffix);
 }
 
 /* Sends everything queued by other threads. Only called from the session thread,
@@ -518,6 +582,38 @@ bool Publish(const void* payload, size_t len) {
 void SetCommandHandler(CommandHandler cb, void* user) {
   cmd_cb = cb;
   cmd_user = user;
+  /* The command topic keeps its own Kconfig name, so this is a route like any
+   * other rather than a special case in the dispatch path. */
+  Subscribe(CONFIG_HCP_MQTT_TOPIC_CMD,
+            [](const uint8_t* payload, size_t len, void* u) {
+              if (cmd_cb != nullptr) {
+                cmd_cb(payload, len, u);
+              }
+            },
+            user);
+}
+
+bool Subscribe(const char* suffix, MessageHandler cb, void* user) {
+  if (suffix == nullptr || cb == nullptr ||
+      strlen(suffix) >= kMaxSuffixLen) {
+    return false;
+  }
+  if (route_count >= CONFIG_HCP_MQTT_MAX_ROUTES) {
+    MQTT_LOGW("no room for a route on '%s' (raise CONFIG_HCP_MQTT_MAX_ROUTES)",
+              suffix);
+    return false;
+  }
+  /* Fill the entry, then publish it: the session thread reads route_count and the
+   * slots together, so making the count grow last means it can never see a half
+   * written suffix (which would not match, but would also not be harmless if it
+   * happened to match a prefix of something real). */
+  Route& r = routes[route_count];
+  strncpy(r.suffix, suffix, sizeof(r.suffix) - 1);
+  r.suffix[sizeof(r.suffix) - 1] = '\0';
+  r.cb = cb;
+  r.user = user;
+  route_count++;
+  return true;
 }
 
 void SetStateExtraHandler(StateExtraHandler cb) { state_extra = cb; }

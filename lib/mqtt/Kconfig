@@ -51,6 +51,33 @@ config HCP_MQTT_TOPIC_CMD
 	string "command topic suffix (subscribed as <sn>/<this>)"
 	default "cmd"
 
+config HCP_MQTT_MAX_ROUTES
+	int "Number of topic suffixes a handler may be registered for"
+	default 1 if BOARD_HCP_C5
+	default 8
+	help
+	  The client subscribes to "<sn>/#" once and dispatches locally, so this is how
+	  many handlers the application can register (Home Assistant uses one per
+	  function: config, the modbus write channel, restart, heartbeat, ...). A
+	  registration beyond this fails loudly at boot rather than silently ignoring
+	  the topic.
+
+	  Two on the ESP32-C5 - actually one, since that board links with a few tens of
+	  bytes of SRAM free (measured) and while hcp::collector is off there the only
+	  routed topic is the command one. Enabling the collector on a C5 means raising
+	  this, its own buffers, and the inbound limit below - see lib/collector/Kconfig
+	  for the SRAM arithmetic.
+
+config HCP_MQTT_MAX_INBOUND
+	int "Largest inbound payload kept (bytes)"
+	default 448 if BOARD_HCP_C5
+	default 512
+	help
+	  Larger than the outbound limit on purpose: a config download carries a whole
+	  JSON point table and the widest one in use (jkbms.json) is about 390 bytes.
+	  Anything above this is consumed and discarded, so a too-small value shows up
+	  as a warning in the log instead of a desynchronised stream.
+
 config HCP_MQTT_TOPIC_ONLINE
 	string "online topic suffix (published once per connect)"
 	default "online"

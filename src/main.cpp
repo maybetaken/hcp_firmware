@@ -24,6 +24,9 @@
 #ifdef CONFIG_HCP_IDENTITY
 #include "hcp/identity/identity.h"
 #endif
+#ifdef CONFIG_HCP_COLLECTOR
+#include "hcp/collector/collector.h"
+#endif
 #ifdef CONFIG_BLUFI
 #include <zephyr/kernel.h>
 extern "C" {
@@ -697,6 +700,14 @@ int main(void) {
   /* Home Assistant announces its broker every 5 s on 239.255.255.250:1900; this
    * feeds hcp::mqtt so no broker address has to be compiled in. */
   hcp::ssdp::Start();
+#endif
+#ifdef CONFIG_HCP_COLLECTOR
+  /* Routes <sn>/config, <sn>/control/cmd and friends onto one queue, consumed by
+   * one worker that owns the point table and the Modbus bus. Started after MQTT so
+   * the routes exist before the session subscribes. */
+  if (!hcp::collector::Start()) {
+    HCP_LOGW(hcp::log::kDomainModbus, "collector not started");
+  }
 #endif
 #ifdef CONFIG_HCP_MQTT
   hcp::mqtt::SetCommandHandler(on_mqtt_command, nullptr);

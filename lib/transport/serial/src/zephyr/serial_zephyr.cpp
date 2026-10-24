@@ -89,7 +89,10 @@ int Port::Read(uint8_t* buf, size_t cap, uint32_t timeout_ms) {
   if (!impl_->open || impl_->dev == nullptr || cap == 0) {
     return -1;
   }
-  uint64_t deadline = k_uptime_get() + timeout_ms;
+  /* int64_t, matching what k_uptime_get() returns: a uint64_t deadline makes the
+   * comparison below signed/unsigned and silences the overflow warning that would
+   * otherwise be worth seeing. */
+  const int64_t deadline = k_uptime_get() + static_cast<int64_t>(timeout_ms);
   size_t n = 0;
   while (n < cap) {
     unsigned char c;

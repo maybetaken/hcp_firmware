@@ -27,6 +27,14 @@ namespace mqtt {
 constexpr size_t kMaxTopicLen = 64;
 constexpr size_t kMaxPayloadLen = 256;
 
+// Inbound payloads get their own, larger limit: what the device sends is ours,
+// but a Home Assistant config download carries a whole JSON point table (the
+// widest in use, jkbms.json, is about 390 bytes) and would be dropped at 256.
+#ifndef CONFIG_HCP_MQTT_MAX_INBOUND
+#define CONFIG_HCP_MQTT_MAX_INBOUND 512
+#endif
+constexpr size_t kMaxInboundLen = CONFIG_HCP_MQTT_MAX_INBOUND;
+
 // Device identity, used as the client id and as the topic prefix: every topic is
 // "<sn>/<suffix>" ("<sn>/online", "<sn>/cmd", ...), like the reference firmware, so
 // the broker/HA side can address one device out of many. The number itself comes
@@ -62,6 +70,25 @@ bool PublishRetainedTopic(const char* topic, const void* payload, size_t len);
 // block on networking from here.
 using CommandHandler = void (*)(const uint8_t* payload, size_t len, void* user);
 void SetCommandHandler(CommandHandler cb, void* user = nullptr);
+
+/*
+ * Messages on other topics under the device prefix. Home Assistant talks to one
+ * device through several of them (<sn>/config, <sn>/control/cmd, <sn>/led ...), so
+ * a single command callback is not enough: the client subscribes to "<sn>/#" once
+ * and dispatches on the suffix.
+ *
+ * Subscribe() must be called before Start() - the subscription list is sent when
+ * the session is established. The handler runs on the session thread with a copy
+ * of the payload, so it may keep neither the buffer nor the pointer; anything that
+ * takes longer than a few microseconds belongs on the caller's own queue.
+ *
+ * Returns false when the route table is full (CONFIG_HCP_MQTT_MAX_ROUTES) or the
+ * suffix is too long, so a wiring mistake shows up at boot instead of as a topic
+ * that never fires.
+ */
+using MessageHandler = void (*)(const uint8_t* payload, size_t len, void* user);
+constexpr size_t kMaxSuffixLen = 24;
+bool Subscribe(const char* suffix, MessageHandler cb, void* user = nullptr);
 
 // Extra fields for the periodic <sn>/state document. The provider writes a JSON
 // fragment that starts with ',' (e.g. ,"ota":"updating") or returns 0 when it has

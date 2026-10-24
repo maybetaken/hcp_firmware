@@ -1,0 +1,59 @@
+# hcp::collector module Kconfig
+# SPDX-License-Identifier: Apache-2.0
+menuconfig HCP_COLLECTOR
+	bool "HCP collector (one queue, one worker: config, polling, reporting)"
+	default n if BOARD_HCP_C5
+	default y
+	depends on HCP_MQTT && HCP_REGISTRY && HCP_STORAGE
+	help
+	  The business loop between Home Assistant and the Modbus bus: inbound topics
+	  are routed onto one queue and acted on by one worker thread, which is the
+	  only thread touching the bus and the point table. Replaces the old split
+	  where a polling task published to MQTT inside the hardware mutex.
+
+	  Off by default on the ESP32-C5 for now, and the reason is measured rather
+	  than assumed: enabling it overflows that board's SRAM by 6,288 bytes at
+	  link time. Its thread stack plus payload slots could be trimmed to about
+	  half that, but the rest would have to come out of the network buffers or the
+	  kernel thread pool on the one board nobody can re-test here (no C5 on the
+	  bench). Cutting blind to make a linker happy is how a board gets a subtle
+	  radio bug instead of an obvious build failure; it stays off until a C5 is
+	  wired up and the numbers can be taken for real.
+
+if HCP_COLLECTOR
+
+config HCP_COLLECTOR_TICK_MS
+	int "Worker wake-up interval (ms)"
+	default 200
+	help
+	  How long the worker waits for a message before returning to its periodic
+	  work (the poll schedule). Also the worst-case added latency of a command.
+
+config HCP_COLLECTOR_QUEUE_DEPTH
+	int "Queue depth (messages)"
+	default 4 if BOARD_HCP_C5
+	default 6
+
+config HCP_COLLECTOR_SLOTS
+	int "Payload buffers (one per in-flight message)"
+	default 2 if BOARD_HCP_C5
+	default 3
+
+config HCP_COLLECTOR_MAX_MSG
+	int "Largest payload kept (bytes)"
+	default 512
+	help
+	  Matches the MQTT module's inbound limit; a config download with several
+	  segments is a few hundred bytes of JSON.
+
+config HCP_COLLECTOR_STACK_SIZE
+	int "Worker stack size"
+	default 2048 if BOARD_HCP_C5
+	default 4096
+	help
+	  Sized for the deepest call on this thread (JSON parse, then a settings write
+	  through hcp::storage). The ESP32-C5 variant is smaller because that board's
+	  SRAM is the tightest of the three - its high-water mark has to be checked on
+	  real hardware with the thread analyzer before it can be called comfortable.
+
+endif
