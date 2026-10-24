@@ -1,9 +1,13 @@
 /*
  * Bring-up aids, each one behind its own CONFIG_* switch and none of them part
- * of what a shipped device does: cycle the LED, poll a Modbus slave with no
- * point table, echo bytes through the RS-485/UART pins, join a network from
- * Kconfig credentials. They live together so main reads as the product, not as
- * the workshop.
+ * of what a shipped device does: poll a Modbus slave with no point table, echo
+ * bytes through the RS-485/UART pins, join a network from Kconfig credentials.
+ * The button binding here is the fallback for a build without hcp::provision -
+ * with provisioning on, that module owns the button (and the status LED).
+ *
+ * The P0 LED colour-cycle demo used to live here too. It is gone: what it proved
+ * (the ws2812-spi path lights the strip) is now exercised by the status light in
+ * hcp::provision, which is the LED logic the product actually has.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -13,9 +17,6 @@
 #include "hcp/log/log.h"
 #include "hcp/input/input.h"
 
-#ifdef CONFIG_HCP_LED
-#include "hcp/led/strip.h"
-#endif
 #ifdef CONFIG_HCP_MODBUS_DEMO
 #include "hcp/modbus/master.h"
 #endif
@@ -36,30 +37,6 @@ static void OnButton(bool pressed, void* /*arg*/) {
            pressed ? "pressed" : "released");
 }
 #endif
-
-#ifdef CONFIG_HCP_LED
-// Optional addressable-LED demo. hcp::provision owns the LED when it is enabled
-// (it reflects the connectivity state instead of cycling colors).
-#ifndef CONFIG_HCP_PROVISION
-static void LedWorker(void* /*arg*/) {
-  hcp::led::Strip s(1);
-  if (!s.Open()) {
-    HCP_LOGW(hcp::log::kDomainDevice,
-             "led_strip open failed (apply ws2812-spi.overlay?)");
-    return;
-  }
-  static const hcp::led::Color seq[] = {
-      {40, 0, 0}, {0, 40, 0}, {0, 0, 40}, {20, 20, 0}, {0, 0, 0}};
-  unsigned i = 0;
-  while (true) {
-    s.SetAll(seq[i]);
-    s.Show();
-    i = (i + 1) % (sizeof(seq) / sizeof(seq[0]));
-    time::DelayMs(1200);
-  }
-}
-#endif  // !CONFIG_HCP_PROVISION
-#endif  // CONFIG_HCP_LED
 
 #ifdef CONFIG_HCP_MODBUS_DEMO
 // Bring-up aid: periodically poll a Modbus slave over uart1 to exercise the RTU
@@ -150,18 +127,13 @@ static void NetWorker(void* /*arg*/) {
 }
 #endif  // CONFIG_HCP_NET_DEMO
 
-void StartDemos() {
-  // With hcp::provision on, that module owns the button and the LED; everything
-  // here is for a build that does not run it.
+void StartBringupAids() {
+  // With hcp::provision on, that module owns the button and the status LED; the
+  // binding below is for bench builds that run without it.
 #ifndef CONFIG_HCP_PROVISION
   if (!hcp::input::Button::Init(OnButton, nullptr)) {
     HCP_LOGW(hcp::log::kDomainDevice, "button init failed (no sw0?)");
   }
-#endif
-
-#if defined(CONFIG_HCP_LED) && !defined(CONFIG_HCP_PROVISION)
-  Thread led(LedWorker, nullptr, "led");
-  led.Start();
 #endif
 
 #ifdef CONFIG_HCP_MODBUS_DEMO

@@ -1,10 +1,18 @@
 /*
- * The boot self-test: start a thread, push a few values through a message queue,
- * tick a timer, and then say "alive" once a second forever. It is the first
- * thing that runs on a board and the last thing still running when everything
- * else has failed, which is exactly why it stayed in the application after the
- * P0 phase: on a bench with no debugger, this is what answers "did it boot at
- * all".
+ * HCP boot liveness.
+ *
+ * This used to be the P0 self-test: a producer thread pushing 1..5 through a
+ * message queue, a timer ticking, and a consumer logging each value - plus an
+ * "alive, uptime" line every second. The queue/thread/timer paths it exercised
+ * are now exercised daily by hcp::provision and hcp::collector, so the self-test
+ * is gone: it cost six log lines on every boot to prove something that, if it
+ * were broken, would stop the device from ever reaching the network.
+ *
+ * What remains is the liveness line at debug level. It is worth keeping because
+ * it is the only output that continues when everything else has failed - but it
+ * is not information anybody reads in a shipping device, and in immediate mode
+ * each line costs milliseconds of the USB console. To see it, build with
+ * -DCONFIG_HCP_LOG_LEVEL_DEVICE=4.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -13,51 +21,14 @@
 #include "hcp/kernel/kernel.h"
 #include "hcp/log/log.h"
 
-using namespace hcp::kernel;
-
 namespace hcp {
 namespace app {
-static MessageQueue<uint32_t> g_q(8);
-
-static void ProducerWorker(void* /*arg*/) {
-  for (uint32_t i = 1; i <= 5; ++i) {
-    g_q.Send(i, 1000);
-    time::DelayMs(100);
-  }
-  g_q.Send(0xFFFFFFFFu, 1000);  // sentinel
-}
-
-static void Heartbeat(void* /*arg*/) {
-  HCP_LOGD(hcp::log::kDomainDevice, "tick");
-}
-
-void RunSelfTest() {
-  Thread th(ProducerWorker, nullptr, "producer");
-  if (!th.Start()) {
-    HCP_LOGE(hcp::log::kDomainDevice, "failed to start producer");
-  }
-
-  Timer hb(Heartbeat);
-  hb.StartPeriodic(1000);
-
-  uint32_t v = 0;
-  while (g_q.Receive(v, kInfiniteTimeoutMs)) {
-    HCP_LOGI(hcp::log::kDomainDevice, "got %u", static_cast<unsigned>(v));
-    if (v == 0xFFFFFFFFu) {
-      break;
-    }
-  }
-
-  th.Join();
-  hb.Stop();
-  HCP_LOGI(hcp::log::kDomainDevice, "bring-up done");
-}
 
 void AliveLoop() {
   while (true) {
-    HCP_LOGI(hcp::log::kDomainDevice, "alive, uptime %llu ms",
-             static_cast<unsigned long long>(time::UptimeMs()));
-    time::DelayMs(1000);
+    HCP_LOGD(hcp::log::kDomainDevice, "alive, uptime %llu ms",
+             static_cast<unsigned long long>(kernel::time::UptimeMs()));
+    kernel::time::DelayMs(1000);
   }
 }
 

@@ -11,14 +11,14 @@
  *   identity before the network     the serial number is the MQTT client-id, the
  *                                   topic prefix and the DHCP hostname; setting
  *                                   it after a connect waits for a renew
- *   self-test before the services   it is also the point where "the console
- *                                   really works" is established
  *   BLE hooks before provisioning   hcp::provision drives its reports through
  *                                   them
  *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "hcp-app.h"
+
+#include <zephyr/sys/printk.h>
 
 #include "app.h"
 
@@ -34,8 +34,14 @@
 namespace hcp {
 
 void App::Start() {
-  HCP_LOGI(hcp::log::kDomainDevice, "*** HCP (Helios Collector Platform) P0 bring-up ***");
-  HCP_LOGI(hcp::log::kDomainDevice, "build %s %s", __DATE__, __TIME__);
+  /* These two lines bypass hcp::log on purpose. The log ring is 1024 B (raising
+   * it overflows the ESP32-C5 SRAM), and the boot burst - BLE controller, Wi-Fi,
+   * provisioning - fills it before the log thread has drained anything, which is
+   * how "which build is this" was being dropped outright (Zephyr reports it as
+   * "N messages dropped"). An identity line is worth a direct write to the
+   * console; everything else can afford to queue. */
+  printk("*** HCP (Helios Collector Platform) ***\n");
+  printk("hcp: build %s %s\n", __DATE__, __TIME__);
 
 #ifdef CONFIG_HCP_OTA
   /* First thing, before any subsystem that can block or fail: if MCUboot still
@@ -57,8 +63,7 @@ void App::Start() {
   hcp::identity::Init();
 #endif
 
-  app::RunSelfTest();
-  app::StartDemos();
+  app::StartBringupAids();
 
 #ifdef CONFIG_BLUFI
   app::BlufiInit();

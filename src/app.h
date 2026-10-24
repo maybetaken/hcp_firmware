@@ -5,7 +5,7 @@
  * main.cpp). What it does on the way up lives in one file per concern, all
  * declared here:
  *
- *   app_bringup.cpp   the kernel self-test that proves the boot is alive
+ *   app_bringup.cpp   the liveness line that outlives every other subsystem
  *   app_demos.cpp     optional bring-up aids, each behind its own CONFIG_*_DEMO
  *   app_blufi.cpp     the standalone BluFi provisioning path (no hcp::provision)
  *   app_services.cpp  the running product: MQTT commands, SSDP, collector, OTA
@@ -22,23 +22,19 @@
 namespace hcp {
 namespace app {
 
-/* ---- bring-up self test (app_bringup.cpp) ---- */
+/* ---- boot liveness (app_bringup.cpp) ---- */
 
-// Exercises hcp::kernel (Thread, MessageQueue, Timer) and the log domain setup.
-// Returns once the producer has drained its queue, which is also the point where
-// "the console is really working" is established.
-void RunSelfTest();
-
-// Never returns: the 1 s liveness line that makes the boot observable after a
-// reset, without a debugger attached.
+// Never returns: the 1 s liveness line at debug level, kept because it is the
+// output that continues when everything else has stopped working. See the note in
+// app_bringup.cpp about why the P0 self-test that used to sit here is gone.
 void AliveLoop();
 
-/* ---- optional demos (app_demos.cpp) ---- */
+/* ---- optional bring-up aids (app_demos.cpp) ---- */
 
-// Starts whichever bring-up threads the build turned on (LED, Modbus polling,
-// serial loopback, raw Wi-Fi). Also binds the button when hcp::provision is off -
-// with provisioning on, that module owns the button and the LED.
-void StartDemos();
+// Starts whichever bench aids the build turned on (Modbus poll, serial loopback,
+// raw Wi-Fi), and binds the button when hcp::provision is absent - with
+// provisioning on, that module owns the button and the status LED.
+void StartBringupAids();
 
 /* ---- standalone BluFi provisioning (app_blufi.cpp) ---- */
 
