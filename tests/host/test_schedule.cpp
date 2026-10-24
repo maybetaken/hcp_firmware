@@ -144,6 +144,24 @@ TEST(Heartbeat, EachBeatPushesTheDeadlineBack) {
   EXPECT_TRUE(hb.Expired(120000 + 60000));
 }
 
+TEST(BusHealth, ClearRemovesEveryBackoff) {
+  /* A config download can bring a unit onto the bus that was silent before, and a
+   * backoff inherited from a table that no longer mentions it must not keep it
+   * unprobed. */
+  BusHealth h;
+  for (int i = 0; i < BusHealth::kFailLimit; i++) {
+    h.NoteResult(15, false, 1000 * i);
+    h.NoteResult(3, false, 1000 * i);
+  }
+  ASSERT_TRUE(h.Skip(15, 5000));
+  ASSERT_TRUE(h.Skip(3, 5000));
+
+  h.Clear();
+  EXPECT_FALSE(h.Skip(15, 5000));
+  EXPECT_FALSE(h.Skip(3, 5000));
+  EXPECT_EQ(h.Failures(15), 0);
+}
+
 TEST(ScheduleAndHealth, BackoffedSlaveDoesNotHoldUpTheBus) {
   Table t = TwoSlaves();
   Schedule s;

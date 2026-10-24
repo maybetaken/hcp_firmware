@@ -32,7 +32,6 @@ config HCP_MODBUS_TIMEOUT_MS
 
 config HCP_MODBUS_DEMO
 	bool "Run a periodic Modbus poll demo in main"
-	default y if HCP_BENCH
 	default n
 	help
 	  Bring-up aid: periodically reads holding registers from a configured
@@ -40,8 +39,16 @@ config HCP_MODBUS_DEMO
 	  slave on the bus it logs a -ENOTCONN per attempt, which still proves the
 	  interface resolved, the UART is configured and DE toggles.
 
-	  Implied by HCP_BENCH. It owns uart1, so do not run it together with the raw
-	  loopback self-test - the two would be writing the same pins.
+	  NOT implied by HCP_BENCH, and that is a measured correction rather than a
+	  preference: hcp::collector also opens uart1, and with the demo on the bench
+	  image both were running as masters on one half-duplex bus - the demo's
+	  "poll failed (err=-116)" every 2 s buried the collector's own poll attempts
+	  and made the bus unusable to observe. The question this demo used to answer
+	  ("does the RTU path work?") is now answered better by publishing a point table
+	  on <sn>/config over MQTT and watching the collector.
+
+	  Do not combine it with hcp::collector, nor with the raw loopback self-test:
+	  all three want the same pins.
 
 config HCP_MODBUS_DEMO_SLAVE
 	int "Demo: Modbus slave/unit address"

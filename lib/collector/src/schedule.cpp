@@ -123,5 +123,12 @@ int BusHealth::Failures(uint8_t unit) const {
   return 0;
 }
 
+void BusHealth::Clear() {
+  // `used` is the only field that must be reset for correctness, but zeroing the
+  // whole array also resets failures/retry_after so a stale entry can never come
+  // back to life if the same unit address reappears in a new table.
+  memset(entries_, 0, sizeof(entries_));
+}
+
 }  // namespace collector
 }  // namespace hcp

@@ -125,9 +125,12 @@ void ApplyConfig(Slot& slot) {
       break;
   }
   /* New points mean a new polling plan, and the old failure counts belong to the
-   * devices that are no longer on the list. */
+   * devices that are no longer on the list: a unit that was silent yesterday may
+   * be the meter somebody just wired up, so it must be probed again now rather
+   * than left in a 30 s backoff inherited from before it existed. */
   g_sched.Rebuild(g_table, (uint64_t)k_uptime_get(),
                   CONFIG_HCP_COLLECTOR_POLL_MS);
+  g_health.Clear();
 }
 
 /* A write request from <sn>/control/cmd, executed on this thread - which is the

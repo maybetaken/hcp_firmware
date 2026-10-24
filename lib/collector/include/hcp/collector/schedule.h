@@ -73,6 +73,11 @@ class BusHealth {
 
   int Failures(uint8_t unit) const;
 
+  // Forget every failure count. Called when the point table changes: a unit that
+  // did not answer yesterday may be the meter somebody just wired up, and a table
+  // that no longer contains a unit must not keep its stale backoff either.
+  void Clear();
+
  private:
   struct Entry {
     uint8_t unit = 0;
