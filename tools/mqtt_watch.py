@@ -36,12 +36,19 @@ import socket
 import struct
 import sys
 import time
+import uuid
 
 HOST = os.environ.get("MQTT_HOST", "192.168.31.110")
 PORT = int(os.environ.get("MQTT_PORT", "1883"))
 USER = os.environ.get("MQTT_USER", "maybetaken").encode()
 PASS = os.environ.get("MQTT_PASS", "maybetaken").encode()
-CLIENT_ID = b"hcp-watch-" + str(int(time.time()) % 10000).encode()
+# Unique per process, and it had to be said in code: this used to be the current second,
+# so two boards being released at once - two ota_release.sh runs, each subscribing every
+# few seconds - collided often enough to matter. MQTT closes the older session when a
+# second client connects with the same id, which arrived at one of the scripts as
+# "broker closed the connection" in the middle of publishing, and killed the release
+# verification of an update that was in fact going fine on the device.
+CLIENT_ID = b"hcp-watch-" + uuid.uuid4().hex[:8].encode()
 
 
 def _binstr(data: bytes) -> bytes:
@@ -168,6 +175,12 @@ def main(argv) -> int:
         loop(sock, seconds)
     except KeyboardInterrupt:
         pass
+    except ConnectionError as exc:
+        # The watch ending is not the command failing: by now the SUBSCRIBE (and the
+        # PUBLISH, for `pub`) has gone out, and the broker deciding to drop this
+        # observer must not be reported as "the device did not do it". Say what ended,
+        # and leave a non-zero status out of it - callers grep the messages, not this.
+        print(f"[watch] observation ended early: {exc}", flush=True)
     finally:
         sock.close()
     return 0
