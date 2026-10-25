@@ -35,7 +35,9 @@
 #                                  # following plain build cannot inherit them.
 set -euo pipefail
 
-IMAGE="env-zephyr-espressif"
+# The env image, overridable for CI (see .github/workflows/ci.yml) where it is pulled from
+# a registry instead of being built from Dockerfile.espressif locally.
+IMAGE="${HCP_CI_IMAGE:-env-zephyr-espressif}"
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # .../zephyr/hcp
 
 BOARD_OR_ALL="hcp_c6/esp32c6/hpcore"

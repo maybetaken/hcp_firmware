@@ -1,0 +1,92 @@
+# Copyright (c) 2026 maybetaken
+# SPDX-License-Identifier: Apache-2.0
+#
+# HCP continuous integration.
+#
+#   compliance    licence headers, and the version agreeing with CHANGELOG.md and its tag
+#   host-tests    the posix backends and the pure logic (ctest, 18 suites)
+#   firmware      hcp_c3 + hcp_c5 + hcp_c6 through Zephyr, warning-free
+#
+# The first two need nothing but a runner. The third needs the project's build image,
+# which is built by Dockerfile.espressif in the zephyr environment repository - that file
+# is not in this repository, so it has to be published where the runner can pull it. Set
+# it as the repository variable HCP_CI_IMAGE (e.g.
+# ghcr.io/<owner>/env-zephyr-espressif:latest); if the registry is private, also set
+# HCP_CI_REGISTRY plus the two HCP_CI_REGISTRY_* secrets. Until then the firmware job
+# skips rather than pretending to pass - a green check that built nothing is worse than no
+# check, and this project has already been burnt twice by "it reported success and the LED
+# did nothing".
+#
+# The same four gates run locally with one command: ./tools/ci.sh
+
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  # build.sh reads this; it defaults to the locally built env-zephyr-espressif image.
+  HCP_CI_IMAGE: ${{ vars.HCP_CI_IMAGE }}
+
+jobs:
+  compliance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: every source file carries the Apache-2.0 header
+        run: python3 tools/check_licence.py
+
+      - name: the claimed version hangs together
+        run: python3 tools/check_release.py
+
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # tests/host/CMakeLists.txt fetches GoogleTest by URL, so no cache is required.
+      - name: configure
+        run: cmake -S tests/host -B build/host-tests -DCMAKE_BUILD_TYPE=Debug
+
+      - name: build
+        run: cmake --build build/host-tests -j 4
+
+      - name: ctest
+        run: ctest --test-dir build/host-tests --output-on-failure
+
+  firmware:
+    runs-on: ubuntu-latest
+    if: ${{ vars.HCP_CI_IMAGE != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: log in to the image registry
+        if: ${{ vars.HCP_CI_REGISTRY != '' }}
+        run: echo "${{ secrets.HCP_CI_REGISTRY_PASSWORD }}" |
+             docker login "${{ vars.HCP_CI_REGISTRY }}" -u "${{ secrets.HCP_CI_REGISTRY_USERNAME }}" --password-stdin
+
+      - name: pull the build image
+        run: docker pull "$HCP_CI_IMAGE"
+
+      # build.sh runs docker itself (it is a one-shot container wrapper), so it is called
+      # from the runner rather than inside a container. It mounts its own parent directory
+      # as /workspace and works in /workspace/hcp, which means the repository has to be
+      # checked out under the name it has: hcp. Renaming it would need build.sh to learn a
+      # variable, not this file to gain a mount.
+      - name: build every board
+        run: ./build.sh all 2>&1 | tee build-ci.log
+
+      - name: no warnings, any warning is a build failure
+        run: |
+          if grep -E 'error:|warning:' build-ci.log | grep -v MCUBOOT_IMGTOOL; then
+            echo "::error::the build is not warning-free"
+            exit 1
+          fi
+          grep -E 'FLASH:|sram0_0_seg' build-ci.log | tail -6
+
+      - name: explain a skipped-looking run
+        if: ${{ failure() }}
+        run: tail -40 build-ci.log || true
