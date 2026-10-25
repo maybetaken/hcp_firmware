@@ -316,27 +316,30 @@ constexpr Color kLedBlue{60, 150, 255};
 // near zero - a balanced R+G+B reads white on a WS2812 once dimmed, which is what
 // {170,130,255} did here before.
 constexpr Color kLedViolet{170, 0, 255};
-// Pale green: everything the product needs is connected.
+// Pale green: connected (Wi-Fi up; the service session no longer changes it).
 constexpr Color kLedGreen{80, 255, 120};
 // Alerts: three blinks, then back to the steady pattern. The erase alert is
-// white rather than violet so it still reads on top of the violet wait state.
+// white rather than red so it still reads on top of a green connected state.
 constexpr Color kLedRed{255, 30, 20};
 constexpr Color kLedWhite{255, 255, 255};
 
 Color SteadyColor() {
   switch (g_pattern) {
+    /* The LED language, as the product asked for it: two states that cannot
+     * be told apart wrongly - not connected to Wi-Fi (provisioning or an
+     * attempt running): blue, fast, 0.2 s on / 0.2 s off; connected (Wi-Fi
+     * up, service session or not): green, slow, 0.8 s on / 0.8 s off. The
+     * FSM still distinguishes all four patterns; this renderer collapses
+     * them into the two. kLedViolet stays in the palette for the alert
+     * colour decision above and any future state that wants it. */
     case Fsm::Pattern::kGreenSolid:
-      return kLedGreen;
     case Fsm::Pattern::kVioletSlow:
-      // 0.5 Hz violet, same cadence as the provisioning blink: slow means
-      // "nothing is being attempted, this is the steady wait".
-      return (g_tick_count % 40) < 20 ? kLedViolet : kLedOff;
+      // Connected: green, 0.8 s on / 0.8 s off (16 ticks each).
+      return (g_tick_count % 32) < 16 ? kLedGreen : kLedOff;
     case Fsm::Pattern::kBlueFast:
-      // 2 Hz: 250 ms on, 250 ms off (5 ticks each at 50 ms)
-      return (g_tick_count % 10) < 5 ? kLedBlue : kLedOff;
     case Fsm::Pattern::kBlueSlow:
-      // 0.5 Hz: 1 s on, 1 s off
-      return (g_tick_count % 40) < 20 ? kLedBlue : kLedOff;
+      // Not connected: blue, 0.2 s on / 0.2 s off (4 ticks each).
+      return (g_tick_count % 8) < 4 ? kLedBlue : kLedOff;
     case Fsm::Pattern::kOff:
     default:
       return kLedOff;
