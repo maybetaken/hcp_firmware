@@ -84,14 +84,13 @@ build_one() {
   [ "$WANT_LED" = "0" ] && SLUG="${SLUG}_nold"
   [ "$WANT_RS485" = "1" ] && SLUG="${SLUG}_rs485"
 
-  # The bench image is a build of its own directory rather than a few extra -D
-  # flags on the product one, because .config differs in ways worth keeping apart:
-  # the aid threads are in, and device-domain logging is debug.
+  # The bench image gets a directory of its own rather than a few extra -D flags on the
+  # product one, because its .config differs in ways worth keeping apart (aid threads in,
+  # device-domain logging debug).
   #
-  # It keeps hcp::provision ON deliberately. A bench device that is on the network
-  # can be upgraded with ./tools/ota_release.sh and watched with
-  # ./tools/mqtt_watch.py, so nothing has to be plugged into USB again; drop that
-  # one benefit and the image stops being useful after the first release.
+  # It keeps hcp::provision on deliberately: a bench device on the network can be upgraded
+  # with ./tools/ota_release.sh and watched with ./tools/mqtt_watch.py, so nothing has to
+  # be plugged into USB again.
   local BENCH_ARGS=""
   if [ "$WANT_BENCH" = "1" ]; then
     BENCH_ARGS="-DCONFIG_HCP_BENCH=y -DCONFIG_HCP_LOG_LEVEL_DEVICE=4"
@@ -99,16 +98,14 @@ build_one() {
   fi
 
   # A versioned build is a build of its own: the two version symbols have to change
-  # together (an image whose MCUboot header still says 0.0.0+0 makes the
-  # bootloader's downgrade prevention compare nothing, while the application keeps
-  # reporting CONFIG_APP_VERSION), and a fresh directory avoids inheriting a
-  # configured-from-elsewhere cache.
+  # together (an image whose MCUboot header still says 0.0.0+0 makes the bootloader's
+  # downgrade prevention compare nothing while the application reports a different number),
+  # and a fresh directory avoids inheriting a configured-from-elsewhere cache.
   #
-  # Both overrides are written to one conf fragment rather than passed as
-  # -DCONFIG_X=...: a string symbol surviving docker/bash/cmake loses its quotes and
-  # Kconfig then refuses it as a "malformed string literal". The fragment is named
-  # after the build directory on purpose - a single shared file would let the next
-  # build change what a previous build reconfigures from.
+  # Both overrides go into one conf fragment rather than onto the command line: a string
+  # symbol crossing docker/bash/cmake can lose its quotes and Kconfig then refuses it as a
+  # "malformed string literal". The fragment is named after the build directory so the next
+  # build cannot change what a previous one reconfigures from.
   local confname=""
   if [ -n "$VERSION" ]; then
     confname="v${VERSION}"
@@ -116,24 +113,22 @@ build_one() {
   fi
 
   # Relative key path, which is what Zephyr resolves the signing key against
-  # (APPLICATION_CONFIG_DIR, cmake/mcuboot.cmake); a missing file fails the build
-  # with a clear message, the right answer to "signed image requested, no key".
+  # (APPLICATION_CONFIG_DIR); a missing file fails the build, which is the right answer to
+  # "signed image requested, no key".
   #
-  # MCUBOOT_GENERATE_UNSIGNED_IMAGE has to be switched off explicitly: it is y
-  # whenever no key is known, and CONFIG_MCUBOOT_SIGNATURE_KEY_FILE depends on it
-  # being n - without this line the key assignment is silently dropped and the image
-  # comes out with a hash TLV but no signature (Zephyr's hawkbit sample does the
-  # same thing).
+  # MCUBOOT_GENERATE_UNSIGNED_IMAGE must be switched off explicitly: it is y whenever no
+  # key is known, and CONFIG_MCUBOOT_SIGNATURE_KEY_FILE depends on it being n - without
+  # this line the key assignment is silently dropped and the image comes out with a hash
+  # TLV but no signature.
   if [ "$SIGNED" = "1" ]; then
     confname="${confname:+${confname}_}signed-${HCP_SIGN_KEY}"
     SLUG="${SLUG}_signed-${HCP_SIGN_KEY}"
   fi
 
-  # Bench/factory pre-provisioning: an untracked wificreds.conf next to prj.conf is
-  # folded into the same fragment - a second -DEXTRA_CONF_FILE on the command line
-  # would simply override the first one, not add to it. The file carries a Wi-Fi
-  # passphrase, so it is gitignored, and a build that contains it says so in its
-  # directory name rather than looking like the default image.
+  # Bench/factory pre-provisioning: an untracked wificreds.conf next to prj.conf is folded
+  # into the same fragment - a second -DEXTRA_CONF_FILE on the command line would override
+  # the first one, not add to it. The file carries a passphrase, so it is gitignored, and a
+  # build containing it says so in its directory name.
   local WANT_WIFI_FRAG=0
   if [ -f "${APP_DIR}/wificreds.conf" ]; then
     confname="${confname:+${confname}_}wifi"
@@ -147,14 +142,11 @@ build_one() {
     mkdir -p "${APP_DIR}/build"
     : > "$FRAG"
     if [ -n "$VERSION" ]; then
-      # The application reports the version as written; the MCUboot image header has
-      # to be told the same number in the only spelling imgtool accepts. Its regex
-      # (scripts/imgtool/version.py in the MCUboot tree: ^maj(.min(.rev(+build)?)?)?$)
-      # rejects a
-      # dotted fourth field, and the header really does carry one - major(B) minor(B)
-      # revision(H) build(I) - so "2.0.3.14" has to arrive as "2.0.3+14". Without
-      # this a four-part --version fails the build inside imgtool with
-      # "Invalid version number, should be maj.min.rev+build".
+      # The application reports the version as written; the MCUboot image header has to be
+      # told the same number in the only spelling imgtool accepts - its regex
+      # (scripts/imgtool/version.py: ^maj(.min(.rev(+build)?)?)?$) rejects a dotted fourth
+      # field while the header carries major/minor/revision/build. Without this a four-part
+      # --version fails inside imgtool.
       local IMGTOOL_VERSION="$VERSION"
       if [[ "$VERSION" =~ ^([0-9]+\.[0-9]+\.[0-9]+)\.([0-9]+)$ ]]; then
         IMGTOOL_VERSION="${BASH_REMATCH[1]}+${BASH_REMATCH[2]}"
@@ -173,10 +165,10 @@ build_one() {
     VERSION_ARGS="-DEXTRA_CONF_FILE='/workspace/hcp/build/.config-${confname}.conf'"
   fi
 
-  # Extra west/cmake arguments are part of the directory name too: west caches the
-  # -D values it was configured with, so a plain ./build.sh after a customized one
-  # would silently rebuild with the *previous* overrides still in .config (this bit
-  # me once: a 20 s-watchdog test image came back out of the "default" directory).
+  # Extra west/cmake arguments are part of the directory name too: west caches the -D
+  # values it was configured with, so a plain ./build.sh after a customized one would
+  # silently rebuild with the *previous* overrides still in .config (this bit once: a
+  # 20 s-watchdog test image came out of the "default" directory).
   if [ -n "$EXTRA_ARGS" ]; then
     SLUG="${SLUG}_x$(printf '%s' "$EXTRA_ARGS" | cksum | cut -d' ' -f1)"
   fi

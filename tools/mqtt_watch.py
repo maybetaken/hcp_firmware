@@ -1,34 +1,31 @@
 #!/usr/bin/env python3
 """Watch or drive the HCP device over MQTT, with no third-party packages.
 
-What is on the wire, from the device side (the subscribed set is
-lib/collector/src/commands.cpp, copied topic by topic from Home Assistant's plugins):
+On the wire (subscribed set: lib/collector/src/commands.cpp, copied topic by topic from
+Home Assistant's plugins):
 
-  published   <sn>/online        retained, the firmware version, on every session
-                <sn>/diagnostics periodically: ssid, rssi, led, uptime, ota
-                <sn>/notify      the collected registers, as one report
-                <sn>-K/online    {"switch_count":N,...} - the relay identity
-                <sn>-K/notify    the relay snapshot Home Assistant reads state from
+  published   <sn>/online        retained, firmware version, every session
+                <sn>/diagnostics periodic: ssid, rssi, led, uptime, ota
+                <sn>/notify      the collected registers
+                <sn>-K/online    {"switch_count":N,...}   <sn>-K/notify  relay snapshot
   subscribed  <sn>/cmd           "ota [http://host:port/]" - the bench update channel
-                <sn>/config, <sn>/control/{cmd,restart,reconfig,led},
-                <sn>/host/heartbeat, <sn>/ota/start, <sn>-K/control/cmd
+                <sn>/config, <sn>/control/{cmd,restart,reconfig,led}, <sn>/host/heartbeat,
+                <sn>/ota/start, <sn>-K/control/cmd
 
-Nothing is echoed back: there is no <sn>/ack, because Home Assistant has no reader for
-one, and <sn>/state became <sn>/diagnostics for the same reason - a topic nobody
-subscribes is a heartbeat published into the void.
+Nothing is echoed back: no <sn>/ack, and <sn>/state became <sn>/diagnostics - a topic
+nobody subscribes to is a heartbeat published into the void.
 
-One trap when watching: "-K" is a sibling, not a child, so 'hcp-M1230/#' does NOT match
-'hcp-M1230-K/online'. Subscribe the tree you care about, and subscribe before you
-publish - <sn>/notify is not retained, so a late subscriber misses it.
+Two traps that cost bench time: "-K" is a sibling tree, so '<sn>/#' does NOT match it; and
+<sn>/notify is not retained, so subscribing after publishing shows a silent device.
 
-This tool speaks MQTT 3.1.1 over a plain TCP socket, which is enough to see what the
-device sends and to make it react - useful when the USB console is not attached.
+This speaks MQTT 3.1.1 over a plain TCP socket - enough to see what a device sends and to
+make it react, useful when the USB console is not attached.
 
     ./tools/mqtt_watch.py sub 'hcp-M1230/#' 60
     ./tools/mqtt_watch.py pub 'hcp-M1230/cmd' 'ota http://192.168.31.74:9998/'
 
-Broker and credentials default to the values in prj.conf / Home Assistant's
-mosquitto add-on; override with MQTT_HOST / MQTT_PORT / MQTT_USER / MQTT_PASS.
+Broker and credentials default to prj.conf / Home Assistant's mosquitto add-on; override
+with MQTT_HOST / MQTT_PORT / MQTT_USER / MQTT_PASS.
 """
 
 import os
@@ -42,12 +39,10 @@ HOST = os.environ.get("MQTT_HOST", "192.168.31.110")
 PORT = int(os.environ.get("MQTT_PORT", "1883"))
 USER = os.environ.get("MQTT_USER", "maybetaken").encode()
 PASS = os.environ.get("MQTT_PASS", "maybetaken").encode()
-# Unique per process, and it had to be said in code: this used to be the current second,
-# so two boards being released at once - two ota_release.sh runs, each subscribing every
-# few seconds - collided often enough to matter. MQTT closes the older session when a
-# second client connects with the same id, which arrived at one of the scripts as
-# "broker closed the connection" in the middle of publishing, and killed the release
-# verification of an update that was in fact going fine on the device.
+# Unique per process. This used to be the current second, so two boards released at once
+# collided - and MQTT closes the older session when a client id reconnects, which arrived
+# as "broker closed the connection" and killed the verification of an update that had in
+# fact succeeded on the device.
 CLIENT_ID = b"hcp-watch-" + uuid.uuid4().hex[:8].encode()
 
 
@@ -176,10 +171,9 @@ def main(argv) -> int:
     except KeyboardInterrupt:
         pass
     except ConnectionError as exc:
-        # The watch ending is not the command failing: by now the SUBSCRIBE (and the
-        # PUBLISH, for `pub`) has gone out, and the broker deciding to drop this
-        # observer must not be reported as "the device did not do it". Say what ended,
-        # and leave a non-zero status out of it - callers grep the messages, not this.
+        # The watch ending is not the command failing: the SUBSCRIBE and any PUBLISH have
+        # already gone out, so a broker dropping this observer must not read as "the
+        # device did not do it".
         print(f"[watch] observation ended early: {exc}", flush=True)
     finally:
         sock.close()

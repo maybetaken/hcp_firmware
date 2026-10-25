@@ -7,37 +7,29 @@
 #   HCP_SN=hcp-M1230 ./tools/ota_release.sh 0.3.0
 #
 # What it does:
-#   1. builds the board with --signed --version <v> (both version stamps move
-#      together; an unsigned image will not boot under a signed MCUboot);
-#   2. stages zephyr.signed.bin as build/otasrv/<soc>/v<version>/firmware.bin with its
-#      version in version.txt beside it - the two file names hcp::ota expects under a
-#      base URL;
-#   3. publishes "ota http://<this host>:9998/<soc>/v<version>/" on <sn>/cmd so the
-#      device pulls it from here rather than from the host it learned over SSDP (a plain
-#      "ota" means "use the discovered host", which is right in production and wrong on a
-#      bench where the Mac is the file server).
+#   1. builds the board with --signed --version <v> (both version stamps move together;
+#      an unsigned image will not boot under a signed MCUboot);
+#   2. stages zephyr.signed.bin as build/otasrv/<soc>/v<version>/firmware.bin with
+#      version.txt beside it - the two names hcp::ota expects under a base URL;
+#   3. publishes "ota <that URL>" on <sn>/cmd, so the device pulls from here rather than
+#      from the host it learned over SSDP (right in production, wrong on a bench where
+#      the Mac is the file server).
 #
-# The path carries the SoC and the version because one flat directory is one image, and
-# two boards on the bench are not one device: staging the C3 over build/otasrv/
-# firmware.bin while a C6 is halfway through downloading it serves that C6 an image for
-# the wrong chip, with the wrong partition offsets, from a URL that looked exactly right.
-# Each board now fetches its own tree, and the version in the path means a release never
-# overwrites the one a device might still be pulling.
+# One directory per board and per version because one flat directory is one image: two
+# boards on the bench are not one device, and a shared firmware.bin means the second
+# release overwrites what the first is still downloading.
 #
-# Override the server address with OTA_HOST=... if this machine's address is not
-# what the device should reach.
+# Override the address the device reaches us on with OTA_HOST=...
 #
-# The device confirms the image only once it has a live broker session, and the
-# watchdog hcp::ota arms at boot reverts it otherwise - so a bad release comes
-# back by itself, and the USB port stays in the drawer.
-#
-# The MCUboot swap takes ~70 s on this flash and prints nothing while it runs; the
-# script below waits for <sn>/online to come back carrying the version it was given,
-# so a trigger is either confirmed or reported as unconfirmed - never assumed.
+# The MCUboot swap takes ~70 s on this flash and prints nothing while it runs, so the
+# script waits for <sn>/online to come back carrying the version it was given: a trigger
+# is either confirmed or reported as unconfirmed, never assumed. The device only confirms
+# an image once it has a live broker session, and the boot watchdog reverts it otherwise -
+# a bad release comes back by itself, and the USB port stays in the drawer.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"   # .../hcp
-SRV_ROOT="${HERE}/build/otasrv"   # what python3 -m http.server is asked to serve
+SRV_ROOT="${HERE}/build/otasrv"   # what ./tools/ota_server.py serves
 SRV_PORT=9998
 SN="${HCP_SN:-hcp-M1230}"
 # The address the device should reach us on: the LAN address of this machine,
@@ -65,19 +57,16 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# A bare board name is what people type (and what ./tools/flash.sh accepts), but two of
-# the three are multi-target boards and Zephyr refuses them without the SoC and CPU
-# qualifiers: "hcp_c6" reached cmake as -DBOARD=hcp_c6 and died with "Board qualifiers
-# `esp32c6` for board `hcp_c6` not found" - from a script whose whole job is to answer
-# whether a device came back, so that failure has to be impossible rather than obvious.
-# The C3 needs no qualifier, which is why the hole was not seen on it.
+# A bare board name is what people type, but two of the three boards are multi-target and
+# Zephyr refuses them without the SoC/CPU qualifier ("hcp_c6" died in cmake). The C3 needs
+# no qualifier, which is why this was only found when the second board came onto the bench.
 case "$BOARD" in
   hcp_c5) BOARD="hcp_c5/esp32c5/hpcore" ;;
   hcp_c6) BOARD="hcp_c6/esp32c6/hpcore" ;;
 esac
 
-# Which tree of the file server this board reads from. Taken from the board target's SoC
-# field when one was given, and from the board name otherwise, so both spellings work.
+# Which tree of the file server this board reads from; the SoC field of an explicit target
+# is taken as given.
 case "$BOARD" in
   hcp_c3*) SOC=esp32c3 ;;
   hcp_c5*) SOC=esp32c5 ;;
@@ -123,21 +112,15 @@ fi
 echo ">>> triggering ${SN} from ${OTA_URL}"
 "${HERE}/tools/mqtt_watch.py" pub "${SN}/cmd" "ota ${OTA_URL}"
 
-# Confirm it, or say so. This used to end by printing "watch it yourself", and that
-# is how a release got reported as failed on the strength of a log window that had
-# closed two minutes before the interesting part: the swap and the reboot land
-# whenever they land, and a triggered-but-unverified OTA is neither of the two
-# answers anyone needs. So the script waits for the device to come back announcing
-# THIS version, and only then calls it done.
-#
-# Budget: the download plus MCUboot's ~70 s silent swap plus the trial's confirm
-# window. 6 minutes is generous without being infinite.
+# Confirm it, or say so: wait for <sn>/online to come back carrying the version that was
+# asked for, so a trigger is confirmed or reported as unconfirmed, never assumed. Ending
+# with "watch it yourself" is how a release once looked failed because the log window had
+# closed before the swap finished. Budget = download + ~70 s swap + confirm window.
 echo ">>> waiting for ${SN}/online to report ${VERSION} (download + swap, up to 6 min)"
 DEADLINE=$(( $(date +%s) + 360 ))
 while [ "$(date +%s)" -lt "$DEADLINE" ]; do
-  # Match the value the device published, not just any occurrence: <sn>/online is
-  # retained, so a subscriber gets the last version immediately whether or not the
-  # device ever came back. Only a line whose payload IS the new version counts.
+  # The payload has to match, not just any occurrence: <sn>/online is retained, so a
+  # subscriber gets the last version whether or not the device ever came back.
   if "${HERE}/tools/mqtt_watch.py" sub "${SN}/online" 20 2>/dev/null |
      grep -qE " -> +${VERSION}[[:space:]]*$"; then
     echo ">>> ${SN} is running ${VERSION}"

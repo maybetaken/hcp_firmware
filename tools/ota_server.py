@@ -4,13 +4,10 @@
     ./tools/ota_server.py                    # build/otasrv on :9998
     ./tools/ota_server.py --port 9999
 
-The reason this exists instead of `python3 -m http.server 9998 -d build/otasrv`: that
-server accepts one connection at a time. With two boards on the bench, the second one's
-GET sat queued behind the first one's ~900 kB download and gave up - measured on an
-ESP32-C3 as `"ota":"error (-116)"` (Zephyr's ETIMEDOUT) on hcp-M1231 while hcp-M1230 was
-still pulling its own image. The per-board staging directories
-(esp32c3/v2.0.3.20/, esp32c6/v2.0.3.20/) fixed *which* file a device gets; this fixes the
-server being able to answer two devices at once.
+Why not `python3 -m http.server`: it answers one connection at a time, so with two boards
+on the bench the second one's GET queued behind ~900 kB of transfer and timed out - seen
+as "ota":"error (-116)" on a device whose image was fine. Per-board staging directories
+decide *which* file a device gets; this decides whether it can get it at all.
 """
 
 import argparse
@@ -24,7 +21,7 @@ ROOT = os.path.join(os.path.dirname(HERE), "build", "otasrv")
 
 
 class Handler(SimpleHTTPRequestHandler):
-    """One line per request, which is what tells a stalled release apart from a slow one."""
+    """One line per request, which tells a stalled release apart from a slow one."""
 
     def log_message(self, fmt, *args):
         print("[ota-server] %s %s" % (self.address_string(), fmt % args), flush=True)

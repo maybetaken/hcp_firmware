@@ -4,32 +4,25 @@
 #   ./tools/release.sh 2.0.3.15            # the normal case
 #   ./tools/release.sh 2.0.3.15 --skip-build
 #
-# It exists so that a release is one action instead of three that can be forgotten.
-# The rule it enforces is the project's: every version number gets BOTH a git tag
-# and an entry in CHANGELOG.md. Writing the entry first is what makes that happen -
-# the script refuses a version it cannot find a section for, because a number that
-# nothing describes is not a release, it is a rebuild, and the difference only shows
-# up months later when someone asks what changed between two devices.
+# The rule it enforces is the project's: every version number gets BOTH a git tag and a
+# `## <version>` section in CHANGELOG.md. Writing the entry first is what makes that
+# happen - a number nothing describes is not a release, it is a rebuild, and the
+# difference only shows up when someone asks months later what changed between two devices.
 #
-# The order is deliberate:
+# Refuses, in order, unless:
+#   1. the version is four dotted numbers (hcp::ota parses four fields, imgtool wants
+#      "x.y.z+w" - see the translation below);
+#   2. it is strictly greater than the current one, because a device refuses to install
+#      an equal or lower version over the network at all;
+#   3. CHANGELOG.md has "## <version>";
+#   4. the tag does not already exist - a tag is not moved once it names a release;
+#   5. every board builds warning-free, so a tag cannot point at a tree that does not
+#      compile.
 #
-#   1. refuse unless the version is four dotted numbers - 2.0.3.14, not v2.0.3-14 -
-#      because hcp::ota parses up to four fields and MCUboot needs "2.0.3+14";
-#   2. refuse unless it is strictly greater than the current one, which is the same
-#      gate hcp::ota applies on the device: an equal or lower version cannot be
-#      installed over the network at all, so tagging one would create a release
-#      nobody can deploy;
-#   3. refuse unless CHANGELOG.md has "## <version>";
-#   4. refuse if the tag already exists;
-#   5. bump BOTH version symbols (see CHANGELOG.md for why they differ), build every
-#      board, and only then commit and tag - so a tag cannot point at a tree that
-#      does not compile.
+# It commits exactly three files (prj.conf, Kconfig, CHANGELOG.md) and leaves everything
+# else alone, so a release does not sweep up unrelated work in progress.
 #
-# It commits exactly three files (prj.conf, Kconfig, CHANGELOG.md) and leaves
-# everything else alone, so a release does not sweep up unrelated work in progress.
-#
-# There is no git remote yet. When there is one, push after:
-#   git push && git push origin v2.0.3.15
+# No git remote yet; when there is one: git push && git push origin v<version>
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"   # .../hcp
@@ -55,9 +48,9 @@ die() { echo "release: $*" >&2; exit 1; }
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
   die "${VERSION} is not major.minor.patch.build (four dotted numbers, e.g. 2.0.3.15)"
 
-# MCUboot's imgtool takes the same number with a '+' before the build field; its regex
-# (scripts/imgtool/version.py) rejects a dotted fourth one. Kept here and in build.sh
-# so the two cannot drift.
+# MCUboot's imgtool takes the same number with a '+' before the build field: its regex
+# (scripts/imgtool/version.py) rejects a dotted fourth one. Kept here and in build.sh, so
+# the two cannot drift.
 IMGTOOL_VERSION="${VERSION%.*}+${VERSION##*.}"
 
 # 2. greater than what is in the tree now
@@ -116,8 +109,8 @@ print(f">>> bumped prj.conf and Kconfig")
 PY
 
 if [ "$SKIP_BUILD" = "0" ]; then
-  # All boards, product configuration, with the new version as the default. A release
-  # tag on a tree that does not build is worse than no tag: it looks authoritative.
+  # All boards, product configuration, new version as the default: a release tag on a
+  # tree that does not build is worse than no tag, because it looks authoritative.
   echo ">>> building all boards (use --skip-build to bypass)"
   if ! ./build.sh all > build/release-build.log 2>&1; then
     tail -25 build/release-build.log
