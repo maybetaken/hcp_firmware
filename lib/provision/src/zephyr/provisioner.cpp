@@ -325,16 +325,20 @@ constexpr Color kLedWhite{255, 255, 255};
 
 Color SteadyColor() {
   switch (g_pattern) {
-    /* The LED language, as the product asked for it: two states that cannot
-     * be told apart wrongly - not connected to Wi-Fi (provisioning or an
-     * attempt running): blue, fast, 0.2 s on / 0.2 s off; connected (Wi-Fi
-     * up, service session or not): green, slow, 0.8 s on / 0.8 s off. The
-     * FSM still distinguishes all four patterns; this renderer collapses
-     * them into the two. kLedViolet stays in the palette for the alert
-     * colour decision above and any future state that wants it. */
+    /* The LED language, as the product asked for it: not connected to Wi-Fi
+     * (provisioning or an attempt running): blue, fast, 0.2 s on / 0.2 s
+     * off. Wi-Fi up: green, slow, 0.8 s on / 0.8 s off while the service
+     * session is still coming up behind it. Everything settled: solid
+     * green, no more blinking - a light that keeps flashing after the user
+     * has "connected" reads as something still being wrong. The FSM keeps
+     * its four patterns (and its host tests); this renderer maps them onto
+     * the three the product asked for. */
     case Fsm::Pattern::kGreenSolid:
+      // Fully connected: steady green.
+      return kLedGreen;
     case Fsm::Pattern::kVioletSlow:
-      // Connected: green, 0.8 s on / 0.8 s off (16 ticks each).
+      // Wi-Fi up, service session still coming up: green, 0.8 s on / 0.8 s
+      // off (16 ticks each).
       return (g_tick_count % 32) < 16 ? kLedGreen : kLedOff;
     case Fsm::Pattern::kBlueFast:
     case Fsm::Pattern::kBlueSlow:
