@@ -137,8 +137,8 @@ class PhoneProvisioner {
   // One phone-driven association attempt failed: retry it silently while the
   // budget lasts, and only tell the phone about the final failure (see
   // kPhoneConnAttempts for why an intermediate FAIL report is fatal to the
-  // WeChat mini-program's UI).
-  void FailOrRetry();
+  // WeChat mini-program's UI). Returns true when a retry was scheduled.
+  bool FailOrRetry();
   const Ap* FindAp(const char* ssid) const;
 
   // ---- thunks: the APIs below take plain function pointers ----

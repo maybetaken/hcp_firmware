@@ -119,23 +119,30 @@ const PhoneProvisioner::Ap* PhoneProvisioner::FindAp(const char* ssid) const {
  * gone, blufi_send() returns -ENOTCONN. */
 void PhoneProvisioner::OnSuccReportDue() { ReportSuccess(); }
 
-// If the driver never produces an association/DHCP result, still send a final FAIL
-// so the phone UI does not sit in "connecting" forever.
+// If the driver never produces an association/DHCP result, the deadline hands the
+// attempt to the retry policy: the phone is told only when the budget is exhausted
+// (an intermediate FAIL report locks the WeChat mini-program's UI at 85%), and a
+// scheduled retry gets one final, shorter grace so a hung attempt cannot dangle
+// forever without a verdict.
 void PhoneProvisioner::OnProvTimeout() {
   if (!atomic_get(&prov_active_)) {
     return;
   }
-  atomic_set(&prov_active_, 0);
-  if (!hcp::net::wifi::IsConnected()) {
-    HCP_LOGW(hcp::log::kDomainWifi, "blufi: provisioning timeout");
-    ReportFail(0x01);
-  } else if (!atomic_get(&succ_sent_)) {
-    /* Connected but the phone was never told: the got-IP event was likely lost
-     * (net-mgmt event queue overflow) - deliver the final report now so the
-     * client does not sit at 85% while the link is actually up. */
-    HCP_LOGW(hcp::log::kDomainWifi,
-             "blufi: connected but no SUCCESS sent, recovering");
-    ReportSuccess();
+  if (hcp::net::wifi::IsConnected()) {
+    atomic_set(&prov_active_, 0);
+    if (!atomic_get(&succ_sent_)) {
+      /* Connected but the phone was never told: the got-IP event was likely lost
+       * (net-mgmt event queue overflow) - deliver the final report now so the
+       * client does not sit at 85% while the link is actually up. */
+      HCP_LOGW(hcp::log::kDomainWifi,
+               "blufi: connected but no SUCCESS sent, recovering");
+      ReportSuccess();
+    }
+    return;
+  }
+  HCP_LOGW(hcp::log::kDomainWifi, "blufi: attempt deadline");
+  if (FailOrRetry()) {
+    k_work_reschedule(&prov_timeout_, K_SECONDS(15));
   }
 }
 
@@ -156,20 +163,19 @@ void PhoneProvisioner::OnWifiEvent(hcp::net::WifiEvent e) {
     /* Any driver event means the radio was in use: from here on, the
      * pre-connect teardown dance in ConnectNow() is live. */
     wifi_was_active_ = true;
+    /* A failure while our own pre-connect Disconnect() is settling is not a
+     * real association verdict - but it DOES kill the attempt in flight, so
+     * it must still go through the retry policy (the old early-return here
+     * skipped the retry AND the report, stalling the phone until the 30 s
+     * deadline dumped a lone FAIL report on it - the 85% lockup). The FSM's
+     * own budget is protected on its side (provision::NotifyWifiEvent
+     * filters the window before the state machine sees anything). */
 #ifdef CONFIG_HCP_PROVISION
-    /* The esp32 driver reports "dropped while CONNECTING" as an association
-     * failure, which our own pre-connect Disconnect() also triggers. Do not tell
-     * the phone it failed when we are the ones who just tore the link down. */
     if (hcp::provision::InOwnDisconnectWindow()) {
       HCP_LOGD(hcp::log::kDomainWifi,
-               "blufi: self-inflicted drop, not reporting FAIL");
-      return;
+               "blufi: self-inflicted drop; retrying the attempt");
     }
 #endif
-    /* Not a straight FAIL report anymore: the WeChat mini-program locks its UI
-     * at 85% on any report that is not the final SUCCESS (see
-     * kPhoneConnAttempts), so a failed attempt is retried silently and only
-     * the exhaustion of the budget is reported. */
     FailOrRetry();
   } else if (e == E::kDisconnected) {
     k_sem_give(&disconn_sem_);
@@ -222,18 +228,18 @@ void PhoneProvisioner::ConnectNow() {
 }
 
 // One phone-driven association attempt failed (the driver reported a failure or
-// the connect request was refused). Retry silently while the budget lasts;
-// tell the phone only once, at the end.
-void PhoneProvisioner::FailOrRetry() {
+// the connect request was refused). Retry silently while the budget lasts; tell
+// the phone only once, at the end. Returns true when a retry was scheduled.
+bool PhoneProvisioner::FailOrRetry() {
   if (!atomic_get(&prov_active_)) {
-    return;  // not a phone-driven attempt in flight: nothing to report
+    return false;  // not a phone-driven attempt in flight: nothing to report
   }
   if (phone_attempts_ < kPhoneConnAttempts) {
     HCP_LOGW(hcp::log::kDomainWifi,
              "blufi: attempt %d/%d failed; retrying without telling the phone",
              phone_attempts_, kPhoneConnAttempts);
     k_work_reschedule(&retry_work_, K_MSEC(300));
-    return;
+    return true;
   }
   atomic_set(&prov_active_, 0);
   k_work_cancel_delayable(&prov_timeout_);
@@ -241,6 +247,7 @@ void PhoneProvisioner::FailOrRetry() {
            "blufi: all %d attempts failed, reporting the final FAIL",
            kPhoneConnAttempts);
   ReportFail(0x01);
+  return false;
 }
 
 // Accumulate a Wi-Fi scan into a BluFi WIFI_LIST payload.
@@ -344,6 +351,9 @@ void PhoneProvisioner::OnData(uint8_t type, uint8_t subtype, const uint8_t* data
       }
       case BLUFI_CTRL_GET_WIFI_LIST:
         HCP_LOGI(hcp::log::kDomainWifi, "blufi: wifi scan requested");
+        /* A scan drives the shared radio: from here on the pre-connect
+         * teardown dance in ConnectNow() is live, same as any driver event. */
+        wifi_was_active_ = true;
         wlist_len_ = 0;
         scan_pass_ = 0;
         ap_count_ = 0;
