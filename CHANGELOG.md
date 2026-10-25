@@ -40,6 +40,59 @@ HCP_SN=hcp-M1231 ./tools/ota_release.sh 2.0.3.15 hcp_c3 --bench
 a tree that does not compile. There is no git remote yet, so nothing is pushed: when
 one exists, `git push && git push --tags` after the release.
 
+## 2.0.3.21 — 2026-10-25
+
+The C6's strip is driven now, and the cause was one symbol's worth of off-by-one between
+the two RMT generations.
+
+The C3's `tx_lim` is the address the read pointer has to reach, so 24 symbols want **23**.
+The C5/C6 register is documented in its own header as "the maximum entries that CHANNELn
+can send out" — a count — so the same frame wants **24**. Left at the C3's number on the
+C6, the frame never ended at all: no TX_DONE, the read pointer ran on to 48 (the end of
+its memory block), `chnstatus` bit22 `mem_empty_chn` was raised and only the threshold
+event (bit8) fired. 2.0.3.19 and 2.0.3.20 both reported that as `rmt ch0 never done` on
+every frame, which is the sound a driver makes when it is asking the hardware a question
+it has not answered yet.
+
+The answer came from a probe rather than from arithmetic: `CONFIG_WS2812_RMT_PROBE`
+(default `n`) runs ten candidate frame-end settings through one test frame at boot and
+logs what the hardware said for each. What it said on the C6, with 24 symbols pushed:
+
+| limit | TX_DONE? | raw | reads |
+|---|---|---|---|
+| 23 (the C3's number) | never | `0x100` | read pointer 48, `mem_empty` set |
+| **24** | **yes** | `0x101` | frame = exactly the data |
+| 47 / 48 | yes | `0x001` | only because the channel ran to the end of its 48-entry block |
+
+That middle column is the trap, and it is the fourth time in this driver's short life that
+a completion bit was not the measurement: three of the ten candidates report TX_DONE and
+only one of them puts exactly the frame on the wire. 47/48 would have shipped a green
+flash where violet was intended, which is a bug report about colours rather than about a
+dark LED — harder to see, and found only by reading the addresses.
+
+Riding along:
+
+- the chunk path is now one function that takes `limit` / `append_eof` / `wrap` instead of
+  hard-coding them, which is what made the probe a table rather than ten builds; the
+  production call passes the same values the C3 has always used, so **the C3's register
+  write sequence is unchanged**;
+- the once-per-boot frame log now reports the status word measured *before* the channel is
+  started as well (`written=`), because "the symbols landed in the RAM" and "the counter
+  finished" are two different facts and only the second one used to be logged;
+- **`tools/ota_server.py`**: the bench served images with `python3 -m http.server`, which
+  answers one connection at a time. With two boards pulling at once, the second one's GET
+  queued behind ~900 kB of transfer and gave up - seen on the C3 as `"ota":"error (-116)"`
+  (ETIMEDOUT) with the device still on 2.0.3.18. Threaded now, and `ota_release.sh` says so.
+
+Bench, ESP32-C6 (flashed over USB because the image under test carries the probe; the
+version stamp is unchanged, so this is not a release artifact): first frame
+`ch0 24 symbols: written=0x00018000 status=0x00018000 raw=0x00000101`, 45 flushes across
+45 s of the colour cycle, `never done` = 0, `led flush failed` = 0. What the strip
+actually shows is the next thing to confirm.
+
+ESP32-C5 is the same register generation and is compile-verified only - no C5 hardware on
+the bench, so its `RMT_TX_LIMIT` is inherited from the C6's measurement rather than its own.
+
 ## 2.0.3.20 — 2026-10-25
 
 The C6's strip lights now: 2.0.3.19 pushed its symbols into the RMT channel RAM and never
