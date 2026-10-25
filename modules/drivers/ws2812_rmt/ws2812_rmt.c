@@ -485,7 +485,7 @@ static int ws2812_rmt_init(const struct device *dev)
 }
 
 /* DEVICE_DT_INST_DEFINE, not LED_DEVICE_DT_INST_DEFINE: this Zephyr's led_strip headers
- * do not define the latter, and the in-tree ws2812_spi driver uses the former. */
+ * do not define the latter. */
 #define WS2812_RMT_DEFINE(idx)                                                   \
 	static const struct ws2812_rmt_config ws2812_rmt_cfg_##idx = {           \
 		.data = GPIO_DT_SPEC_INST_GET(idx, data_gpios),                  \

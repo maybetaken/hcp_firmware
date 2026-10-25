@@ -30,10 +30,4 @@
 			bias-pull-up;
 		};
 	};
-
-	/* No SPI2 group: the strip is on RMT (../common/hcp_ws2812.dtsi), so GPIO6 - the clock
-	 * pad that route reserved - is unclaimed again. It was not colliding with anything
-	 * in this build; the collision actually demonstrated is the C3's, where the clock
-	 * first sat on GPIO11, the chip's own RX. Pins in use: console 16/17, modbus 22/23
-	 * (TTL) or 18/20 + DE 19 (RS485), relays 0/3, button 9, LED 8. */
 };

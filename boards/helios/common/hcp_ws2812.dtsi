@@ -1,14 +1,8 @@
 /*
  * HCP shared WS2812 binding: one data line, waveforms from RMT.
  *
- * All three Helios boards have the strip's data line on GPIO8 - what each board's old
- * SPI-MOSI group named, and what the previous firmware drove (_led(GPIO_NUM_8, 1)).
- *
- * Not the worldsemi,ws2812-spi route they used to use: that needs a SPI controller plus
- * a clock pin the protocol never reads, and the extra pin is a pin spent. On the C3 it
- * went to GPIO11 - the chip's own RX - and two boards were dark before it moved to GPIO7;
- * the C5 and C6 each kept a pad (GPIO9, GPIO6) reserved for a signal nobody reads. RMT
- * needs the one wire the strip actually has. See CHANGELOG.md 2.0.3.19.
+ * The strip's data line is GPIO8 on all three Helios boards - the same pin the previous
+ * firmware drove (_led(GPIO_NUM_8, 1)).
  *
  * The alias is what the application looks up, so nothing above the devicetree knows
  * which peripheral produces the waveform.
@@ -28,7 +22,6 @@
 		compatible = "espressif,esp32-ws2812-rmt";
 		status = "okay";
 
-		/* Also the pin the previous firmware drove with RMT. */
 		data-gpios = <&gpio0 8 GPIO_ACTIVE_HIGH>;
 		chain-length = <1>;
 

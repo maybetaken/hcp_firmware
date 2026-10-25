@@ -24,7 +24,7 @@ config HCP_LED_BACKEND_ZEPHYR
 	  The strip is whatever the board's devicetree binds to the hcp-led-strip alias -
 	  the espressif,esp32-ws2812-rmt driver (modules/drivers/ws2812_rmt) on all three
 	  Helios boards. No bus dependency comes from here: a driver's own Kconfig brings
-	  its bus, and a board bound to RMT must not link an SPI controller it cannot use.
+	  its bus, and a board should not link a controller it cannot use.
 
 config HCP_LED_BACKEND_POSIX
 	bool "POSIX framebuffer (host tests)"

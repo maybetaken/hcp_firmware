@@ -112,11 +112,9 @@ bool Strip::Show() {
     rgb[i].b = static_cast<uint8_t>((impl_->fb[i].b * scale) / 100u);
   }
 
-  /* No critical section. The SPI route needed one because a gap of tens of microseconds
-   * inside a frame reads as the latch condition (the C6's stray green flash under
-   * violet); RMT owns the waveform once started, so an ISR delays a frame rather than
-   * corrupting a bit in it. Keeping the lock would also run this call's busy-wait - and
-   * its timeout, on a channel that never finishes - with interrupts off. */
+  /* No critical section: RMT owns the waveform once started, so an ISR delays a frame
+   * rather than corrupting a bit inside one. A blackout here would also run this call's
+   * busy-wait - and its timeout, on a channel that never finishes - with interrupts off. */
   const int rc = led_strip_update_rgb(impl_->dev, rgb, count_);
 
   if (rc == 0) {

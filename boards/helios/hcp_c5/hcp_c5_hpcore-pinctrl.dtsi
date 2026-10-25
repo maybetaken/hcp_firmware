@@ -29,8 +29,4 @@
 			bias-pull-up;
 		};
 	};
-
-	/* No SPI2 group: the strip is on RMT (../common/hcp_ws2812.dtsi), so the clock pad
-	 * that route reserved - GPIO9, picked by exclusion - is unclaimed again. Pins in
-	 * use: console 11/12, modbus 26/25, relays 0/3, button 28, LED 8. */
 };

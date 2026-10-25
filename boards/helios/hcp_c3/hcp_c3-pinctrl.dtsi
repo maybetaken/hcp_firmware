@@ -29,9 +29,4 @@
 			bias-pull-up;
 		};
 	};
-
-	/* No SPI2 group: the strip is on RMT (../common/hcp_ws2812.dtsi), so the clock pin
-	 * that route needed is unclaimed again. It used to sit on GPIO7 because GPIO11, its
-	 * first home, is the chip's own RX. Pins in use: TTL 1/2, RS485 4/6 + DE 5,
-	 * relays 0/3, button 10, LED 8. */
 };
