@@ -8,8 +8,8 @@
  * provisioning on, that module owns the button (and the status LED).
  *
  * The P0 LED colour-cycle demo used to live here too. It is gone: what it proved
- * (the ws2812-spi path lights the strip) is exercised continuously by the status
- * light in hcp::provision, which is the LED logic the product actually has.
+ * (the strip lights at all) is exercised continuously by the status light in
+ * hcp::provision, which is the LED logic the product actually has.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -56,7 +56,7 @@ void BringupAids::LedWorker(void* /*arg*/) {
   hcp::led::Strip s(1);
   if (!s.Open()) {
     HCP_LOGW(hcp::log::kDomainDevice,
-             "led_strip open failed (apply ws2812-spi.overlay?)");
+             "led_strip open failed (is CONFIG_HCP_LED on, and the alias bound?");
     return;
   }
   static const hcp::led::Color seq[] = {

@@ -291,7 +291,7 @@ constexpr Color kLedOff{0, 0, 0};
 /* Palette authored at full 8-bit scale with soft hues; CONFIG_HCP_PROVISION_LED_BRIGHTNESS
  * dims everything with one knob. To match a reference device, change these values
  * only - the cadence and the state mapping live elsewhere on purpose.
- * (ws2812_spi applies the devicetree color-mapping, so these are logical RGB.) */
+ * (the driver applies the devicetree color-mapping, so these are logical RGB.) */
 // Sky blue: waiting for provisioning, or an attempt is running.
 constexpr Color kLedBlue{60, 150, 255};
 // Purple: Wi-Fi is up, the service session (MQTT) is not. Keep the green channel
