@@ -93,6 +93,32 @@ actually shows is the next thing to confirm.
 ESP32-C5 is the same register generation and is compile-verified only - no C5 hardware on
 the bench, so its `RMT_TX_LIMIT` is inherited from the C6's measurement rather than its own.
 
+### Confirmed after the tag
+
+- **The C6's strip lights.** Confirmed by eye on the bench, which is the only test that
+  settles what a completion bit never does: the waveforms are on the pin and the strip
+  reads them.
+- Both boards were then released to 2.0.3.21 **at the same time**, each from its own tree:
+  the file server log shows `GET /esp32c3/v2.0.3.21/firmware.bin` from 192.168.31.52 and
+  `GET /esp32c6/v2.0.3.21/firmware.bin` from 192.168.31.124 in the same second. That is the
+  failure mode of the 2.0.3.20 release to the C3 (a queued GET, `"ota":"error (-116)"`)
+  fixed by the two changes that made it possible - per-board staging and
+  `tools/ota_server.py`.
+- C6 on the release build (not the probe build): 0 `never done`, 24 flushes in the window,
+  `[ota] new image kept (session is up)`.
+- C3 on 2.0.3.21: `fw 2.0.3.21`, uptime climbing, `ssid Xiaomi_Jiang`, `rssi -47`, notify
+  flowing (83 messages in 70 s), heartbeat on schedule. It came up with `"led":"off"` - the
+  flag is persisted in NVS (it is Home Assistant's light entity, so surviving a reboot is
+  its job), and `control/led on` put it back: `"led":"on"` 40 s later. Not a regression,
+  but a reminder that a dark LED can have a cause that has nothing to do with RMT.
+
+What this release still cannot show, without a console on the C3: its strip is believed
+because the register sequence it writes is unchanged from 2.0.3.18 (confirmed on that bench
+the day of the release), not because it was re-measured; and `led flush failed` has no path
+to the network at all - diagnostics carries no frame counter, so a dead strip on a device
+with no serial cable is invisible from Home Assistant. Both are enhancement candidates rather
+than open bugs.
+
 ## 2.0.3.20 — 2026-10-25
 
 The C6's strip lights now: 2.0.3.19 pushed its symbols into the RMT channel RAM and never
