@@ -30,10 +30,7 @@
 		};
 	};
 
-	/* No SPI2 group: the WS2812 is driven by RMT on its data line alone
-	 * (../common/hcp_ws2812.dtsi), so there is nothing here to configure. The clock pad
-	 * the SPI route reserved was GPIO9, chosen by exclusion rather than by luck - the
-	 * pins this board uses are console 11/12, modbus 26/25, relays 0/3, button 28 and
-	 * LED 8. No collision on the C5, unlike the C3 (clock on its own RX) and the C6
-	 * (clock on its button); still a pad spent on a line the protocol never reads. */
+	/* No SPI2 group: the strip is on RMT (../common/hcp_ws2812.dtsi), so the clock pad
+	 * that route reserved - GPIO9, picked by exclusion - is unclaimed again. Pins in
+	 * use: console 11/12, modbus 26/25, relays 0/3, button 28, LED 8. */
 };

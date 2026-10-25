@@ -30,11 +30,8 @@
 		};
 	};
 
-	/* No SPI2 group. The WS2812 is driven by RMT on the one line it actually has
-	 * (see ../common/hcp_ws2812.dtsi), so there is nothing here to configure: the
-	 * SPI route needed a clock pin, and where it landed mattered - GPIO11 is the
-	 * chip's own RX, and two boards were dark before it moved to GPIO7. That choice
-	 * was made by exclusion, and the exclusion list is worth keeping: TTL 1/2, RS485
-	 * 4/6 plus DE 5, relays 0/3, button 10, LED 8. Leaving the pin unclaimed is the
-	 * point rather than a side effect. */
+	/* No SPI2 group: the strip is on RMT (../common/hcp_ws2812.dtsi), so the clock pin
+	 * that route needed is unclaimed again. It used to sit on GPIO7 because GPIO11, its
+	 * first home, is the chip's own RX. Pins in use: TTL 1/2, RS485 4/6 + DE 5,
+	 * relays 0/3, button 10, LED 8. */
 };

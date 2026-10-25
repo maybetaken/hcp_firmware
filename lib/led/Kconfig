@@ -5,12 +5,11 @@ menuconfig HCP_LED
 	bool "HCP LED strip (WS2812-class)"
 	default y
 	help
-	  Addressable LED strip support. The WS2812 node is described in the shared
-	  board devicetree (boards/helios/common/hcp_ws2812.dtsi) since the LED is
-	  physically present on all Helios boards; this option only decides whether the
-	  application drives it, and the backend choice below decides through what. To
-	  also drop a driver from the binary, disable the CONFIG it selects
-	  (LED_STRIP, and LED_STRIP_ESP_RMT for the driver itself).
+	  Addressable LED strip support. The WS2812 node is in the shared board
+	  devicetree (boards/helios/common/hcp_ws2812.dtsi) because the LED is present
+	  on all Helios boards; this option decides only whether the application drives
+	  it, and the backend below decides through what. To drop the driver from the
+	  binary as well, disable what it selects (LED_STRIP, LED_STRIP_ESP_RMT).
 
 if HCP_LED
 
@@ -22,11 +21,10 @@ config HCP_LED_BACKEND_ZEPHYR
 	bool "Zephyr led_strip API on the hcp-led-strip alias"
 	select LED_STRIP
 	help
-	  The strip is whatever the board's devicetree binds to that alias - today the
-	  espressif,esp32-ws2812-rmt driver (modules/drivers/ws2812_rmt) on all three
-	  Helios boards. Selecting this adds no SPI dependency of its own, because a
-	  driver's Kconfig brings its own bus: a board bound to RMT must not link an SPI
-	  controller it does not use.
+	  The strip is whatever the board's devicetree binds to the hcp-led-strip alias -
+	  the espressif,esp32-ws2812-rmt driver (modules/drivers/ws2812_rmt) on all three
+	  Helios boards. No bus dependency comes from here: a driver's own Kconfig brings
+	  its bus, and a board bound to RMT must not link an SPI controller it cannot use.
 
 config HCP_LED_BACKEND_POSIX
 	bool "POSIX framebuffer (host tests)"

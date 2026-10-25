@@ -167,10 +167,16 @@ with it.
 
 The reason is the second pin. The WS2812 has one wire; a SPI controller insists on
 driving a clock as well, and that pad was never free: on the C3 it landed on GPIO11,
-which is the chip's own RX (two boards dark before it moved to GPIO7), and on the C6 it
-sat on **GPIO6, which is that board's button**. The C5's GPIO9 was free only because it
-was picked by exclusion. RMT needs the data line and nothing else, so three boards now
-share one devicetree file and no board spends a pad on a signal nobody reads.
+which is the chip's own RX (two boards dark before it moved to GPIO7), and the C5 and C6
+each kept a spare pad (GPIO9 and GPIO6) reserved for a signal the protocol does not use.
+The C5's GPIO9 was free only because it was picked by exclusion. RMT needs the data line
+and nothing else, so three boards now share one devicetree file and no board spends a pad
+on a signal nobody reads.
+
+> Correction while tidying these comments: an earlier revision of this entry said GPIO6
+> was the C6's button, i.e. a live collision. It is not - `HCP_BTN_GPIO` on the C6 is
+> GPIO9, and GPIO6 is claimed by nothing in that build. The C3's GPIO11 case is the only
+> collision actually demonstrated; the rest is a pad spent, not a pin fought over.
 
 Porting the driver to the other two parts turned up three differences, each read out of
 the HAL rather than assumed from the C3:

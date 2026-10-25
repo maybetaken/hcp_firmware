@@ -1,13 +1,10 @@
 /*
  * hcp::led - Zephyr backend: framebuffer plus flush through the led_strip API.
  *
- * The board decides which driver sits behind the `hcp-led-strip` alias - the
- * espressif,esp32-ws2812-rmt driver on all three Helios boards - and nothing here asks.
- * That indirection is the reason the C3's timing fix lives in
- * modules/drivers/ws2812_rmt instead of in this file: an application facade that grows
- * a #ifdef per SoC ends up knowing more about the hardware than the drivers do, and the
- * shared parts (the framebuffer, the brightness scaling, the "do not resend an unchanged
- * frame" check below) start to differ between branches.
+ * The driver behind the `hcp-led-strip` alias is a devicetree choice and nothing here
+ * asks which one it is. That is why the timing work lives in modules/drivers/ws2812_rmt:
+ * a facade that grows a #ifdef per SoC ends up knowing more about the hardware than the
+ * drivers do, and the shared parts below start to differ between branches.
  *
  * No STL (Zephyr minimal C++). Google C++ Style naming.
  * SPDX-License-Identifier: Apache-2.0
@@ -102,10 +99,8 @@ bool Strip::Show() {
     same = want.r == sent.r && want.g == sent.g && want.b == sent.b;
   }
   if (same) {
-    /* Silent on purpose: this is the normal path (the animation tick repaints every
-     * 50 ms and almost always with the same colour), and logging it costs twenty
-     * lines a second - enough on the ESP32-C5's 1 KB log ring to drop the boot
-     * messages that matter. */
+    /* Silent: this is the normal path (the animation ticks every 50 ms, almost always
+     * with the same colour), and twenty log lines a second fills the C5's 1 KB ring. */
     return true;
   }
 
@@ -117,16 +112,11 @@ bool Strip::Show() {
     rgb[i].b = static_cast<uint8_t>((impl_->fb[i].b * scale) / 100u);
   }
 
-  /* No critical section around the flush. The SPI route required one: a
-   * worldsemi,ws2812-spi frame tolerates no gap inside it, because a pause of a few
-   * tens of microseconds reads as the latch condition and the pixels re-sync on the
-   * remaining bits - seen on the C6 as a stray green flash while violet was intended.
-   * RMT has no such constraint (the peripheral owns the waveform once started, so an
-   * ISR delays a frame rather than corrupting a bit inside one), and keeping the lock
-   * would cost more than it buys: this call busy-waits on the hardware through a chunk
-   * and then holds the line low to latch, so on the failure it is built to report - a
-   * channel that never finishes - interrupts would stay locked for the whole timeout
-   * while the radio and the 485 driver were still expected to run. */
+  /* No critical section. The SPI route needed one because a gap of tens of microseconds
+   * inside a frame reads as the latch condition (the C6's stray green flash under
+   * violet); RMT owns the waveform once started, so an ISR delays a frame rather than
+   * corrupting a bit in it. Keeping the lock would also run this call's busy-wait - and
+   * its timeout, on a channel that never finishes - with interrupts off. */
   const int rc = led_strip_update_rgb(impl_->dev, rgb, count_);
 
   if (rc == 0) {

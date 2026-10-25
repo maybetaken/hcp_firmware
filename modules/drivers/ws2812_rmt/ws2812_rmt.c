@@ -1,30 +1,23 @@
 /*
  * WS2812-class addressable LED driver for the ESP32 RMT peripheral.
  *
- * Implements Zephyr's led_strip API, so an application using led_strip_update_rgb()
- * does not know or care that the ESP32 has no in-tree RMT led_strip driver: a board
- * points its `hcp-led-strip`-style alias at a node with this compatible instead of at
- * the worldsemi,ws2812-spi one. That is the whole reason this is a driver and not a
- * branch inside the application's LED facade.
+ * Implements Zephyr's led_strip API behind the compatible
+ * "espressif,esp32-ws2812-rmt", so a board picks it in devicetree and the application
+ * never learns which peripheral produced the waveform. Zephyr ships no led_strip driver
+ * for Espressif RMT, which is why this lives in a module.
  *
- * Why RMT rather than bit-banging the data line from the CPU: the WS2812 distinguishes
- * a one from a zero by how long the line is high (400 ns vs 800 ns of a 1250 ns bit),
- * which is inside the cost of the primitives a CPU loop has to use to measure itself
- * with. Measured on an ESP32-C3: one GPIO store through Zephyr's API costs 312 ns and
- * one system-clock read 687 ns - against a 400 ns phase. A CPU loop can therefore
- * report in-spec timings while producing waveforms a strip ignores, which is exactly
- * what happened on the bench before this driver existed. RMT counts ticks off a
- * hardware clock (APB, 80 MHz on the C3 whatever the CPU is doing), so a phase is an
- * exact number of 12.5 ns ticks and neither the CPU speed, nor an ISR, nor the cost of
- * a register read can stretch one. It also needs no interrupt blackout across the
- * frame, which matters on a board that runs BLE as well.
- *
- * The previous firmware drove this same pin from this same peripheral
- * (_led(GPIO_NUM_8, 1) over led_strip_new_rmt_device), and it worked.
+ * RMT rather than CPU bit-banging: the strip tells a one from a zero by how long the
+ * line is high (400 ns / 800 ns within a 1250 ns bit), and on an ESP32-C3 one GPIO
+ * store through Zephyr's API costs 312 ns while one system-clock read costs 687 ns -
+ * the loop's own instrumentation is coarser than the phase it has to control. RMT
+ * counts 12.5 ns ticks off a hardware clock, so a phase is an exact tick count that no
+ * CPU speed, ISR or register read can stretch, and a frame needs no interrupt blackout.
  *
  * Only Espressif's hal/ll layer is used: this HAL copy ships esp_hal_rmt but not the
- * IDF rmt driver, and the ll functions are all static inline, so nothing has to be
- * added to the build beyond this file.
+ * IDF rmt driver, and the ll functions are all static inline.
+ *
+ * The measurements behind the per-part defines below are recorded in CHANGELOG.md
+ * (2.0.3.18 through 2.0.3.21); the register field layouts are in soc/rmt_struct.h.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -49,40 +42,29 @@
 #include <soc/soc.h>
 #include <esp_rom_gpio.h>
 
-/* Per-generation register access. The hal/ll layer absorbs almost all of the
- * differences between these parts (identical function signatures for clock, limit,
- * idle level, carrier, start and the raw status), but two things it does not hide:
- * where a symbol is written, and which channel registers to read back. Getting either
- * wrong would compile only by accident on a different part, and the symptom of that
- * accident is an LED that never answers - indistinguishable from broken hardware from
- * outside the box - so each is named per part rather than guessed.
+/* What the hal/ll layer does not hide between these parts: where a symbol is written,
+ * which channel registers to read back, the counter clock's name, and how a frame is
+ * ended. All four are stated per part rather than guessed - a wrong guess compiles and
+ * then shows up as an LED that never answers.
  *
- *  - ESP32-C3: data_ch[] is a plain 32-bit push register, tx_conf/tx_status per channel.
- *  - ESP32-C5 / C6: the newer block names these chndata[] / chnstatus[], with the
- *    channel fields inside a union. The push register is still 32 bits wide, so one
- *    write is still one symbol.
+ *                       ESP32-C3                    ESP32-C5 / C6
+ *   symbol push register  data_ch[ch]                chndata[ch].chndata   (32 bit both)
+ *   channel readback      tx_conf/tx_status/tx_lim   chnconf0/chnstatus/chn_tx_lim
+ *   counter clock source  RMT_CLK_SRC_APB            RMT_CLK_SRC_PLL_F80M  (both 80 MHz)
+ *   tx_lim means          last symbol index          number of entries
  *
- * The functional clock source is named differently per part too, and only one of the
- * two spellings exists on each: the C3 takes APB, the C5/C6 take PLL_F80M. Both are 80
- * MHz, which is what the tick arithmetic below depends on - the divider is what changes
- * with a different source, not the constants.
- *
- * kChannelsPerInstance is deliberately the size of the per-channel *config* array, not
- * of the data array, because the vendor headers disagree between them (the C5 declares
- * chndata[4] but chnstatus[2]). Taking the smaller bound keeps every index this driver
- * performs in range on every part; the boards here use channel 0. Note that the parts
- * agree on the bound being 2 for a reason: the SoC signal table only has TX signals for
- * channels 0 and 1, the upper two are RX. */
+ * kChannelsPerInstance is the size of the per-channel *config* array rather than the
+ * data array because the vendor headers disagree between them (the C5 declares
+ * chndata[4] with chnstatus[2]). Two is also what the hardware offers: the SoC signal
+ * table has TX signals only for channels 0 and 1, the upper two are RX. */
 #if defined(CONFIG_SOC_ESP32C3)
 #define RMT_CHANNEL_DATA(dev, ch)      ((dev)->data_ch[ch])
 #define RMT_CHANNEL_STATUS(dev, ch)    ((dev)->tx_status[ch].val)
 #define RMT_CHANNEL_CONF(dev, ch)      ((dev)->tx_conf[ch].val)
 #define RMT_CHANNEL_LIMIT(dev, ch)     ((dev)->tx_lim[ch].val)
 #define RMT_TX_CLK_SRC                 RMT_CLK_SRC_APB
-/* The C3 stops the transmitter when the read pointer passes tx_lim and raises TX_DONE
- * there: measured on the bench (raddr 24 with a limit of 23, raw 0x101 = done + threshold)
- * and it is what the working LED runs on.
- */
+/* tx_lim is the index of the last symbol: a 24-symbol frame ends the transmitter at 23
+ * and raises TX_DONE there (bench: raddr 24, raw 0x101 = done + threshold). */
 #define RMT_TX_LIMIT(symbols)          ((symbols) - 1U)
 #define kTxAppendEof                   false
 #define kTxWrapAtLimit                 false
@@ -94,21 +76,12 @@ static const uint32_t kChannelsPerInstance = RMT_ARRAY_LEN(tx_conf);
 #define RMT_CHANNEL_CONF(dev, ch)      ((dev)->chnconf0[ch].val)
 #define RMT_CHANNEL_LIMIT(dev, ch)     ((dev)->chn_tx_lim[ch].val)
 #define RMT_TX_CLK_SRC                 RMT_CLK_SRC_PLL_F80M
-/* One off-by-one, and it is the difference between a lit LED and a dark one on this
- * generation. The C3's tx_lim is where the read pointer has to reach; the C5/C6 header
- * describes the same field as "the maximum entries that CHANNELn can send out" - a count,
- * so it needs the number of symbols, not the index of the last one. Probed on the bench
- * (CONFIG_WS2812_RMT_PROBE, one pixel = 24 symbols pushed):
- *   limit 23 -> no TX_DONE ever; read pointer ran to 48, chnstatus bit22 mem_empty set,
- *               only the threshold event (bit8) fired: the frame never ended on the wire.
- *   limit 24 -> TX_DONE + threshold (raw 0x101), status shows the writes at 24 and no
- *               mem_empty: the frame is exactly the data.
- *   limit 47/48 -> TX_DONE too, but only because the channel ran to the end of its 48
- *               entry block: the strip would get 24 real symbols plus whatever stale
- *               entries followed them, which is a wrong colour rather than no colour.
- * So the correct answer here is not "the C3's number plus one" by taste - it is that this
- * part counts entries, and 47/48 pass a completion test while still being wrong.
- */
+/* tx_lim counts entries on this generation ("the maximum entries that CHANNELn can send
+ * out"), so a 24-symbol frame needs 24, not the C3's 23. Probed with
+ * CONFIG_WS2812_RMT_PROBE: 23 never raised TX_DONE - the read pointer ran to the end of
+ * the 48-entry block and only the threshold event fired; 24 raised done with no
+ * mem_empty; 47 and 48 also raise done, but only by streaming the stale entries that
+ * followed the data, which is a wrong colour rather than no colour. */
 #define RMT_TX_LIMIT(symbols)          (symbols)
 #define kTxAppendEof                   false
 #define kTxWrapAtLimit                 false
@@ -120,29 +93,25 @@ static const uint32_t kChannelsPerInstance = RMT_ARRAY_LEN(chnconf0);
 
 LOG_MODULE_REGISTER(ws2812_rmt, CONFIG_LOG_DEFAULT_LEVEL);
 
-/* One channel of RMT RAM is 48 symbols on the ESP32-C3, and a WS2812 bit is one
- * symbol, so a strip is transmitted in chunks of six bytes and each chunk is started
- * after the previous one reports done. The gap between chunks is a handful of register
- * writes (microseconds), far below the ~50 us of low that latches a frame, so the
- * strip sees one continuous frame. */
+/* A WS2812 bit is one RMT symbol and one channel owns 48 of them, so a strip is sent in
+ * chunks of six bytes, each started after the previous reports done. The gap between
+ * chunks is a few register writes - microseconds, far under the ~50 us of low that
+ * latches a frame - so the strip still sees one frame. */
 #define kSymbolsPerChannel SOC_RMT_MEM_WORDS_PER_CHANNEL
 #define kBytesPerChunk     (kSymbolsPerChannel / 8)
 
-/* WS2812 phases in 12.5 ns ticks (APB 80 MHz on the ESP32-C3): t0H 400 ns -> 32, t1H
- * 800 ns -> 64, bit cell 1250 ns -> 100. A one and a zero then differ in the one thing
- * the strip samples. */
+/* WS2812 phases in 12.5 ns ticks of the 80 MHz source: t0H 400 ns -> 32, t1H 800 ns ->
+ * 64, bit cell 1250 ns -> 100. */
 #define kT0hTicks     32
 #define kT1hTicks     64
 #define kBitCellTicks 100
 
 struct ws2812_rmt_config {
 	struct gpio_dt_spec data;
-	uint8_t channel;      /* RMT TX channel 0..3 on this part */
+	uint8_t channel;      /* RMT TX channel: 0 or 1 on these parts */
 	uint16_t length;      /* pixels */
 	uint16_t reset_delay; /* microseconds of low that latches a frame */
-	/* Byte order on the wire, read from DT's color-mapping so the board, not this
-	 * driver, states how its LED is wired. LED_COLOR_ID_* values. */
-	uint8_t color_order[3];
+	uint8_t color_order[3]; /* DT color-mapping, i.e. the board states its wiring */
 };
 
 struct ws2812_rmt_data {
@@ -151,14 +120,11 @@ struct ws2812_rmt_data {
 
 static rmt_dev_t *const rmt_base(void)
 {
-	/* Not the `RMT` extern: that is defined by IDF startup files this port does
-	 * not build, and a link error there would look like a missing driver. */
+	/* Not the `RMT` extern: IDF startup files define that, and this port does not
+	 * build them, so a link error there would look like a missing driver. */
 	return (rmt_dev_t *)DR_REG_RMT_BASE;
 }
 
-/* Two casts, named: the production path and the bring-up probe both need the register
- * block and the channel number, and spelling the void* arithmetic out at every call
- * buried the arguments that are the interesting part of a transaction. */
 static inline rmt_dev_t *regs_of(const struct device *dev)
 {
 	return ((struct ws2812_rmt_data *const)dev->data)->regs;
@@ -178,18 +144,18 @@ static inline uint32_t ws2812_symbol(bool one)
 	return (high & 0x7FFFU) | (1U << 15) | ((low & 0x7FFFU) << 16);
 }
 
-/* What one chunk of symbols cost the hardware, as measured rather than assumed.
+/* One transaction, as measured rather than assumed.
  *
- * 'status' and 'raw' are raw words on purpose, and decoding them has to be done against
- * the header for the part in front of you, because the two generations do not agree on
- * which half of the status word means what:
- *   ESP32-C3 tx_status:  mem_waddr_ex[8:0], mem_raddr[20:12], state[23:21], then
- *                        owner_err/mem_full/mem_rd_err.
- *   C5/C6 chnstatus:     mem_raddr_ex_chn[8:0], state_chn[11:9],
- *                        apb_mem_waddr_chn[20:12], then rd_err(21)/empty(22)/wr_err(23).
- * So 0x00018000 is "24 symbols consumed" on the C3 and "24 written, none consumed" on the
- * C6. Both words are kept because "done" alone has already been shown to say nothing about
- * whether the symbols arrived or were merely counted. */
+ * 'written' is read before the channel is started and is the only evidence that the
+ * pushes landed (non-FIFO mode on the C3 accepted 24 writes, left the write pointer at
+ * zero, and then transmitted empty symbols while reporting done).
+ *
+ * 'status' is a raw word, and the two generations disagree about which half means what:
+ *   ESP32-C3 tx_status: mem_waddr_ex[8:0], mem_raddr[20:12], state[23:21], then
+ *                       owner_err/mem_full/mem_rd_err.
+ *   C5/C6 chnstatus:    mem_raddr_ex_chn[8:0], state_chn[11:9], apb_mem_waddr_chn[20:12],
+ *                       then rd_err(21)/empty(22)/wr_err(23).
+ * So 0x00018000 is "24 consumed" on the C3 and "24 written, none consumed" on the C6. */
 struct tx_result {
 	uint32_t written;  /* status word after the pushes, before the channel is started */
 	uint32_t status;   /* channel status word at the moment it finished or gave up */
@@ -198,14 +164,12 @@ struct tx_result {
 	int rc;            /* 0 = the hardware reported TX_DONE */
 };
 
-/* Push one chunk, start it, and wait for the hardware to have driven it.
+/* Push one chunk, start it, wait for it.
  *
- * 'limit', 'append_eof' and 'wrap' are arguments rather than constants because "the frame
- * ends here" is expressed differently by the two register generations, and the difference
- * is not visible in the ll layer (both heads describe tx_set_limit as "the amount of
- * symbols that can trigger the limitation interrupt", and only the C3 stops at it). The
- * values are therefore chosen by ws2812_rmt_probe_frame_end() below, on hardware, rather
- * than by reading a header and hoping. */
+ * limit / append_eof / wrap are arguments because the two generations end a frame
+ * differently and the ll layer does not say so - both describe tx_set_limit as "the
+ * amount of symbols that can trigger the limitation interrupt", and only the C3 stops
+ * at it. The values come from the probe below, run on hardware. */
 static void ws2812_rmt_tx_chunk(const struct device *dev, const uint8_t *bytes, uint8_t count,
 				uint32_t limit, bool append_eof, bool wrap, uint32_t pass_cap,
 				struct tx_result *out)
@@ -228,31 +192,23 @@ static void ws2812_rmt_tx_chunk(const struct device *dev, const uint8_t *bytes, 
 				ws2812_symbol(((bytes[i] >> bit) & 1U) != 0U);
 		}
 	}
-	/* An all-zero symbol is duration0=0/level0=0/duration1=0/level1=0: it contributes
-	 * no edge and no time on the line, so where the protocol is concerned it is not
-	 * extra data - it is a marker for the transmitter to stop at. */
+	/* An all-zero symbol is four empty fields: no edge, no time on the line, so it is a
+	 * stop marker for the transmitter rather than extra data. */
 	if (append_eof) {
 		RMT_CHANNEL_DATA(regs, ch) = 0U;
 	}
 
-	/* Taken before the start, because it is the only reading that says the writes
-	 * landed: the C3's non-FIFO attempt pushed 24 words and reported a write address of
-	 * zero, and the channel then transmitted empty symbols, reached its limit and said
-	 * done - a successful transfer of nothing. */
 	out->written = RMT_CHANNEL_STATUS(regs, ch);
 
 	rmt_ll_tx_start(regs, ch);
 
-	/* The RAW status, not the masked one: rmt_ll_tx_get_interrupt_status() reads
-	 * int_st, which is "raw AND interrupt-enabled", and this driver takes no
-	 * interrupt at all - so polling it can only ever return zero. The first build on
-	 * the bench proved that, reporting "never reported done" for every frame. Reading
-	 * raw costs nothing extra and keeps the wait free of an ISR, a handler and the
-	 * shared state that would come with them.
+	/* The RAW interrupt word, not int_st: the masked one is "raw AND interrupt
+	 * enabled", and this driver takes no interrupt, so polling it can only return zero.
+	 * Raw costs nothing and keeps the wait free of an ISR and its shared state.
 	 *
-	 * Bounded because a chunk is 48 symbols = 60 us of hardware time; a channel that
-	 * never finishes is mis-configured, and saying so beats hanging the caller, which
-	 * is the system workqueue for a status LED. */
+	 * The wait is bounded because a chunk is 48 symbols = 60 us of hardware time; a
+	 * channel that never finishes is mis-configured, and saying so beats hanging the
+	 * caller - which for a status LED is the system workqueue. */
 	const uint32_t done_bit = RMT_LL_EVENT_TX_DONE(ch);
 	const uint32_t err_bit = RMT_LL_EVENT_TX_ERROR(ch);
 
@@ -266,9 +222,8 @@ static void ws2812_rmt_tx_chunk(const struct device *dev, const uint8_t *bytes, 
 			break;
 		}
 		if ((raw & err_bit) != 0U) {
-			/* An error here means the symbols never reached the counter - the
-			 * write path or the clock, not the strip - so it is worth its own
-			 * line rather than the timeout's generic wording. */
+			/* An error means the symbols never reached the counter - the write
+			 * path or the clock, not the strip - so it gets its own line. */
 			out->passes = passes;
 			break;
 		}
@@ -276,24 +231,18 @@ static void ws2812_rmt_tx_chunk(const struct device *dev, const uint8_t *bytes, 
 	}
 
 	rmt_ll_tx_stop(regs, ch);
-	/* Measured before the status is cleared: reading it afterwards is how the first
-	 * version of this line printed raw=0 for a channel that had just reported done,
-	 * and an invalid measurement is worse than none. */
+	/* Read before the status is cleared: reading after is how an early version printed
+	 * raw=0 for a channel that had just reported done. */
 	out->status = RMT_CHANNEL_STATUS(regs, ch);
 	out->raw = rmt_ll_tx_get_interrupt_status_raw(regs, ch);
 	rmt_ll_clear_interrupt_status(regs, RMT_LL_EVENT_TX_MASK(ch) | err_bit);
 }
 
-/* TEMPORARY (driver bring-up on a second part): ask the hardware which of the plausible
- * ways to end a frame actually produces a TX_DONE, and print all of them. Built only when
- * CONFIG_WS2812_RMT_PROBE=y, because it is a question to ask once per part - and worth
- * keeping as the answer to "what does a new ESP32 do here" instead of re-deriving it from
- * a header and hoping.
- *
- * It has been asked once, on an ESP32-C6, and the answer is in the comment on RMT_TX_LIMIT
- * above. Note what the probe alone would have misled with: three of these candidates end
- * the frame and report TX_DONE, and only one of them sends exactly the data - so a
- * completion bit is still not the measurement, it is only the filter. */
+/* Bring-up aid for a part this driver has not run on: put each plausible frame-end
+ * setting through one test frame and print what the hardware answered. Compiled only
+ * with CONFIG_WS2812_RMT_PROBE=y; the answer it produced on the ESP32-C6 is in the
+ * RMT_TX_LIMIT comment above. Worth keeping: three of these ten candidates report TX_DONE
+ * and only one sends exactly the data, so the completion bit is a filter, not evidence. */
 #ifdef CONFIG_WS2812_RMT_PROBE
 static void ws2812_rmt_probe_frame_end(const struct device *dev)
 {
@@ -303,7 +252,6 @@ static void ws2812_rmt_probe_frame_end(const struct device *dev)
 
 	struct Try { const char *what; uint32_t limit; bool eof; bool wrap; };
 	static const struct Try kTries[] = {
-		/* what the C3 does, and what the C6 measured as "thr event, no done" */
 		{ "lim=s-1          ", s - 1U, false, false },
 		{ "lim=s-1 wrap     ", s - 1U, false, true },
 		{ "lim=s            ", s, false, false },
@@ -337,19 +285,15 @@ static int ws2812_rmt_flush_chunk(const struct device *dev, const uint8_t *bytes
 	const uint32_t symbols = (uint32_t)count * 8U;
 	struct tx_result r;
 
-	/* The limit is where this chunk stops, not the channel's capacity. Left at the
-	 * capacity, the read pointer runs past the symbols that were written and waits for
-	 * ones that never arrive, so the frame never reaches its end and never reports done
-	 * - which is exactly what the first bench run did, and the driver said so instead
-	 * of leaving an LED that quietly does nothing. */
+	/* The limit is where this chunk stops, never the channel's capacity: left at the
+	 * capacity the read pointer runs past the written symbols and waits for ones that
+	 * never arrive, so the frame neither ends nor reports done. */
 	ws2812_rmt_tx_chunk(dev, bytes, count, RMT_TX_LIMIT(symbols), kTxAppendEof, kTxWrapAtLimit,
 			   200000U, &r);
 
-	/* The first frame of every boot, reported once. TX_DONE alone has already been
-	 * shown to prove nothing about the strip, so the three readings that do are logged
-	 * together: what the status word said before the channel started (the writes
-	 * landed), and what it and the raw interrupt say after (the symbols were consumed).
-	 * Decode them against this part's header - see struct tx_result. */
+	/* Once per boot: the three readings that say what happened on the hardware, since
+	 * a completion bit alone has proved nothing (see struct tx_result for the field
+	 * layout of the words printed here). */
 	static bool first_reported;
 
 	if (!first_reported) {
@@ -383,9 +327,8 @@ static int ws2812_rmt_flush_chunk(const struct device *dev, const uint8_t *bytes
 	return r.rc;
 }
 
-/* The wire order is whatever the board's color-mapping says; resolving it by name
- * rather than by casting the pixel struct keeps this driver honest about struct
- * led_rgb's layout being nobody's contract. Unknown ids are rejected at init. */
+/* Which byte of a pixel goes on the wire at each position, by LED_COLOR_ID name rather
+ * than by casting struct led_rgb - whose layout is nobody's contract. */
 static uint8_t color_component(const struct led_rgb *pixel, uint8_t id)
 {
 	switch (id) {
@@ -466,9 +409,8 @@ static int ws2812_rmt_init(const struct device *dev)
 		LOG_ERR("gpio controller for the data line is not ready");
 		return -ENODEV;
 	}
-	/* A repeated or out-of-range color-mapping would send the same component twice
-	 * and silently show wrong colours, which is the kind of bug that reads as "the
-	 * strip is broken" - so it is refused here, at boot, instead. */
+	/* Reject a color-mapping that repeats an id or is not RGB: it would send the same
+	 * component twice and look like a broken strip rather than a bad devicetree. */
 	for (int i = 0; i < 3; i++) {
 		if (cfg->color_order[i] > LED_COLOR_ID_BLUE) {
 			LOG_ERR("color-mapping[%d] is not an RGB id", i);
@@ -481,83 +423,53 @@ static int ws2812_rmt_init(const struct device *dev)
 			}
 		}
 	}
-	/* Plain output first: that is what selects the GPIO matrix for the pad and
-	 * enables its output driver. The matrix source is re-pointed at RMT below, so
-	 * the pin ends up driven by the peripheral, not by software. */
+	/* Configuring the pin as an output is what selects the GPIO matrix for the pad and
+	 * enables its driver; the matrix source is re-pointed at RMT below. */
 	int rc = gpio_pin_configure_dt(&cfg->data, GPIO_OUTPUT_INACTIVE);
 
 	if (rc != 0) {
 		return rc;
 	}
 
-	/* Bus clock before any register touch: gated off, they all read back zero and
-	 * the failure shows up as an LED that never moves. */
+	/* Three switches and a power bit, all independent, and the registers only answer
+	 * once every one of them is on: bus clock, out of reset, symbol RAM power. */
 	rmt_ll_enable_bus_clock(0, true);
-	/* Pulse the peripheral out of reset. Without this the first bench builds read
-	 * every RMT register as zero no matter what was written - the clock gate was on,
-	 * the block was simply held in reset - which is why an LED driven this way looks
-	 * dead rather than mis-configured. rmt_ll_reset_register() asserts then
-	 * de-asserts the line, so it is safe to call at init. */
-	rmt_ll_reset_register(0);
-
-	/* RMT's symbol RAM has its own power switch. Left to the PMU, the memory can be
-	 * powered down while the registers answer - the writes then go nowhere and TX
-	 * never reaches its limit, which is the class of failure the first bench runs
-	 * showed. Forcing it on is correct here rather than merely convenient: this
-	 * device never suspends, so there is no low-power state to disturb, and the
-	 * driver then depends on no PMU configuration at all. */
+	rmt_ll_reset_register(0); /* asserts then de-asserts, so it is init-safe */
 	rmt_ll_mem_force_power_on(data->regs);
 
-	/* RMT_CLK_SRC_DEFAULT would be the unexciting choice, but the two spellings this
-	 * part understands are stated per part above rather than inherited: a source the
-	 * divider arithmetic was not reasoned about is a frame whose bit cell is quietly
-	 * the wrong length, and that is a dark LED again. */
 	rmt_ll_set_group_clock_src(data->regs, ch, RMT_TX_CLK_SRC, 1, 1, 0);
-	/* The counter clock has its own switch, separate from the bus clock and from the
-	 * source select: rmt_ll_enable_group_clock() writes sys_conf.sclk_active on the C3
-	 * and PCR.rmt_sclk_conf.rmt_sclk_en on the C5/C6, and on those parts it comes out of
-	 * reset cleared. Left alone on the C6 the symbols reached the channel RAM (its
-	 * chnstatus read back an APB write address of 24, the number pushed) while the read
-	 * address stayed at zero: nothing was ever driven onto the pin, no done bit was ever
-	 * set, and every register this driver writes read back exactly as written - which is
-	 * why the failure is invisible from the register values alone and had to be read off
-	 * the two address fields. The C3 tolerates the omission (its sclk_active is
-	 * apparently not what gates the counter), so this is only found by trying a second
-	 * part. */
+	/* The counter clock is a fourth switch of its own: sys_conf.sclk_active on the C3
+	 * (reset value 1, which is why this driver worked there without touching it) and
+	 * PCR.rmt_sclk_conf.rmt_sclk_en on the C5/C6 (reset value 0). Left cleared on the
+	 * C6, the symbols reached the channel RAM - chnstatus write address 24 - while the
+	 * read address stayed at 0: no waveform, no done bit, and every register this
+	 * driver writes read back exactly as written. */
 	rmt_ll_enable_group_clock(data->regs, true);
-	/* FIFO mode: each write to the channel DATA register appends one symbol and the
-	 * hardware advances the write address. The non-FIFO mode was tried first and the
-	 * channel's write pointer stayed at zero through 24 writes - the symbols never
-	 * arrived, the counter still ran to its limit and still reported done, which is
-	 * why "the driver succeeds and the LED does nothing" was not detectable from the
-	 * completion bit alone. */
+	/* FIFO mode: each DATA write appends one symbol and advances the write address.
+	 * In non-FIFO mode 24 writes left the pointer at zero, and the channel then
+	 * transmitted empty symbols, reached its limit and still reported done. */
 	rmt_ll_enable_mem_access_nonfifo(data->regs, false);
 	rmt_ll_tx_reset_channels_clock_div(data->regs, BIT(ch));
 	rmt_ll_tx_set_channel_clock_div(data->regs, ch, 1);
 	rmt_ll_tx_reset_pointer(data->regs, ch);
 
-	/* Carrier modulation is set in the channel's reset value - read back here on
-	 * the bench as tx_conf=0x00710140, with carrier_en, carrier_eff_en and
-	 * carrier_out_lv all asserted - and a modulated output with the carrier
-	 * registers left at reset is a flat line. The counter still runs, the limit is
-	 * still reached and done is still reported, so nothing above this line can tell
-	 * the difference between "waveform on the pin" and "nothing on the pin"; the
-	 * tx_conf value in the log below is what does. IDF's rmt driver disables the
-	 * carrier in its channel reset for the same reason. */
+	/* Carrier modulation is asserted in the channel's reset value (C3 read back
+	 * tx_conf=0x00710140), and a modulated output with the carrier registers at reset
+	 * is a flat line on the pin - the counter runs, the limit is reached, done is
+	 * reported, and only tx_conf in the log below says anything happened. IDF's rmt
+	 * driver disables the carrier in its channel reset for the same reason. */
 	rmt_ll_tx_enable_carrier_modulation(data->regs, ch, false);
 	rmt_ll_tx_enable_carrier_always_on(data->regs, ch, false);
 	rmt_ll_tx_set_carrier_level(data->regs, ch, 0);
 
-	/* Rest low between frames, so the tail of one is never read as the head of
-	 * the next. */
+	/* Rest low between frames, so the tail of one is not read as the head of the next. */
 	rmt_ll_tx_fix_idle_level(data->regs, ch, 0, true);
 	rmt_ll_tx_set_mem_blocks(data->regs, ch, 1);
-	/* No limit here on purpose: it belongs to a chunk, not to the channel, and it
-	 * is written per flush (see ws2812_rmt_flush_chunk). */
+	/* The limit belongs to a chunk, not to the channel: it is set per flush. */
 	rmt_ll_tx_enable_loop(data->regs, ch, false);
 
-	/* Signal index from the SoC's own table: "channel N" is a different PMUX
-	 * entry on every part, which is precisely the kind of number not to copy out
+	/* The GPIO-matrix signal index comes from the SoC's own table: "channel N" is a
+	 * different PMUX entry on every part, which is exactly the number not to copy out
 	 * of a TRM into a driver. */
 	esp_rom_gpio_connect_out_signal(
 		cfg->data.pin, soc_rmt_signals[0].channels[ch].tx_sig, false, false);
@@ -567,16 +479,13 @@ static int ws2812_rmt_init(const struct device *dev)
 		(unsigned)kBitCellTicks, (unsigned)RMT_CHANNEL_CONF(data->regs, ch),
 		(unsigned)data->regs->sys_conf.val);
 #ifdef CONFIG_WS2812_RMT_PROBE
-	/* Bring-up on a part this driver has never run on: ask the hardware how a frame is
-	 * ended and print every answer, before anything depends on the result. */
 	ws2812_rmt_probe_frame_end(dev);
 #endif
 	return 0;
 }
 
-/* Plain DEVICE_DT_INST_DEFINE rather than LED_DEVICE_DT_INST_DEFINE: the latter is not
- * defined by this Zephyr's led_strip headers (checked in include/zephyr/drivers/
- * led_strip.h), and the in-tree ws2812_spi driver uses the former. */
+/* DEVICE_DT_INST_DEFINE, not LED_DEVICE_DT_INST_DEFINE: this Zephyr's led_strip headers
+ * do not define the latter, and the in-tree ws2812_spi driver uses the former. */
 #define WS2812_RMT_DEFINE(idx)                                                   \
 	static const struct ws2812_rmt_config ws2812_rmt_cfg_##idx = {           \
 		.data = GPIO_DT_SPEC_INST_GET(idx, data_gpios),                  \
