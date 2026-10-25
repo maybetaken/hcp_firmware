@@ -196,6 +196,19 @@ static void handle_decoded(uint8_t type, uint8_t sub, const uint8_t *data,
 	}
 }
 
+/*
+ * Every path that refuses a frame says so on the wire - one DATA/ERROR_INFO byte, as
+ * upstream's btc_blufi_report_error() does at each of those points. Without it a phone
+ * sits waiting after a frame it will never get an answer for, which is the shape a
+ * protocol bug takes when seen from the app side.
+ */
+static void report_error(uint8_t state)
+{
+	const uint8_t b = state;
+
+	blufi_send(BLUFI_TYPE_DATA, BLUFI_DATA_ERROR_INFO, &b, sizeof(b));
+}
+
 static ssize_t p2e_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 			 const void *buf, uint16_t len, uint16_t offset,
 			 uint8_t flags)
@@ -204,6 +217,7 @@ static ssize_t p2e_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 
 	if (len < BLUFI_HDR_LEN) {
 		LOG_WRN("rx %u bytes: too short", len);
+		report_error(BLUFI_ERR_DATA_FORMAT);
 		return len;
 	}
 	const uint8_t *b = buf;
@@ -212,10 +226,25 @@ static ssize_t p2e_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 	uint8_t fc = b[1];
 	uint8_t seq = b[2];
 
-	/* esp validates recv_seq strictly; log a mismatch but still accept so we
-	 * never regress the working plaintext flow. */
+	/* esp: the write is exactly header+payload, plus 2 when CHECK is set. Accepting a
+	 * longer one lets a padded or truncated write parse as a valid frame. */
+	const uint16_t want = BLUFI_HDR_LEN + b[3] + ((fc & BLUFI_FC_CHECK) ? 2 : 0);
+
+	if (len != want) {
+		LOG_WRN("rx %u bytes, frame declares %u", len, want);
+		report_error(BLUFI_ERR_DATA_FORMAT);
+		return len;
+	}
+
 	if (seq != g_recv_seq) {
 		LOG_WRN("rx seq %u != expected %u", seq, g_recv_seq);
+		if (IS_ENABLED(CONFIG_BLUFI_STRICT_SEQ)) {
+			report_error(BLUFI_ERR_SEQUENCE);
+			return len;
+		}
+		/* Not strict: a phone that restarted its sequence without reconnecting can
+		 * still finish a run. Upstream is strict, so deviating is allowed only with
+		 * eyes open - hence the Kconfig rather than a silent choice here. */
 	}
 	g_recv_seq = (uint8_t)(seq + 1);
 
@@ -231,12 +260,14 @@ static ssize_t p2e_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 		}
 #else
 		LOG_WRN("rx encrypted frame but security disabled; ignoring");
+		report_error(BLUFI_ERR_INIT_SECURITY);
 		return len;
 #endif
 	}
 	if ((fc & BLUFI_FC_CHECK) &&
 	    blufi_frame_verify_checksum(b, len) != 0) {
 		LOG_WRN("rx checksum error, dropping frame");
+		report_error(BLUFI_ERR_CHECKSUM);
 		return len;
 	}
 
@@ -265,6 +296,7 @@ static ssize_t p2e_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 	}
 	if (rr < 0) {
 		LOG_WRN("rx reassembly error %d, dropping", rr);
+		report_error(BLUFI_ERR_MSG_STATE);
 		return len;
 	}
 	/* SET_SEC_MODE is tiny and must take effect before the peer's next

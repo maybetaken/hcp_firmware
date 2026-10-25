@@ -82,6 +82,32 @@ enum blufi_data_subtype {
 	BLUFI_DATA_STA_CONN_RSSI  = 0x16,
 };
 
+/*
+ * Error states a device reports on DATA/ERROR_INFO - one byte, the number below.
+ * Values are wire format, copied from ESP-IDF's esp_blufi_error_state_t
+ * (components/bt/common/api/include/api/esp_blufi_api.h), so the numbering is part of
+ * the protocol and must not be renumbered to taste.
+ *
+ * Upstream reports on every path that rejects a frame and stays silent for a subtype it
+ * does not implement; the device follows that split, so a phone never gets an invented
+ * frame and a mistake never passes silently.
+ */
+enum blufi_error_state {
+	BLUFI_ERR_SEQUENCE       = 0,
+	BLUFI_ERR_CHECKSUM       = 1,
+	BLUFI_ERR_DECRYPT        = 2,
+	BLUFI_ERR_ENCRYPT        = 3,
+	BLUFI_ERR_INIT_SECURITY  = 4,
+	BLUFI_ERR_DH_MALLOC      = 5,
+	BLUFI_ERR_DH_PARAM       = 6,
+	BLUFI_ERR_READ_PARAM     = 7,
+	BLUFI_ERR_MAKE_PUBLIC    = 8,
+	BLUFI_ERR_DATA_FORMAT    = 9,
+	BLUFI_ERR_CALC_MD5      = 10,
+	BLUFI_ERR_WIFI_SCAN_FAIL = 11,
+	BLUFI_ERR_MSG_STATE     = 12,
+};
+
 /* A parsed frame (data points into the caller's buffer). */
 struct blufi_frame {
 	uint8_t type_subtype;

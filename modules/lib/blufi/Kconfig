@@ -16,6 +16,18 @@ menuconfig BLUFI
 
 if BLUFI
 
+config BLUFI_STRICT_SEQ
+	bool "Reject a frame whose sequence number is out of order"
+	default y
+	help
+	  ESP-IDF's receiver tracks recv_seq, refuses a frame whose seq is not the expected
+	  next one, and reports SEQUENCE_ERROR on DATA/ERROR_INFO. On (the default) matches
+	  that, so a phone that sent a frame twice, or a frame that arrived out of order, is
+	  told so instead of being acted on twice.
+
+	  Off accepts the frame anyway, at the cost of diverging from upstream: only worth
+	  it while debugging a client that restarts its sequence without reconnecting.
+
 config BLUFI_SECURITY
 	bool "BluFi security handshake (DH + AES-CFB128 + MD5)"
 	default n
