@@ -9,6 +9,8 @@
  * Publish() from other threads only touches a message queue, never the client, because
  * the library is not thread-safe.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #ifdef CONFIG_HCP_MQTT

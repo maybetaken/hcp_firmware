@@ -3,6 +3,8 @@
  * dead slave stops being polled. The clock is injected, so "30 s cooldown" and
  * "staggered periods" are asserted rather than waited for.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <gtest/gtest.h>

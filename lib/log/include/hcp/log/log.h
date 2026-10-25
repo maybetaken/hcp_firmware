@@ -3,6 +3,8 @@
  * Replaces the legacy FreeRTOS `logging.h`. Backend selected at build time:
  * Zephyr `LOG` on-target, fprintf on host. Google C++ Style naming.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once

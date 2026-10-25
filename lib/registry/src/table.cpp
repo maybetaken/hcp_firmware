@@ -2,6 +2,8 @@
  * hcp::registry - see table.h for the contract (precedence, dedup, the quiet
  * cases) and for what the parser deliberately does not accept.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "hcp/registry/table.h"

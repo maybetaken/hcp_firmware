@@ -1,5 +1,7 @@
 /*
  * hcp::input — Debouncer pure-logic implementation (OS-independent).
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "hcp/input/input.h"

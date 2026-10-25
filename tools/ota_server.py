@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 maybetaken
+# SPDX-License-Identifier: Apache-2.0
+
 """Serve HCP OTA images to the bench - threaded, because two boards are not one device.
 
     ./tools/ota_server.py                    # build/otasrv on :9998

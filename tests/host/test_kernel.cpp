@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 maybetaken
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 /* Host unit tests for the hcp::kernel posix backend (GoogleTest). */
 #include <gtest/gtest.h>
 

@@ -8,6 +8,8 @@
  *                              DHCP hostname and the first DISCOVER payload
  *   BLE hooks before provisioning  the state machine drives its reports through them
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "hcp-app.h"

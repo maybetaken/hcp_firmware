@@ -1,4 +1,5 @@
-# Copyright SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2026 maybetaken
+# SPDX-License-Identifier: Apache-2.0
 description: |
   WS2812-class addressable LEDs driven by an ESP32 RMT TX channel: each data bit
   becomes one RMT symbol whose high time is the WS2812 phase (t0H 400 ns, t1H 800 ns

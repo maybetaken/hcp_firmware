@@ -1,5 +1,7 @@
 /*
  * HCP ESP32-C3 pin control. Console UART (uart0) + Modbus UART (uart1, TTL).
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 

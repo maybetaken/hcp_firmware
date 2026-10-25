@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 maybetaken
+# SPDX-License-Identifier: Apache-2.0
+
 # Create an MCUboot signing key pair in hcp/keys/ (inside the container, so no
 # Python packages are needed on the host):
 #

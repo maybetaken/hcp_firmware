@@ -16,6 +16,8 @@
  * the test vectors are real payloads, and the packing is pure functions with host tests
  * rather than inline code in the collector's loop.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once

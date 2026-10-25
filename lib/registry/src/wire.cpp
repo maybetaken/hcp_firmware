@@ -2,6 +2,8 @@
  * hcp::registry - see wire.h for what the byte layout is and why the big-endian
  * swap has to stay.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "hcp/registry/wire.h"

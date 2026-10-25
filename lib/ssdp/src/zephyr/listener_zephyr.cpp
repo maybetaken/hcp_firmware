@@ -5,6 +5,8 @@
  * multicast group needs a configured interface, so opening the socket is
  * retried until it succeeds instead of failing once at boot.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #ifdef CONFIG_HCP_SSDP

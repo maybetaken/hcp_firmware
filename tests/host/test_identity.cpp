@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 maybetaken
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 // Host tests for hcp::identity's pure formatters: the serial number string and
 // the RFC 1123 hostname derived from it.
 #include "hcp/identity/identity.h"

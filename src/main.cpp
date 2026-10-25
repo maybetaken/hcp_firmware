@@ -6,6 +6,8 @@
  * app_blufi.cpp and app_services.cpp. This file stays four lines of code on
  * purpose: an entry point that cannot grow is one that cannot rot.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "hcp-app.h"

@@ -1,6 +1,8 @@
 /*
  * ztest for the hcp::kernel Zephyr backend (runs on native_sim).
  * Google C++ Style naming.
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <zephyr/ztest.h>

@@ -1,5 +1,7 @@
 /*
  * hcp::switchctl — POSIX backend (host). In-memory fake relay state.
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "hcp/switch/relay.h"

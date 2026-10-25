@@ -4,6 +4,8 @@
  * Write() drives DE high before sending and low after the TX shift register
  * drains. On TTL boards (no such alias) this is compiled out entirely.
  * Google C++ Style naming.
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "hcp/serial/port.h"

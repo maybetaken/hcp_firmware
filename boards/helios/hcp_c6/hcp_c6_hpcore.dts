@@ -1,6 +1,8 @@
 /*
  * HCP (Helios Collector Platform) — ESP32-C6 hpcore board.
  * Shared skeleton lives in ../common/hcp_base.dtsi.
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 

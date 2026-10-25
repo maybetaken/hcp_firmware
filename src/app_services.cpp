@@ -5,6 +5,8 @@
  * #ifdef CONFIG_BLUFI block: harmless while hcp::provision was on, but a build without
  * BLE then could not start MQTT, SSDP, the collector or OTA at all.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "app.h"

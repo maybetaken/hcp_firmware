@@ -15,6 +15,8 @@
  *              After a few consecutive failures a unit cools off and is probed once; a
  *              reply brings it straight back.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once

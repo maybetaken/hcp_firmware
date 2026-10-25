@@ -1,5 +1,7 @@
 /*
  * Host unit tests for the BluFi frame codec (esp_blufi 4-byte header framing).
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <gtest/gtest.h>

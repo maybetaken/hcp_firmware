@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 maybetaken
+# SPDX-License-Identifier: Apache-2.0
+
 # Release a firmware image to a device over the network - build, stage, trigger.
 #
 #   ./tools/ota_release.sh 0.3.0                       # hcp_c6, product build

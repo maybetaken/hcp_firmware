@@ -3,6 +3,8 @@
  * module), gated per-domain by CONFIG_HCP_LOG_LEVEL_*.
  * Google C++ Style naming.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "hcp/log/log.h"

@@ -7,7 +7,9 @@
  * minimal private config before any mbedtls header is seen. blufi_mbedtls_rename.h
  * is force-included next to it, and both are ours - no upstream file is edited.
  *
- * SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 maybetaken
+ *
+ * SPDX-License-Identifier: Apache-2.0
  */
 #ifndef BLUFI_DHM_COMPAT_H_
 #define BLUFI_DHM_COMPAT_H_

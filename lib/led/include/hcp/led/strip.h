@@ -7,6 +7,8 @@
  * on-target flush is available but OFF by default. The app-visible API is
  * backend-agnostic. Google C++ Style naming.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once

@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) 2026 maybetaken
+ *
  * hcp::provision — provisioning/connectivity state machine (pure logic).
  *
  * Policy lives here so it is host-testable and free of Zephyr/Wi-Fi/LED
@@ -13,7 +15,9 @@
  *                                  back to provisioning
  *   long press                  -> erase credentials, back to provisioning
  *
- * Google C++ Style naming. SPDX-License-Identifier: Apache-2.0
+ * Google C++ Style naming.
+ *
+ * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
 

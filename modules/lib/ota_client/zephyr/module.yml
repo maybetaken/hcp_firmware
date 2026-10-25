@@ -1,7 +1,7 @@
 #
-# Copyright (c) 2026 the ota_client authors
+# Copyright (c) 2026 maybetaken
 #
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 #
 # ota_client: transport agnostic firmware update client for Zephyr.
 #

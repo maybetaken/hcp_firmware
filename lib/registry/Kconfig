@@ -1,4 +1,5 @@
 # hcp::registry module Kconfig
+# Copyright (c) 2026 maybetaken
 # SPDX-License-Identifier: Apache-2.0
 menuconfig HCP_REGISTRY
 	bool "HCP registry (Modbus point table, downloaded config, persistence)"

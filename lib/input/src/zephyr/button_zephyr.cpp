@@ -11,6 +11,8 @@
  * deliberately not set up as a wakeup source (that would be GPIO_INT_WAKEUP on top
  * of the edge configuration below).
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "hcp/input/input.h"

@@ -1,9 +1,13 @@
 /*
+ * Copyright (c) 2026 maybetaken
+ *
  * ESP32-C3 RS485 variant overlay (mutually exclusive with the default TTL).
  * Applied via: build.sh hcp_c3 --rs485
  * Re-pins UART1 to the c3-485 physical pads (TX=GPIO4, RX=GPIO6) and adds the
  * DE/RE direction line for the external TTL->RS485 transceiver (DE=GPIO5),
  * exported as alias `hcp-rs485-dir` so the serial backend toggles it.
+ *
+ * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <zephyr/dt-bindings/gpio/gpio.h>

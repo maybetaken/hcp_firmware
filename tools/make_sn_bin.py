@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 maybetaken
+# SPDX-License-Identifier: Apache-2.0
+
 """Make (and optionally burn) the per-device factory SN blob.
 
 hcp::identity reads the "prodinfo" partition first, so a device can carry its own

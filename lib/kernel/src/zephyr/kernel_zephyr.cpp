@@ -3,6 +3,8 @@
  * Mutex->k_mutex, MsgQueue->k_msgq, Thread->static k_thread pool,
  * Timer->k_timer, time->k_uptime_get/k_sleep.
  * Google C++ Style naming.
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 

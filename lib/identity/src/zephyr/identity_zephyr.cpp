@@ -6,6 +6,8 @@
  * be picked up on a renew, which is how the device ends up showing as
  * "espressif" in a router that was never told otherwise).
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #ifdef CONFIG_HCP_IDENTITY

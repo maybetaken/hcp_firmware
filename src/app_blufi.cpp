@@ -5,6 +5,8 @@
  * delay, order and report format in here is a measurement of what those clients do on the
  * wire - do not "simplify" one without re-testing against both.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "app.h"

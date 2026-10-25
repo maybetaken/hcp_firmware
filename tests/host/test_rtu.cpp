@@ -4,6 +4,8 @@
  * after the request, an echo of our own request on a half-duplex line, stale bytes
  * left by a transaction we gave up on - and assert them in microseconds.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <gtest/gtest.h>

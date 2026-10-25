@@ -4,6 +4,8 @@
  * rules the user asked for - a re-download wins, only a change is written, a
  * payload with no segments array is ignored.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <gtest/gtest.h>

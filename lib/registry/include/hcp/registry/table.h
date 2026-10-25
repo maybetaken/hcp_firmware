@@ -41,6 +41,8 @@
  * KeyValue interface, so the precedence/dedup rules are host-testable with a fake.
  * Google C++ Style naming.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once

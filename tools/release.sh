@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 maybetaken
+# SPDX-License-Identifier: Apache-2.0
+
 # Cut a firmware release: bump the version, prove it builds, commit, tag.
 #
 #   ./tools/release.sh 2.0.3.15            # the normal case

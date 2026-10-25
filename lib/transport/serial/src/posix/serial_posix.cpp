@@ -1,6 +1,8 @@
 /*
  * hcp::serial — POSIX backend (host). In-memory loopback: bytes written come
  * back on read. Google C++ Style naming.
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "hcp/serial/port.h"

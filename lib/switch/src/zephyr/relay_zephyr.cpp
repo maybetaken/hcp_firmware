@@ -1,5 +1,7 @@
 /*
  * hcp::switchctl — Zephyr backend (drives relay gpios hcp-k1/hcp-k2).
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "hcp/switch/relay.h"

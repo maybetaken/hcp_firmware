@@ -1,7 +1,7 @@
 # ota_client module — Zephyr build integration
 #
-# Copyright (c) 2026 the ota_client authors
-# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 maybetaken
+# SPDX-License-Identifier: Apache-2.0
 
 zephyr_include_directories(include)
 

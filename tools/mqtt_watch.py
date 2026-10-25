@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 maybetaken
+# SPDX-License-Identifier: Apache-2.0
+
 """Watch or drive the HCP device over MQTT, with no third-party packages.
 
 On the wire (subscribed set: lib/collector/src/commands.cpp, copied topic by topic from

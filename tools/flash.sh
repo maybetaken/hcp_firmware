@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 maybetaken
+# SPDX-License-Identifier: Apache-2.0
+
 # Flash MCUboot plus the signed application to an HCP board, from the host
 # (Docker cannot own the serial port on macOS).
 #

@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 maybetaken
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 // Host tests for hcp::provision's Fsm: the connect/credential/BLE policy.
 #include "hcp/provision/fsm.h"
 

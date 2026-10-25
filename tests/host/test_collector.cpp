@@ -3,6 +3,8 @@
  * Assistant, which otherwise lives as a switch inside a thread loop where a typo
  * is only visible on a device across the room.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <gtest/gtest.h>

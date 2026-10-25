@@ -1,9 +1,13 @@
 /*
+ * Copyright (c) 2026 maybetaken
+ *
  * ESP32-C5 RS485 variant overlay (mutually exclusive with the default TTL).
  * Applied via: build.sh hcp_c5/... --rs485
  * Re-pins UART1 to the c5-485 physical pads (TX=GPIO5, RX=GPIO27) and adds the
  * DE/RE direction line for the external TTL->RS485 transceiver (DE=GPIO4),
  * exported as alias `hcp-rs485-dir` so the serial backend toggles it.
+ *
+ * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <zephyr/dt-bindings/gpio/gpio.h>

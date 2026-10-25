@@ -19,6 +19,8 @@
  *
  * Google C++ Style naming.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once

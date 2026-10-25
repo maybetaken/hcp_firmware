@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 maybetaken
+# SPDX-License-Identifier: Apache-2.0
+
 # Build the HCP app for a target board inside the env-zephyr-espressif image
 # (one-shot container; output persists to host under hcp/build/<slug>).
 #

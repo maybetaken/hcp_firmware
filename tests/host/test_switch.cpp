@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 maybetaken
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 /* Host unit tests for hcp::switchctl: the posix relay fake, and the JSON shapes of
  * the "<sn>-K" device - the contract with Home Assistant's Switches plugin, which is
  * otherwise only visible as "the switch in the UI did not move". */

@@ -1,6 +1,8 @@
 /*
  * hcp::kernel — POSIX backend (host / Linux, for native unit tests).
  * Google C++ Style naming.
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #define _GNU_SOURCE 1

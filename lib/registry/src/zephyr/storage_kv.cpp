@@ -2,6 +2,8 @@
  * hcp::registry - KeyValue over hcp::storage (settings -> NVS on target).
  * See storage_kv.h for why this is a separate file.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "hcp/registry/storage_kv.h"

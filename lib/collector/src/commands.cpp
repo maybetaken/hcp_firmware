@@ -7,6 +7,8 @@
  * them be tested: the alternative is a switch inside a thread loop, where a typo
  * shows up as "nothing happens" on a device across the room.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "hcp/collector/collector.h"

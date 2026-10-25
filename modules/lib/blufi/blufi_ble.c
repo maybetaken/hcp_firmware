@@ -5,7 +5,9 @@
  * ESP-compatible DH key negotiation + AES-128-CFB128/CRC-16 layer is wired in
  * (see blufi_security.c and the FC_ENC/FC_CHECK handling in p2e_write/blufi_send).
  *
- * SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 maybetaken
+ *
+ * SPDX-License-Identifier: Apache-2.0
  */
 #if defined(CONFIG_BLUFI) && defined(CONFIG_BT_PERIPHERAL)
 

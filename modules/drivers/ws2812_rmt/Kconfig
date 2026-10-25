@@ -1,4 +1,5 @@
 # WS2812-over-RMT driver for ESP32 parts (Zephyr module)
+# Copyright (c) 2026 maybetaken
 # SPDX-License-Identifier: Apache-2.0
 
 config LED_STRIP_ESP_RMT

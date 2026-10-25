@@ -5,6 +5,8 @@
  * start 8192; jkbms: unit 15 start 5120) so a "cleanup" that changes the byte
  * order fails here instead of shipping garbage values.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <gtest/gtest.h>

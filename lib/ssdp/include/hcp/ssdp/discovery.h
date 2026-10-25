@@ -9,6 +9,8 @@
  * thread. When an announcement is accepted, the broker address is handed to
  * hcp::mqtt (and persisted there), so nothing else has to be configured.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once

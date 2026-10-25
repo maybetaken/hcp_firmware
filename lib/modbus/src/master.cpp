@@ -4,6 +4,8 @@
  * src/zephyr/master_native.cpp, and both implement the same class in master.h.
  * Google C++ Style naming.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #if !defined(CONFIG_HCP_MODBUS_BACKEND_NATIVE)

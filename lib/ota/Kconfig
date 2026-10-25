@@ -1,4 +1,5 @@
 # hcp::ota module Kconfig
+# Copyright (c) 2026 maybetaken
 # SPDX-License-Identifier: Apache-2.0
 
 menuconfig HCP_OTA

@@ -1,4 +1,6 @@
 /*
+ * Copyright (c) 2026 maybetaken
+ *
  * hcp::identity - one serial number for the whole device.
  *
  * The same string names this device everywhere it is seen from the outside: the
@@ -13,7 +15,10 @@
  * stored so it never changes again) -> "<prefix>pending" when even the MAC is
  * unavailable.
  *
- * Google C++ Style naming. SPDX-License-Identifier: Apache-2.0
+ * Google C++ Style naming.
+ *
+ *
+ * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
 

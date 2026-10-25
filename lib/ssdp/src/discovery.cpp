@@ -1,5 +1,7 @@
 /*
  * hcp::ssdp - announcement parsing (pure, host-tested).
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "hcp/ssdp/discovery.h"

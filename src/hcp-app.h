@@ -5,6 +5,8 @@
  * one instance of each collaborator the order needs; the collaborators themselves
  * are in app.h next to their implementations.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once

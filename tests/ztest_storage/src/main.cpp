@@ -1,6 +1,8 @@
 /*
  * ztest for the hcp::storage Zephyr (settings) backend, on native_sim with the
  * SETTINGS_NONE backend (KV/cache + settings API wiring). Google style naming.
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <zephyr/ztest.h>

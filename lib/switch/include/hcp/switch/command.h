@@ -22,6 +22,8 @@
  * shows how a hand-rolled scanner stays host-tested, and a bundled parser would bring a
  * dependency and a malloc pattern this port exists to remove.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once

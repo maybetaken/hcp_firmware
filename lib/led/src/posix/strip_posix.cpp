@@ -1,5 +1,7 @@
 /*
  * hcp::led — POSIX backend (host). CPU-side framebuffer only; Show() no-op.
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "hcp/led/strip.h"

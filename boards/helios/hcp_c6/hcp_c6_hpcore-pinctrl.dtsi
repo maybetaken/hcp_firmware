@@ -1,6 +1,8 @@
 /*
  * HCP ESP32-C6 pin control (hpcore). Console UART (uart0) + Modbus UART (uart1).
  * uart1 default = TTL pins (RS485 variant overlay switches pins + DE later).
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 

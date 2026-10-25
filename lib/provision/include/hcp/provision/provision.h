@@ -6,6 +6,8 @@
  * Fsm (fsm.h, host-tested); this layer maps its actions onto hcp::net::wifi,
  * hcp::storage, hcp::led, hcp::input and the BluFi module.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once

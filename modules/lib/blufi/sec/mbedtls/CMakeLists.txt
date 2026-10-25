@@ -10,7 +10,8 @@
 # sort ahead of the interface ones, so these translation units see Mbed TLS' own
 # headers first, and nothing else in the build gains a 2.28 include path.
 #
-# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 maybetaken
+# SPDX-License-Identifier: Apache-2.0
 
 zephyr_library_named(blufi_mbedtls)
 

@@ -8,6 +8,8 @@
  * Backends selected at build time: posix (host unit tests) or zephyr (target).
  * app/core only includes THIS header and never touches pthread/k_thread directly.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once

@@ -6,6 +6,8 @@
  * permanent. The download, the staging and the activation are the reusable
  * ota_client module's business.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #ifdef CONFIG_HCP_OTA

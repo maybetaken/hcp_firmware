@@ -18,6 +18,8 @@
  * and truncated-frame cases are host-tested with a scripted transport instead of
  * discovered on the bench once a week.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once

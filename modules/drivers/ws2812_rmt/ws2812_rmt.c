@@ -19,6 +19,8 @@
  * The measurements behind the per-part defines below are recorded in CHANGELOG.md
  * (2.0.3.18 through 2.0.3.21); the register field layouts are in soc/rmt_struct.h.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 

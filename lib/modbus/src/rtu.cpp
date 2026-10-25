@@ -2,6 +2,8 @@
  * hcp::modbus - see rtu.h for why this frames a reply by length rather than by an
  * idle line, and which behaviour in the previous firmware it is modelled on.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "hcp/modbus/rtu.h"

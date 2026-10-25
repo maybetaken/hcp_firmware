@@ -2,6 +2,8 @@
  * hcp::switchctl - see command.h for what these shapes are and which side of the
  * contract each one belongs to.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "hcp/switch/command.h"

@@ -4,6 +4,8 @@
  * The point table logic is pure (see table.h); this is the one piece that touches
  * flash, kept separate so the rules can still be tested with a fake on the host.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once

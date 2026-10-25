@@ -10,6 +10,8 @@
  *   credentials         compiled in: the account is created by the user on their own
  *                       broker and is never provisioned over the air
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once

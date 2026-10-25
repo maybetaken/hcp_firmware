@@ -2,6 +2,8 @@
  * hcp::net — Zephyr Wi-Fi station backend (net_mgmt Wi-Fi MGMT + DHCP).
  * Google C++ Style naming.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #ifdef CONFIG_HCP_NET

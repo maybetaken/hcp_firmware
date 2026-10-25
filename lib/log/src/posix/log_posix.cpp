@@ -1,6 +1,8 @@
 /*
  * hcp::log — POSIX backend (host). Prints to stderr with domain/level tags.
  * Google C++ Style naming.
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "hcp/log/log.h"

@@ -10,6 +10,8 @@
  * meter produces, so on the bench C3 every poll failed CRC while a raw probe of the
  * same wire read a perfect frame every time. c5 and c6 keep the subsys.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <errno.h>

@@ -2,6 +2,8 @@
  * HCP switch control — relay outputs K1/K2 (devicetree aliases hcp-k1/hcp-k2).
  * Backend: zephyr (gpio) on target, in-memory fake on host. Google C++ naming.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once

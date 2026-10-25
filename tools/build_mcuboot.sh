@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 maybetaken
+# SPDX-License-Identifier: Apache-2.0
+
 # Build MCUboot for an HCP board inside the Zephyr container.
 #
 # MCUboot is compiled as an ordinary Zephyr application from the west workspace's

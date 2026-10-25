@@ -5,6 +5,8 @@
  * The button binding is the fallback for a build without hcp::provision, which otherwise
  * owns the button and the status LED.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "app.h"

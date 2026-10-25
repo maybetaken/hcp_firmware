@@ -1,5 +1,7 @@
 /*
  * hcp::provision — Fsm transition logic (pure, host-tested).
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "hcp/provision/fsm.h"

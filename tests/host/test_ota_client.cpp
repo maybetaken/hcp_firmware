@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 maybetaken
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 // Host tests for ota_client's pure layer: version ordering and URL splitting.
 //
 // The core and the backends need the kernel, sockets and flash; these two are

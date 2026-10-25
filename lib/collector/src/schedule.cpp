@@ -1,6 +1,8 @@
 /*
  * hcp::collector - see schedule.h for what these two classes are for.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "hcp/collector/schedule.h"

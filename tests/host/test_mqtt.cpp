@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 maybetaken
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 // Host tests for hcp::mqtt's pure pieces (the reconnect backoff schedule).
 #include "hcp/mqtt/backoff.h"
 

@@ -167,7 +167,7 @@ src/ota_source_http.c src/ota_sink_mcuboot.c backends
 
 ## License
 
-MIT - see [LICENSE](LICENSE). Contributions are expected to follow Zephyr's coding
+Apache-2.0 - see [LICENSE](LICENSE). Contributions are expected to follow Zephyr's coding
 style (`scripts/checkpatch.pl`), keep the core free of board and vendor
 dependencies, and add a host test for anything pure.
 

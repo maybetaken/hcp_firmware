@@ -15,6 +15,8 @@
  *     cannot reach the network is rolled back instead of confirmed. That is the
  *     deliberate difference from "rebooted once, therefore good".
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once

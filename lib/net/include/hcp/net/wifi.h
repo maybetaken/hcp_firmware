@@ -4,6 +4,8 @@
  * is no backend yet (net is target-only); the interface is kept small so app
  * core / BluFi provisioning can drive it uniformly. Google C++ Style naming.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once

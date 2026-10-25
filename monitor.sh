@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 maybetaken
+# SPDX-License-Identifier: Apache-2.0
+
 # monitor.sh — watch HCP serial logs from the host (macOS/Linux).
 # The board is flashed from the host (Docker can't pass serial on macOS) and
 # logs go over the native USB-Serial-JTAG CDC port (/dev/cu.usbmodem*).

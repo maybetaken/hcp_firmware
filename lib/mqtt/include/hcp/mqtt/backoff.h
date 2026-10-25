@@ -5,6 +5,8 @@
  * failure should still feel immediate. So: no wait for the first attempt, then
  * base_ms doubling up to cap_ms, reset once a session is established.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once

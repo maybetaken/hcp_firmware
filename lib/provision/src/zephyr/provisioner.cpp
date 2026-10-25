@@ -5,6 +5,8 @@
  * 50 ms tick and classifies the user button (short press = reboot, long press =
  * forget credentials and go back to provisioning).
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "hcp/provision/provision.h"

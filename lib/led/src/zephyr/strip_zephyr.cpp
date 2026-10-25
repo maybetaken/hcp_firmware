@@ -7,6 +7,8 @@
  * drivers do, and the shared parts below start to differ between branches.
  *
  * No STL (Zephyr minimal C++). Google C++ Style naming.
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #if defined(CONFIG_HCP_LED_BACKEND_ZEPHYR)

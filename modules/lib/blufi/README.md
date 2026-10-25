@@ -62,7 +62,7 @@ into WPA2/WPA3 and rely on the TLS/signed-image layers elsewhere.
 
 ## License
 
-MIT - see [LICENSE](LICENSE). It covers this repository's files only. Mbed TLS is
+Apache-2.0 - see [LICENSE](LICENSE). It covers this repository's files only. Mbed TLS is
 submoduled, not vendored, and stays Apache-2.0 (dual licensed GPL-2.0-or-later)
 under its own terms; a binary that enables encrypted provisioning therefore carries
 their notices. Bump the pin with an ordinary `git submodule` update - the gitlink

@@ -10,6 +10,8 @@
  *   BringupAids       bench threads and the button fallback without hcp::provision, kept
  *                     separate so the product path does not read like the workshop.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once

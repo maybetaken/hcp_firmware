@@ -3,6 +3,8 @@
  * Debouncer is pure logic (host-testable); Button binds the devicetree
  * `sw0` gpio-keys alias on the Zephyr backend. Google C++ Style naming.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once

@@ -1,6 +1,8 @@
 /*
  * hcp::storage — POSIX backend (host). One file per key under a root dir.
  * Google C++ Style naming.
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "hcp/storage/store.h"

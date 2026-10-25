@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 maybetaken
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 // Host tests for hcp::ssdp parsing (the wire format Home Assistant emits).
 #include "hcp/ssdp/discovery.h"
 

@@ -2,6 +2,8 @@
  * hcp::collector — Zephyr side: the queue, the worker thread and the MQTT routes.
  * See collector.h for why there is exactly one thread allowed to touch the bus.
  *
+ * Copyright (c) 2026 maybetaken
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "hcp/collector/collector.h"
