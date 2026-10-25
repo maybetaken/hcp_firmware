@@ -1,18 +1,12 @@
 /*
- * HCP application - the start-up sequence, in the order it has to happen.
+ * HCP application - the start-up sequence, in the order it has to happen. This file is
+ * deliberately only ordering plus the liveness loop; each position is load-bearing:
  *
- * This file is deliberately only ordering plus the liveness loop. Each step is
- * where it is for a reason that is easy to lose and expensive to rediscover:
- *
- *   banner via printk           the log ring is 1024 B and the boot burst fills it
- *                               before the log thread drains anything, which is
- *                               how the build identity used to be dropped
- *   watchdog before everything  a firmware that dies on the way up still gets
- *                               reverted by MCUboot instead of staying dead
- *   identity before the network  the serial number is the MQTT client-id, the
- *                               topic prefix and the DHCP hostname, and it
- *                               travels in the very first DISCOVER
- *   BLE hooks before provisioning  hcp::provision drives its reports through them
+ *   printk banner              the 1024 B log ring fills before the log thread drains
+ *   watchdog / trial guard     a firmware that dies on the way up still gets reverted
+ *   identity before network    the serial number is the MQTT client-id, topic prefix,
+ *                              DHCP hostname and the first DISCOVER payload
+ *   BLE hooks before provisioning  the state machine drives its reports through them
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -33,36 +27,29 @@
 namespace hcp {
 
 void App::Start() {
-  /* Best-effort early identity, straight to the console. Two separate things can
-   * swallow the first lines of a boot: the 1024 B log ring fills before the log
-   * thread drains anything (Zephyr reports "N messages dropped" - measured, and
-   * why these lines do not go through hcp::log), and the USB-Serial-JTAG console
-   * is not host-attached yet when the earliest writes happen. The second one is
-   * not fixable from here: two boots of the same image, captured with the port
-   * opened before reset, gave 3/3 lines and then 0/3 - even Zephyr's own banner
-   * went missing. So "which build is this" also has to be readable somewhere the
-   * console cannot eat it: hcp::ota logs it at INFO, and <sn>/online carries it to
-   * the broker. */
+  /* Not through hcp::log: the ring is 1024 B and the boot burst fills it before the log
+   * thread runs ("N messages dropped"). The earliest lines can still be lost because
+   * USB-Serial-JTAG is not host-attached yet, which is why the version is also logged at
+   * INFO by hcp::ota and carried on <sn>/online. */
   printk("*** HCP (Helios Collector Platform) ***\n");
   printk("hcp: build %s %s\n", __DATE__, __TIME__);
 #ifdef CONFIG_HCP_BENCH
-  /* Loud on purpose. This image runs the bring-up aids and debug logging and is
-   * meant for the bench; it is not what ships. It still keeps provisioning, MQTT
-   * and OTA on, so a bench device can be upgraded over the network instead of
-   * being plugged into USB again - which is also why this line cannot be subtle. */
+  /* This image runs the bring-up aids with debug logging and is not what ships - hence
+   * the noise. It keeps provisioning, MQTT and OTA so it can be upgraded over the
+   * network instead of plugged into USB again. */
   printk("hcp: *** BENCH BUILD - not a deployment image ***\n");
 #endif
 
 #ifdef CONFIG_HCP_OTA
-  /* First thing, before any subsystem that can block or fail: if MCUboot still
-   * treats this image as a trial, put a hardware deadline on it. Nothing ever
-   * feeds that deadline; hcp::ota cancels it when the image is confirmed. */
+  /* Before anything that can block or fail: if MCUboot still treats this image as a
+   * trial, put a hardware deadline on it. Nothing feeds it; hcp::ota cancels it on
+   * confirmation. */
   hcp::ota::GuardTrialImage();
 #endif
 
 #ifdef CONFIG_HCP_IDENTITY
-  /* wifi::Init() only binds the interface and registers callbacks; it is
-   * idempotent, and the BluFi path calls it again below. */
+  /* Only binds the interface and registers callbacks; idempotent, and the BluFi path
+   * calls it again below. */
   hcp::net::wifi::Init();
   hcp::identity::Init();
 #endif
@@ -76,8 +63,7 @@ void App::Start() {
 #ifdef CONFIG_HCP_PROVISION
   services_.Start();
 #elif defined(CONFIG_BLUFI)
-  /* No provisioning state machine in this build: advertise BluFi and wait for a
-   * phone, using the hand-rolled path in app_blufi.cpp. */
+  /* No provisioning state machine in this build: advertise BluFi and wait for a phone. */
   phone_.StartStandalone();
 #endif
 

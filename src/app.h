@@ -1,22 +1,14 @@
 /*
- * HCP application internals - the collaborators the App drives.
+ * HCP application internals - the collaborators the App drives. Internal to src/.
  *
- * Internal to src/: none of this is public API. The application is one hcp::App
- * instance (in main.cpp) that owns one instance of each of these three, and the
- * reason each of them is a class rather than a file of free functions differs:
- *
- *   PhoneProvisioner  real state with a lifecycle - the credentials a phone is
- *                     feeding us, the AP set accumulated across scan passes, the
- *                     timeout/success work items that must move together with the
- *                     "did we already tell the phone" flag. That coupling was 22
- *                     file-scope globals and a comment; now it is a type.
- *   Services          no state, but a sequence with a strict order (provisioning,
- *                     MQTT, SSDP, collector, OTA). Named object so the order has
- *                     one obvious home and the handlers are not file-statics any
- *                     build can accidentally call.
- *   BringupAids       bench-only threads and the button fallback for builds
- *                     without hcp::provision. Kept separate so the product path
- *                     never reads like the workshop.
+ *   PhoneProvisioner  real state with a lifecycle: the credentials a phone is feeding us,
+ *                     the AP set accumulated across scan passes, and the timeout/success
+ *                     work items that must move together with the "already reported"
+ *                     flags - coupling that was 22 file-scope globals and a comment.
+ *   Services          no state, but a startup sequence with a strict order; the handlers
+ *                     are members rather than file-statics.
+ *   BringupAids       bench threads and the button fallback without hcp::provision, kept
+ *                     separate so the product path does not read like the workshop.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -45,8 +37,8 @@ class BringupAids {
   static void OnButton(bool pressed, void* arg);
 #endif
 #if defined(CONFIG_HCP_BENCH) && defined(CONFIG_HCP_LED) && !defined(CONFIG_HCP_PROVISION)
-  // Colour cycle, to show the strip and its SPI timing are alive. Bench image
-  // only: a shipped device shows state through the LED, not a demo.
+  // Colour cycle, to show the strip is alive. Bench image only: a shipped device
+  // shows state through the LED, not a demo.
   static void LedWorker(void* arg);
 #endif
 #ifdef CONFIG_HCP_MODBUS_DEMO
@@ -56,8 +48,8 @@ class BringupAids {
   static void LoopbackWorker(void* arg);
 #endif
 #ifdef CONFIG_HCP_RTU_PROBE
-  // Raw RTU request/reply with the bytes printed - for the case where a real
-  // slave answers and Zephyr's subsys refuses the frame before logging it.
+  // Raw RTU request/reply with the bytes printed - for when a real slave answers and
+  // Zephyr's subsys refuses the frame before logging it.
   static void RtuProbeWorker(void* arg);
 #endif
 #ifdef CONFIG_HCP_NET_DEMO
@@ -81,9 +73,8 @@ class Services {
   static void OnMqttCommand(const uint8_t* payload, size_t len, void* user);
 #endif
 #if defined(CONFIG_HCP_OTA) || defined(CONFIG_HCP_PROVISION)
-  /* The two fields Home Assistant expects on <sn>/diagnostics that hcp::mqtt does
-   * not know about: "led" (its light entity reads the state from there) and "ota"
-   * while an update has been tried. */
+  /* The diagnostics fields hcp::mqtt cannot know: "led" (the light entity reads its
+   * state from there) and "ota" once an update has been tried. */
   static int StateExtra(char* buf, size_t cap);
 #endif
 };
@@ -99,13 +90,12 @@ class Services {
 class PhoneProvisioner {
  public:
   static constexpr int kMaxAps = 32;
-  // One BluFi frame, so the list never has to be fragmented for the phone to
-  // show it (see the note in OnScan about clients that do not reassemble).
+  // One BluFi frame, so the phone shows the list without reassembling (see OnScan).
   static constexpr int kMaxListBytes = 255;
 
-  // Registers the Wi-Fi callback and the BluFi data handler, and arms the work
-  // items. Called before the provisioning state machine starts, because that
-  // machine drives the same reports through these hooks.
+  // Registers the Wi-Fi callback and the BluFi data handler and arms the work items.
+  // Called before the provisioning state machine starts, because that machine drives
+  // the same reports through these hooks.
   void Init();
 
   // Nothing else in this build owns provisioning: advertise and wait for a phone.
@@ -125,7 +115,7 @@ class PhoneProvisioner {
   void ReportState(uint8_t sta_state);
   void ReportSuccess();
   void ReportFail(uint8_t reason);
-  void ConnectNow();          // runs on the system workqueue, never the BT RX thread
+  void ConnectNow();          // on the system workqueue, never the BT RX thread
   void OnScanResult(const hcp::net::ScanResult* r);
   void OnProvTimeout();
   void OnSuccReportDue();
@@ -140,7 +130,7 @@ class PhoneProvisioner {
   static void ProvTimeoutThunk(struct k_work* work);
   static void SuccWorkThunk(struct k_work* work);
 
-  // ---- state that used to be 22 file-scope globals ----
+  // ---- state ----
   char ssid_[33];
   char pass_[65];
 
@@ -150,8 +140,8 @@ class PhoneProvisioner {
   uint8_t wlist_[kMaxListBytes];
   uint16_t wlist_len_ = 0;
 
-  // "which attempt is in flight" and "has the phone been told yet" are read by the
-  // timeout handler to decide between a FAIL report and a late SUCCESS one.
+  /* Which attempt is in flight, and whether the phone has been told: the timeout
+   * handler reads these to choose a FAIL report over a late SUCCESS one. */
   atomic_t prov_active_;
   atomic_t succ_sent_;
 

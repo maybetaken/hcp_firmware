@@ -1,11 +1,9 @@
 /*
  * HCP application - the running product's services, in the order they come up.
  *
- * Split out of what used to be main.cpp, where the Home Assistant command handler
- * sat *inside* the #ifdef CONFIG_BLUFI block. That was not reachable as a bug
- * while hcp::provision was on (its Kconfig depends on BLUFI), but it meant a build
- * without BLE could not start MQTT, SSDP, the collector or OTA at all - so the
- * services live here now, under their own guard.
+ * Split out of the old main.cpp, where the Home Assistant command handler sat inside the
+ * #ifdef CONFIG_BLUFI block: harmless while hcp::provision was on, but a build without
+ * BLE then could not start MQTT, SSDP, the collector or OTA at all.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -26,8 +24,7 @@
 #include "hcp/ota/ota.h"
 #endif
 #ifdef CONFIG_HCP_PROVISION
-#include "hcp/net/wifi.h"  // diagnostics carries the live ssid/rssi (HCP_PROVISION
-                            // depends on HCP_NET, so this is never a dangling include)
+#include "hcp/net/wifi.h"  // diagnostics carries the live ssid/rssi
 #include "hcp/provision/provision.h"
 #endif
 #ifdef CONFIG_HCP_SSDP
@@ -40,12 +37,10 @@ namespace hcp {
 namespace app {
 
 #ifdef CONFIG_HCP_MQTT
-/* Commands arrive on <sn>/cmd, the topic this firmware owns for text commands
- * (the previous firmware had no such topic; Home Assistant's own commands arrive on
- * <sn>/config and under <sn>/control and are handled by hcp::collector). hcp::ota
- * owns the "ota" verb. Nothing is echoed back: an <sn>/ack topic was added here once
- * and removed again, because no subscriber exists on either side and it was only bus
- * traffic. The observable result of a command is the state change it causes. */
+/* <sn>/cmd: the text-command topic this firmware owns ("ota" is handled by hcp::ota;
+ * Home Assistant's own commands arrive on <sn>/config and <sn>/control/..., routed by
+ * hcp::collector). Nothing is echoed back - there is no ack topic, because neither side
+ * has a reader for one, and a command's observable result is the state change it causes. */
 void Services::OnMqttCommand(const uint8_t* payload, size_t len, void* /*user*/) {
   char text[65];
   size_t n = len < sizeof(text) - 1 ? len : sizeof(text) - 1;
@@ -53,8 +48,8 @@ void Services::OnMqttCommand(const uint8_t* payload, size_t len, void* /*user*/)
   text[n] = '\0';
   HCP_LOGI(hcp::log::kDomainMqtt, "command: %s", text);
 #ifdef CONFIG_HCP_OTA
-  /* "ota" / "ota <base-url>" belongs to hcp::ota, which reports how it went on the
-   * diagnostics topic rather than echoing the command back. */
+  /* "ota" / "ota <base-url>": hcp::ota reports the outcome on diagnostics rather
+   * than echoing the command. */
   if (hcp::ota::HandleCommand(text, n)) {
     return;
   }
@@ -63,28 +58,23 @@ void Services::OnMqttCommand(const uint8_t* payload, size_t len, void* /*user*/)
 #endif  // CONFIG_HCP_MQTT
 
 #if defined(CONFIG_HCP_OTA) || defined(CONFIG_HCP_PROVISION)
-/* Fields hcp::mqtt cannot know about, appended to the periodic <sn>/diagnostics
- * document. Home Assistant's diagnostics card reads exactly these keys and nothing
- * else (plugins/base_device.py: update_diagnostics takes "ssid", "rssi" and
- * "led" == "on"), which is the whole specification for this function:
- *   "ssid", "rssi" - the AP as the driver sees it, live, so the card cannot drift
- *                    into showing the network we were asked to join rather than the
- *                    one we are on, and the signal reading is current rather than
- *                    remembered from the scan that found it.
- *   "led"  - Home Assistant's light entity reads its state from here
- *            (light.py: value == "on"), so a device that answers control/led has to
- *            report it back or the UI drifts from the device.
- *   "ota"  - present only while an update has been attempted.
- * Returns the number of bytes written (0 = nothing to add). */
+/* Fields hcp::mqtt cannot know, appended to the periodic <sn>/diagnostics document.
+ * Home Assistant's diagnostics card reads exactly these keys and nothing else
+ * (plugins/base_device.py: update_diagnostics takes "ssid", "rssi", "led"=="on"), which
+ * is the whole specification:
+ *   "ssid", "rssi" - the AP as the driver sees it right now, so the card cannot show the
+ *                    network we were asked to join instead of the one we are on;
+ *   "led"          - the light entity's state source (light.py: value == "on"); not
+ *                    reported, the UI drifts from the device;
+ *   "ota"          - present only once an update has been attempted.
+ * Returns the bytes written (0 = nothing to add). */
 int Services::StateExtra(char* buf, size_t cap) {
   size_t used = 0;
 #ifdef CONFIG_HCP_PROVISION
-  /* A JSON string cannot carry a raw '"', a '\\' or a control byte, and an SSID is
-   * user data that can contain all three - an unescaped quote would not just lose
-   * this field, it would make the whole document unparseable and Home Assistant
-   * would drop the update (json.JSONDecodeError is logged and swallowed). So the two
-   * hostile classes become '?' and everything else, including UTF-8 SSIDs, is
-   * copied through untouched. */
+  /* An SSID is user data and a JSON string cannot carry a raw '"', '\\' or a control
+   * byte; one of those would make the whole document unparseable, and Home Assistant
+   * logs the JSONDecodeError and drops the update. Hostile bytes become '?'; UTF-8
+   * passes through untouched. */
   net::LinkInfo link{};
   if (hcp::net::wifi::GetLinkInfo(&link)) {
     char safe[sizeof(link.ssid)];
@@ -121,24 +111,21 @@ int Services::StateExtra(char* buf, size_t cap) {
 #endif  // CONFIG_HCP_OTA || CONFIG_HCP_PROVISION
 
 void Services::Start() {
-  /* The state machine decides: credentials in storage -> join the network with
-   * BLE off, otherwise (or after retries fail) -> open BluFi. It also owns the
-   * status LED and the button from here on. */
+  /* The state machine decides: stored credentials -> join with BLE off, otherwise (or
+   * after retries fail) -> open BluFi. It owns the status LED and the button from here. */
   hcp::provision::Start();
 #ifdef CONFIG_HCP_MQTT
-  /* Service session on top of the link: it brings the LED from violet to green
-   * once the broker accepts us, and backs off while it does not. */
+  /* Brings the LED from violet to green once the broker accepts us; backs off until it does. */
   hcp::mqtt::Start();
 #endif
 #ifdef CONFIG_HCP_SSDP
-  /* Home Assistant announces its broker every 5 s on 239.255.255.250:1900; this
-   * feeds hcp::mqtt so no broker address has to be compiled in. */
+  /* Home Assistant announces its broker every 5 s on 239.255.255.250:1900, so no broker
+   * address has to be compiled in. */
   hcp::ssdp::Start();
 #endif
 #ifdef CONFIG_HCP_COLLECTOR
-  /* Routes <sn>/config, <sn>/control/cmd and friends onto one queue, consumed by
-   * one worker that owns the point table and the Modbus bus. Started after MQTT so
-   * the routes exist before the session subscribes. */
+  /* One queue, one worker owning the point table and the Modbus bus. Started after MQTT
+   * so the routes exist before the session subscribes. */
   if (!hcp::collector::Start()) {
     HCP_LOGW(hcp::log::kDomainModbus, "collector not started");
   }
@@ -150,9 +137,8 @@ void Services::Start() {
   hcp::mqtt::SetStateExtraHandler(StateExtra);
 #endif
 #ifdef CONFIG_HCP_OTA
-  /* Updates are version-gated downloads from the host Home Assistant announced,
-   * and a trial swap until this session proves the new image can reach the
-   * network. */
+  /* Version-gated downloads from the announced host, and a trial swap until this
+   * session proves the new image can reach the network. */
   hcp::ota::Start();
 #endif
 }

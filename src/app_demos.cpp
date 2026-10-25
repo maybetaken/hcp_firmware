@@ -1,15 +1,9 @@
 /*
- * HCP application - bring-up aids.
- *
- * Bench helpers, each behind its own CONFIG_* switch and none of them part of
- * what a shipped device does: poll a Modbus slave with no point table, echo
- * bytes through the RS-485/UART pins, join a network from Kconfig credentials.
- * The button binding is the fallback for a build without hcp::provision - with
- * provisioning on, that module owns the button (and the status LED).
- *
- * The P0 LED colour-cycle demo used to live here too. It is gone: what it proved
- * (the strip lights at all) is exercised continuously by the status light in
- * hcp::provision, which is the LED logic the product actually has.
+ * HCP application - bring-up aids. Bench helpers, each behind its own CONFIG_* switch and
+ * none of them part of what a shipped device does: poll a Modbus slave with no point
+ * table, echo bytes through the RS-485/UART pins, join a network from Kconfig credentials.
+ * The button binding is the fallback for a build without hcp::provision, which otherwise
+ * owns the button and the status LED.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -48,10 +42,8 @@ void BringupAids::OnButton(bool pressed, void* /*arg*/) {
 #endif
 
 #if defined(CONFIG_HCP_BENCH) && defined(CONFIG_HCP_LED) && !defined(CONFIG_HCP_PROVISION)
-// The strip and its SPI timing, made visible: four colours and off, 1.2 s apart.
-// Lives in the bench image because that is the build where nothing else is using
-// the LED - hcp::provision owns the strip in a product build and reflects the
-// connection state through it instead.
+// The strip made visible: four colours and off, 1.2 s apart. Bench image only, where
+// nothing else drives it - hcp::provision owns the strip in a product build.
 void BringupAids::LedWorker(void* /*arg*/) {
   hcp::led::Strip s(1);
   if (!s.Open()) {
@@ -72,10 +64,9 @@ void BringupAids::LedWorker(void* /*arg*/) {
 #endif  // HCP_BENCH && HCP_LED && !HCP_PROVISION
 
 #ifdef CONFIG_HCP_MODBUS_DEMO
-// Bring-up aid: periodically poll a Modbus slave over uart1 to exercise the RTU
-// path on real hardware. With no slave attached this logs a timeout (-ENOTCONN),
-// which still proves the devicetree interface resolved, the uart was configured
-// and the RS485 DE line toggles.
+// Bring-up aid: poll a Modbus slave over uart1 to exercise the RTU path on real hardware.
+// With no slave attached this logs -ENOTCONN, which still proves the interface resolved,
+// the uart was configured and the RS485 DE line toggles.
 void BringupAids::ModbusWorker(void* /*arg*/) {
   hcp::modbus::Master bus;
   hcp::modbus::Config cfg;
@@ -164,12 +155,10 @@ int Nibble(char c) {
 
 /* One request, and the raw bytes that came back.
  *
- * This exists because Zephyr's modbus_serial refuses a frame whose CRC does not
- * match *before* it logs anything: with a real slave on the bus the result is
- * "err=-5, nothing received shown" and no way forward. Printing the reply turns a
- * guess into a measurement - and it also separates "the meter answered something
- * unexpected" from "the bytes are corrupted on the wire", which no log level in
- * the subsys can tell apart. */
+ * Zephyr's modbus_serial refuses a frame whose CRC does not match *before* logging
+ * anything, so a real slave on the bus yields "err=-5, nothing received" and no way
+ * forward. Printing the reply separates "the meter answered something unexpected" from
+ * "the bytes are corrupted on the wire", which no subsys log level can tell apart. */
 void BringupAids::RtuProbeWorker(void* /*arg*/) {
   hcp::serial::Port p;
   if (!p.Open(CONFIG_HCP_SERIAL_UART_BAUD)) {
@@ -202,31 +191,26 @@ void BringupAids::RtuProbeWorker(void* /*arg*/) {
     }
     const int64_t t_tx = k_uptime_get();
     p.Write(frame, n);
-    /* What is sitting in the receive FIFO the moment our write call returns. On a
-     * half-duplex line the master can hear its own request: Zephyr's modbus_serial
-     * has a rx_fifo_drain() that is only ever called from an RX interrupt that is
-     * disabled at that point - effectively dead code - so such bytes stay queued
-     * and shift the reply by 8 bytes, which shows up as a CRC error on a reply
-     * that is otherwise perfectly good. Log it rather than assume it. */
+    /* What is in the RX FIFO the moment our write returns. On a half-duplex line the
+     * master can hear its own request, and Zephyr's rx_fifo_drain() only runs from an
+     * RX interrupt that is disabled at that point - effectively dead code. Those bytes
+     * stay queued and shift the reply by 8, which reads as a CRC error. */
     int echo = 0;
     uint8_t eb = 0;
     while (p.Read(&eb, 1, 0) > 0 && echo < (int)n + 4) {
       echo++;
     }
-    /* How long until the slave's first byte, and how much of it survives: a slave
-     * that starts answering within a millisecond or two of our last stop bit is
-     * exactly what a master that closes its receiver during TX and reopens it in
-     * the TX-complete interrupt will clip - and a clipped head byte looks like a
-     * CRC error, which is the symptom being chased. */
+    /* How long until the slave's first byte and how much survives: a slave that starts
+     * answering within a millisecond of our last stop bit is what a master that closes
+     * its receiver during TX clips, and a clipped head byte looks like a CRC error. */
     const int one = p.Read(rb, 1, 800);
     const int64_t t_first = k_uptime_get();
     int got = one > 0 ? 1 : 0;
     if (got > 0) {
-      /* Byte-by-byte, with the arrival time of each gap. An RTU frame is defined by
-       * silence on the wire, so a slave that answers in two bursts separated by
-       * more than the receiver's inter-character timeout is torn into two frames -
-       * and the first half fails its CRC while a whole-byte read still looks
-       * perfect. Only the timing shows it. */
+      /* Byte-by-byte with each gap's arrival time. An RTU frame is defined by silence,
+       * so a reply in two bursts with more than the inter-character timeout between them
+       * is torn into two frames - the first half fails its CRC while a whole-byte read
+       * still looks perfect. Only the timing shows it. */
       int64_t prev = t_first;
       char gaps[120] = {};
       int used = 0;
@@ -298,8 +282,8 @@ void BringupAids::NetWorker(void* /*arg*/) {
 #endif  // CONFIG_HCP_NET_DEMO
 
 void BringupAids::Start() {
-  // With hcp::provision on, that module owns the button and the status LED; the
-  // binding below is for bench builds that run without it.
+  // hcp::provision owns the button and the status LED when it is in the build; this
+  // binding is for bench builds without it.
 #ifndef CONFIG_HCP_PROVISION
   if (!hcp::input::Button::Init(OnButton, nullptr)) {
     HCP_LOGW(hcp::log::kDomainDevice, "button init failed (no sw0?)");

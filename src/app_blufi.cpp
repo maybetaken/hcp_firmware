@@ -1,17 +1,9 @@
 /*
- * HCP application - the BluFi provisioning path (PhoneProvisioner).
- *
- * The path taken when a phone is on the BLE link: it receives credentials, runs the
- * Wi-Fi connect, and reports back in the exact shapes the Espressif apps and the
- * WeChat mini-program expect. Every odd-looking delay, order and report format in
- * here is a note about what those clients actually do on the wire, gathered from
- * real devices - do not "simplify" them without re-testing against both.
- *
- * The state used to be 22 file-scope globals in main.cpp. It is one object now
- * (owned by App), because it has a lifecycle and an invariant: the "attempt in
- * flight" and "phone has been told" flags, the timeout work item and the late
- * success work item all have to move together, and that is exactly the kind of
- * rule a type can hold that a list of globals cannot.
+ * HCP application - the BluFi provisioning path (PhoneProvisioner): the phone is on the
+ * BLE link, this receives credentials, runs the Wi-Fi connect and reports back in the
+ * exact shapes the Espressif apps and the WeChat mini-program expect. Every odd-looking
+ * delay, order and report format in here is a measurement of what those clients do on the
+ * wire - do not "simplify" one without re-testing against both.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -48,11 +40,9 @@ constexpr uint8_t kOpModeSta = 0x01;  // wifi_mode_t WIFI_MODE_STA
 constexpr int kScanPasses = 2;
 constexpr int kScanMinAps = 4;
 
-/* The Wi-Fi APIs, the BluFi transport and Zephyr's work items all take plain
- * function pointers, so the handlers are static thunks. There is exactly one
- * PhoneProvisioner (App owns it), which is why a single pointer is enough here -
- * the alternative would be container_of gymnastics across three different work
- * items for no gain. */
+/* The Wi-Fi APIs, the BluFi transport and Zephyr's work items take plain function
+ * pointers, so the handlers are static thunks on the one PhoneProvisioner instance App
+ * owns - a single pointer, rather than container_of across three work items for no gain. */
 PhoneProvisioner* s_self;
 
 }  // namespace
@@ -120,13 +110,11 @@ const PhoneProvisioner::Ap* PhoneProvisioner::FindAp(const char* ssid) const {
 
 /* ------------------------------------------------------------------- events -- */
 
-/* The got-IP SUCCESS report is emitted from a work item instead of the net-mgmt
- * event thread. It used to sleep 500 ms inline, which stalled *every* later
- * Wi-Fi/IP event (scan results included) for that whole delay. Keeping the delay
- * but applying it before the notification preserves the original intent - give the
- * phone's BluFi stack time to finish the frame it is still processing, otherwise
- * the trailing SUCCESS can be missed - without blocking events. If the link is
- * already gone, blufi_send() returns -ENOTCONN. */
+/* The got-IP SUCCESS report goes out from a work item, not the net-mgmt event thread:
+ * sleeping 500 ms inline stalled every later Wi-Fi/IP event, scan results included. The
+ * delay stays - the phone's BluFi stack needs time to finish the frame it is processing,
+ * or the trailing SUCCESS is missed - it just no longer blocks events. If the link is
+ * gone, blufi_send() returns -ENOTCONN. */
 void PhoneProvisioner::OnSuccReportDue() { ReportSuccess(); }
 
 // If the driver never produces an association/DHCP result, still send a final FAIL
@@ -180,17 +168,15 @@ void PhoneProvisioner::OnWifiEvent(hcp::net::WifiEvent e) {
   }
 }
 
-// Provisioning connect runs on the system workqueue (NOT the BT RX thread:
-// net_mgmt WIFI_CONNECT blocks up to `timeout`). It forcibly Disconnects first so
-// re-provisioning works - the ESP32 driver returns -EALREADY whenever its state is
-// already CONNECTING/CONNECTED, and IsConnected() (IP-based) can't see a lingering
-// CONNECTING state. Final SUCCESS is reported via OnWifiEvent.
+// Provisioning connect runs on the system workqueue (NOT the BT RX thread: net_mgmt
+// WIFI_CONNECT blocks up to `timeout`). It disconnects first so re-provisioning works:
+// the ESP32 driver returns -EALREADY while CONNECTING/CONNECTED, and the IP-based
+// IsConnected() cannot see a lingering CONNECTING. SUCCESS is reported via OnWifiEvent.
 void PhoneProvisioner::ConnectNow() {
-  /* Wait for the disconnect event instead of racing it: re-provisioning an
-   * already-connected ESP32 with only a fixed 300 ms delay can leave the driver in
-   * a transitional state where the next connect never completes. Always done on
-   * the phone path (it can re-provision back-to-back while the driver is still
-   * CONNECTING); unlike the boot path this is not latency critical. */
+  /* Wait for the disconnect event rather than racing it: re-provisioning with only a
+   * fixed delay can leave the driver in a state where the next connect never completes.
+   * The phone path can re-provision back-to-back while still CONNECTING; unlike the boot
+   * path, this is not latency critical. */
   k_sem_reset(&disconn_sem_);
 #ifdef CONFIG_HCP_PROVISION
   hcp::provision::NoteOwnDisconnect();
@@ -238,10 +224,10 @@ void PhoneProvisioner::OnScanResult(const hcp::net::ScanResult* r) {
       aps_[j + 1] = key;
     }
 
-    // Rebuild the BluFi list from the deduplicated union of all passes, keeping it
-    // inside ONE BluFi frame. Fragmenting it is legal per the protocol, but a
-    // client that does not reassemble inbound FC_FRAG shows a truncated list -
-    // which reads as "the device only found a few networks".
+    /* Rebuild the BluFi list from the deduplicated union of all passes, inside ONE BluFi
+     * frame. Fragmenting it is legal per the protocol, but a client that does not
+     * reassemble inbound FC_FRAG shows a truncated list - which reads as "the device
+     * only found a few networks". */
     wlist_len_ = 0;
     for (int i = 0; i < ap_count_; i++) {
       uint8_t slen = (uint8_t)strlen(aps_[i].ssid);
@@ -260,10 +246,9 @@ void PhoneProvisioner::OnScanResult(const hcp::net::ScanResult* r) {
 
     HCP_LOGI(hcp::log::kDomainWifi, "blufi: sending wifi list (%u bytes, %d APs)",
              (unsigned)wlist_len_, ap_count_);
-    /* Per-AP detail is debug-level on purpose: with LOG_MODE_IMMEDIATE every line
-     * costs several ms of 115200 UART on the net-mgmt event thread - the very
-     * thread that is still delivering scan results, which then overflow the event
-     * queue and silently lose APs. */
+    /* Per-AP detail is debug-level on purpose: with LOG_MODE_IMMEDIATE each line costs
+     * several ms of 115200 UART on the net-mgmt event thread - the thread still
+     * delivering scan results, which then overflows the queue and silently loses APs. */
     for (int i = 0; i < ap_count_; i++) {
       HCP_LOGD(hcp::log::kDomainWifi,
                "  ap[%d] \"%s\" rssi=%d ch=%u bssid=%02x:%02x:%02x:%02x:%02x:%02x",
