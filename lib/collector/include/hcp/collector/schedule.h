@@ -1,22 +1,19 @@
 /*
  * hcp::collector - what to poll and when, without touching the bus.
  *
- * Two small pieces of pure logic, both driven by an injected clock so they can be
- * tested properly instead of "it seemed right on the bench":
+ * Two pieces of pure logic, both driven by an injected clock so they are tested rather
+ * than judged on the bench:
  *
- *   Schedule    replaces the previous firmware's "one segment per second, forever"
- *               round-robin. That bounded the bus time per cycle, which was its
- *               real purpose, but it also meant a 5-segment table refreshed only
- *               every 5 s no matter how cheap the reads were. Here every segment has
- *               its own due time, and the bus is still never asked to do more than
- *               one transaction at a time.
+ *   Schedule   per-segment due times instead of the previous firmware's one-segment-per-
+ *              second round robin. That bounded bus time per cycle - its real purpose -
+ *              but a 5-segment table only refreshed every 5 s however cheap the reads
+ *              were; here a segment is still never more than one transaction deep.
  *
- *   BusHealth   the reason a dead slave must not be polled every cycle. RS-485 is
- *               half-duplex and the master waits for a reply, so one absent meter
- *               costs its full response timeout on every round - with five segments
- *               behind it, everything else is late by minutes, not by milliseconds.
- *               After a few consecutive failures a unit is left alone for a cooldown
- *               and then probed once; a reply brings it straight back.
+ *   BusHealth  why a dead slave must not be polled every cycle: RS-485 is half-duplex and
+ *              the master waits, so one absent meter costs its full response timeout per
+ *              round - with five segments behind it, everything else is minutes late.
+ *              After a few consecutive failures a unit cools off and is probed once; a
+ *              reply brings it straight back.
  *
  * SPDX-License-Identifier: Apache-2.0
  */

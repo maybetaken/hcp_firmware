@@ -1,27 +1,26 @@
 /*
  * hcp::switchctl - the JSON shapes the relay device exchanges with Home Assistant.
  *
- * The relay outputs are a device of their own on the broker, addressed "<sn>-K" (see
- * hcp/mqtt/client.h for why that is a sibling of "<sn>" rather than a child of it),
- * and they speak JSON rather than the raw Modbus blocks the meter device uses. The
- * shapes below are not invented here; they are what the two sides actually do:
+ * The relay outputs are a device of their own on the broker, addressed "<sn>-K" (a
+ * sibling of "<sn>" - see hcp/mqtt/client.h), speaking JSON rather than the raw Modbus
+ * blocks the meter device uses. These shapes are what the two sides actually do:
  *
- *   in   <sn>-K/control/cmd   {"switch_01": "on"}
- *        the previous firmware's own handler (main/solar_manager.cpp:308), and what
- *        Home Assistant's JsonProtocolHelper packs for a write.
- *   out  <sn>-K/notify        {"switch_01": "on", "switch_02": "off"}
- *        the only state topic Switches.handle_notify subscribes.
- *   out  <sn>-K/online        {"switch_count": 2, "version": "2.0.3.14"}
- *        read by Switches.handle_online, which rejects the payload unless
- *        "switch_count" is an int >= MIN_SWITCH_COUNT (= 2).
+ *   in   <sn>-K/control/cmd  {"switch_01": "on"}          - the previous firmware's
+ *                             handler (main/solar_manager.cpp:308) and what HA's
+ *                             JsonProtocolHelper packs for a write
+ *   out  <sn>-K/notify       {"switch_01": "on", ...}     - the only state topic
+ *                             Switches.handle_notify subscribes
+ *   out  <sn>-K/online       {"switch_count": 2, ...}     - Switches.handle_online,
+ *                             which rejects the payload unless switch_count is an int
+ *                             >= MIN_SWITCH_COUNT (2)
  *
- * Names are one-based and zero-padded to at least two digits - plugins/Switches.py
- * switch_name() is the authority: `f"switch_{index:02d}"` - and states are the
- * strings "on"/"off", because handle_notify skips anything else with a warning.
+ * Names are one-based and zero-padded to two digits (plugins/Switches.py switch_name():
+ * `f"switch_{index:02d}"` is the authority); states are the strings "on"/"off", because
+ * handle_notify skips anything else with a warning.
  *
- * No JSON library is involved: the payloads are flat objects of string values, the
- * registry already shows how a hand-rolled scanner stays host-tested, and a bundled
- * parser would bring a dependency and a malloc pattern this port exists to remove.
+ * No JSON library: the payloads are flat objects of string values, the registry already
+ * shows how a hand-rolled scanner stays host-tested, and a bundled parser would bring a
+ * dependency and a malloc pattern this port exists to remove.
  *
  * SPDX-License-Identifier: Apache-2.0
  */

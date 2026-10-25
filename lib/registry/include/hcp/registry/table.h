@@ -1,41 +1,33 @@
 /*
- * hcp::registry — the Modbus point table the collector polls, and the rules for
- * where a table came from.
+ * hcp::registry — the Modbus point table the collector polls, and the rules for where a
+ * table came from.
  *
- * The wire contract with Home Assistant (unchanged from the previous firmware,
- * verified against the plugin modules under
- * custom_components/solar_manager/plugins):
+ * The wire contract with Home Assistant, unchanged from the previous firmware and
+ * verified against custom_components/solar_manager/plugins:
  *
  *     <sn>/config  ->  {"segments":[{"slave_id":1,"start_address":8192,
  *                                    "length":16,"read_command":3}, ...]}
  *
- * Nothing else on that topic is interpreted: registers, names, scaling and units
- * stay on the HA side, so the device passes raw blocks through and the point table
- * has exactly one copy in the world (the HA device_protocol JSON).
+ * Nothing else on that topic is interpreted: registers, names, scaling and units stay on
+ * the HA side, so the device passes raw blocks through and the point table has exactly one
+ * copy in the world (the HA device_protocol JSON).
  *
- * Precedence, persistence and the quiet cases are the whole point of this file, so
- * they are stated here and implemented once:
+ * Precedence and the quiet cases, stated once here and implemented once:
  *
- *   - A downloaded table always wins over the built-in default, and wins again on
- *     every re-download (the old firmware latched the first one and ignored the
- *     rest, so changing a table needed a reboot).
- *   - A download replaces **the unit addresses it mentions**, and leaves other
- *     slaves' segments alone. That is what lets one RS-485 bus carry several
- *     sub-devices: Home Assistant publishes one plugin's segments at a time, and
- *     the last one published must not erase the meters before it.
- *   - A download that differs from what is running is written to storage, and what
- *     is running is what gets polled. A download identical to the current table is
- *     dropped WITHOUT writing - NVS is flash, and HA re-sends config on every
- *     startup, so "no change" is the common case.
- *   - Payloads that carry no "segments" array at all are ignored, not treated as
- *     empty. Switches.py publishes "{}" on that topic for handshake parity, and
- *     honouring it as a table would erase a working meter configuration.
- *   - {"segments":[]} IS an explicit empty table and is honoured - polling stops.
- *     It persists as "no table" (there is nothing to record), which is the same
- *     state a reboot should come back to, so the stored key is simply not written.
- *   - When the downloaded table equals the one in use, nothing is written; the
- *     provenance is still upgraded to kDownloaded, because HA re-sends config on
- *     every start and a confirmed default should not keep looking like a guess.
+ *   - A download always wins over the built-in default, and wins again on re-download (the
+ *     old firmware latched the first one, so changing a table needed a reboot).
+ *   - A download replaces **the unit addresses it mentions** and leaves other slaves'
+ *     segments alone: HA publishes one plugin's segments at a time, and the last one must
+ *     not erase the meters before it.
+ *   - What is downloaded is what gets polled, and is written to storage only if it differs
+ *     from what is running. HA re-sends config on every start, so "no change" is the
+ *     common case and NVS is flash.
+ *   - A payload with no "segments" array at all is ignored, not read as empty: Switches.py
+ *     publishes "{}" on that topic for handshake parity, and honouring it would erase a
+ *     working meter configuration. {"segments":[]} IS an explicit empty table: polling
+ *     stops, and it persists as "no table" by simply not writing the stored key.
+ *   - A download equal to the table in use still upgrades its provenance to kDownloaded:
+ *     a confirmed default should not keep looking like a guess.
  *
  * The parsing here is deliberately narrow: it walks exactly the shape above and
  * rejects anything else, rather than pretending to be a JSON library. Unknown

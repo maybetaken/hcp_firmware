@@ -1,17 +1,14 @@
 /*
  * hcp::mqtt - MQTT service session on top of the Wi-Fi station link.
  *
- * Deliberately small: the module owns one broker connection, its reconnect
- * backoff and the two topics the product uses. It reports the session up/down to
- * hcp::provision, which is what drives the status LED (purple while the network
- * is up but this session is not, green when both are).
+ * One broker connection, its reconnect backoff, and the topics the product uses. Session
+ * up/down is reported to hcp::provision, which drives the status LED (purple = network up
+ * but no session, green = both).
  *
- * Where the pieces come from:
- *   broker host/port - compiled-in default (Kconfig), overridable at runtime by
- *     SetBroker() and persisted in hcp::storage, so the discovery layer (SSDP)
- *     only has to call SetBroker() when it learns the address;
- *   username/password - compiled in on purpose: the account is created by the
- *     user on their own broker and is not provisioned over the air.
+ *   broker host/port    Kconfig default, runtime-overridable by SetBroker() and persisted,
+ *                       so SSDP discovery only has to call SetBroker()
+ *   credentials         compiled in: the account is created by the user on their own
+ *                       broker and is never provisioned over the air
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -27,40 +24,34 @@ namespace mqtt {
 constexpr size_t kMaxTopicLen = 64;
 constexpr size_t kMaxPayloadLen = 256;
 
-// Inbound payloads get their own, larger limit: what the device sends is ours,
-// but a Home Assistant config download carries a whole JSON point table (the
-// widest in use, jkbms.json, is about 390 bytes) and would be dropped at 256.
+// Inbound payloads get their own, larger limit: what the device sends is ours, but a
+// Home Assistant config download carries a whole JSON point table (jkbms.json, the widest
+// in use, is ~390 bytes) and would be dropped at 256.
 #ifndef CONFIG_HCP_MQTT_MAX_INBOUND
 #define CONFIG_HCP_MQTT_MAX_INBOUND 512
 #endif
 constexpr size_t kMaxInboundLen = CONFIG_HCP_MQTT_MAX_INBOUND;
 
-// Device identity, used as the client id and as the topic prefix: every topic is
-// "<sn>/<suffix>" ("<sn>/online", "<sn>/cmd", ...), like the reference firmware, so
-// the broker/HA side can address one device out of many. The number itself comes
-// from hcp::identity (storage, else the station MAC) - the same string the device
-// announces as its DHCP hostname.
+// Device identity: the client id and the prefix of every topic ("<sn>/online",
+// "<sn>/cmd", ...), from hcp::identity (storage, else the station MAC) - the same string
+// the device announces as its DHCP hostname.
 const char* serial_number();
 
-/*
- * Which topic tree a message belongs to.
+/* Which topic tree a message belongs to.
  *
- * The device has two identities on the broker. Its own is "<sn>", and its relay
- * outputs are addressed as "<sn>-K" - a SIBLING of "<sn>", not a child, so
- * "<sn>/#" does not cover it and the switch device needs its own subscription. The
- * suffix "-K" is not this module's invention: it is what the previous firmware used
- * (main/solar_manager.cpp: _switch_topic_prefix = _serial_number + "-K") and what
- * Home Assistant's Switches plugin matches on (plugins/Switches.py: ATTACHED_SUFFIX
- * = "-K"), so changing it silently un-pairs the two.
- */
+ * The device has two identities: itself as "<sn>", and its relay outputs as "<sn>-K" - a
+ * SIBLING, not a child, so "<sn>/#" does not cover it and it needs its own subscription.
+ * The suffix is not ours to choose: the previous firmware used _serial_number + "-K"
+ * (main/solar_manager.cpp) and Home Assistant matches on ATTACHED_SUFFIX = "-K"
+ * (plugins/Switches.py); changing it silently un-pairs the two. */
 enum class Tree : uint8_t {
   kMain = 0,   // "<sn>/..."
   kSwitch,     // "<sn>-K/..."
 };
 
-// Learn or change the broker endpoint (host is a dotted-IPv4 string or a
-// hostname). Persisted so a reboot keeps it; empty host means "not known yet"
-// and the client keeps waiting instead of retrying forever.
+// Learn or change the broker endpoint (dotted IPv4 or hostname). Persisted across
+// reboots; an empty host means "not known yet", and the client waits rather than
+// retrying forever.
 bool SetBroker(const char* host, uint16_t port);
 
 // True once a broker address is known (runtime, storage or Kconfig default).
@@ -77,10 +68,9 @@ bool Publish(const void* payload, size_t len);
 bool PublishTopic(const char* topic, const void* payload, size_t len,
                   Tree tree = Tree::kMain);
 
-// Same, but with the MQTT retain flag: the broker keeps the last value, so a
-// client that subscribes later (Home Assistant restart, a debug panel hitting
-// "listen") sees the current state immediately instead of waiting for the next
-// event. Used for the availability topic.
+// With the MQTT retain flag: the broker keeps the last value, so a client subscribing
+// later (HA restart, a debug panel) sees the current state instead of waiting for the
+// next event. Used for the availability topic.
 bool PublishRetainedTopic(const char* topic, const void* payload, size_t len,
                           Tree tree = Tree::kMain);
 
@@ -89,48 +79,36 @@ bool PublishRetainedTopic(const char* topic, const void* payload, size_t len,
 using CommandHandler = void (*)(const uint8_t* payload, size_t len, void* user);
 void SetCommandHandler(CommandHandler cb, void* user = nullptr);
 
-/*
- * Messages on other topics under the device prefix. Home Assistant talks to one
- * device through several of them (<sn>/config, <sn>/control/cmd, <sn>/led ...), so
- * a single command callback is not enough: the client subscribes to "<sn>/#" once
- * and dispatches on the suffix.
+/* Messages on other topics under the device prefix. Home Assistant talks to one device
+ * through several (<sn>/config, <sn>/control/cmd, ...), so the client subscribes to
+ * "<sn>/#" once and dispatches on the suffix rather than having one command callback.
  *
- * Subscribe() must be called before Start() - the subscription list is sent when
- * the session is established. The handler runs on the session thread with a copy
- * of the payload, so it may keep neither the buffer nor the pointer; anything that
- * takes longer than a few microseconds belongs on the caller's own queue.
+ * Subscribe() must run before Start(): the subscription list goes out when the session is
+ * established. The handler gets a payload copy on the session thread - keep neither the
+ * buffer nor the pointer, and move anything slower than a few microseconds off it.
  *
- * Returns false when the route table is full (CONFIG_HCP_MQTT_MAX_ROUTES) or the
- * suffix is too long, so a wiring mistake shows up at boot instead of as a topic
- * that never fires.
- */
+ * Returns false when the route table (CONFIG_HCP_MQTT_MAX_ROUTES) is full or the suffix is
+ * too long, so a wiring mistake shows at boot rather than as a topic that never fires. */
 using MessageHandler = void (*)(const uint8_t* payload, size_t len, void* user);
 constexpr size_t kMaxSuffixLen = 24;
 bool Subscribe(const char* suffix, MessageHandler cb, void* user = nullptr,
                Tree tree = Tree::kMain);
 
-/*
- * Announce a second identity on every new session: "<prefix>/online", retained, with
+/* Announce a second identity on every new session: "<prefix>/online", retained, carrying
  * the JSON document the provider writes.
  *
- * This exists because the relay outputs are a device of their own to Home Assistant,
- * which creates their entities from that document (Switches.handle_online reads
- * "switch_count" out of it and grows the device to match) - so it has to be repeated
- * on every connect like the main availability message, and hcp::mqtt cannot know how
- * many relays a board has. Unlike <sn>/online there is no last-will for it: Zephyr's
- * client has room for exactly one will topic, and that one keeps the main
- * availability message honest.
- */
+ * The relay outputs are a device of their own to Home Assistant, which builds their
+ * entities from that document (Switches.handle_online reads "switch_count" and grows the
+ * device to match), so it must repeat on every connect and hcp::mqtt cannot know the
+ * count. There is no last-will for it: Zephyr's client has room for one will topic, and
+ * that one keeps the main availability message honest. */
 using DocumentFn = int (*)(char* buf, size_t cap);
 bool AnnounceDevice(Tree tree, DocumentFn doc);
 
-// Extra fields for the periodic <sn>/diagnostics document (CONFIG_HCP_MQTT_TOPIC_
-// DIAGNOSTICS - it was called <sn>/state until Home Assistant was checked, and nothing
-// on the other side subscribed to that name). The provider writes a JSON
-// fragment that starts with ',' (e.g. ,"ota":"updating") or returns 0 when it has
-// nothing to report; it runs on the session thread, so it must be quick and
-// non-blocking. This is how another subsystem puts its liveness on the same topic
-// without this module having to know what it reports.
+// Extra fields for the periodic <sn>/diagnostics document (CONFIG_HCP_MQTT_TOPIC_DIAGNOSTICS).
+// The provider writes a JSON fragment starting with ',' (e.g. ,"ota":"updating") or returns
+// 0 when it has nothing to add, on the session thread: quick and non-blocking. This is how
+// another subsystem reports liveness without this module knowing what it reports.
 using StateExtraHandler = int (*)(char* buf, size_t cap);
 void SetStateExtraHandler(StateExtraHandler cb);
 

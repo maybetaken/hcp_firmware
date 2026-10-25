@@ -1,28 +1,21 @@
 /*
- * hcp::collector — the business loop: what Home Assistant asks for, what gets
- * polled, and on which thread.
+ * hcp::collector - the business loop: what Home Assistant asks for, what gets polled,
+ * and on which thread. One queue and one worker:
  *
- * The old firmware ran two paths against the same hardware: MQTT callbacks posted
- * events to a queue consumed by the main task, while a separate polling task read
- * the bus and published to MQTT directly - inside the mutex that was supposed to
- * serialise the two. That is where the tangle came from, and the shape that
- * replaces it is one queue and one worker:
+ *   mqtt session thread --copy into a slab slot--> k_msgq --> worker thread
+ *                                        (registry, modbus bus, MQTT publishing)
  *
- *   mqtt session thread ──copy into a slab slot──▶ k_msgq ──▶ worker thread
- *                                                        (registry, modbus bus,
- *                                                         MQTT publishing)
+ * The firmware this replaced ran two paths against the same hardware - MQTT callbacks
+ * posting to a queue consumed by the main task, and a polling task reading the bus and
+ * publishing inside the mutex that was meant to serialise them.
  *
- * Rules that matter and are therefore stated:
- *
- * - Only the worker touches the Modbus bus and the point table, so there is no
- *   bus mutex to forget and no publishing from inside one.
- * - The MQTT route callbacks (hcp::mqtt::Subscribe) run on the session thread and
- *   must not block: they copy and post. A message that does not fit the queue is
- *   dropped with a warning - Home Assistant re-sends config on every start, and a
- *   stalled collector is worse than a discarded publish.
- * - Payloads are fixed size from a mem_slab, never malloc: the version this
- *   replaces handed raw pointers through the queue and freed them in each case of
- *   a switch, which is how a leak survives review.
+ * - Only the worker touches the bus and the point table, so there is no bus mutex to
+ *   forget and no publishing from inside one.
+ * - The MQTT route callbacks run on the session thread and must not block: they copy and
+ *   post. A message that does not fit is dropped with a warning - HA re-sends config on
+ *   every start, and a stalled collector is worse than a discarded publish.
+ * - Payloads are fixed size from a mem_slab, never malloc: the old code handed raw
+ *   pointers through the queue and freed them in each case of a switch.
  *
  * Google C++ Style naming.
  *

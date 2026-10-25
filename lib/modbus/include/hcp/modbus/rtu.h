@@ -1,25 +1,22 @@
 /*
  * hcp::modbus - RTU frame engine, independent of any UART.
  *
- * Why this exists: Zephyr's in-tree subsys/modbus ends a received frame on an idle
- * line (t3.5), and on the bench meter we are talking to that model does not work -
- * the slave takes 210-480 ms before its *first* byte, and the subsys' own
- * rx_fifo_drain() is only ever called from an RX interrupt that is disabled at
- * that point, i.e. dead code. The result was a reply that is provably correct on
- * the wire (a raw probe reads 29 bytes with a matching CRC, every time) being
- * rejected with -EIO on every single poll.
+ * Zephyr's in-tree subsys/modbus ends a received frame on line idle (t3.5), which does not
+ * work against the meter on the bench: its slave takes 210-480 ms before its *first* byte,
+ * and the subsys' rx_fifo_drain() is only called from an RX interrupt that is disabled at
+ * that point - dead code. The result was a reply that is provably correct on the wire (a
+ * raw probe reads 29 bytes with a matching CRC every time) being rejected -EIO on every
+ * poll.
  *
- * So this file frames a transaction the way the previous firmware's master did
- * (managed_components/espressif__esp-modbus/freemodbus/port/portserial.c): flush
- * what is already in the receiver, write the request, then read **the number of
- * bytes the function code says the reply must have** under one overall deadline,
- * and suppress the echo a half-duplex line hands back to us. Nothing here guesses
- * a frame boundary from timing.
+ * So this frames a transaction the way the previous firmware's master did
+ * (managed_components/espressif__esp-modbus/freemodbus/port/portserial.c): flush the
+ * receiver, write the request, then read **the byte count the function code implies**
+ * under one deadline, suppressing the echo a half-duplex line hands back. No frame
+ * boundary is ever guessed from timing.
  *
- * It is pure (bytes in, bytes out, through a two-method interface) so all of it is
- * testable on the host with a scripted transport: the unit tests are what pin the
- * slow-reply, echo, exception and truncated-frame cases that a bench can only
- * discover once a week.
+ * Bytes in, bytes out through a two-method interface, so the slow-reply, echo, exception
+ * and truncated-frame cases are host-tested with a scripted transport instead of
+ * discovered on the bench once a week.
  *
  * SPDX-License-Identifier: Apache-2.0
  */

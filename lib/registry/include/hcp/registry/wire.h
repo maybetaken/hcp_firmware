@@ -1,22 +1,20 @@
 /*
- * hcp::registry - the byte layout of the two topics that carry binary, `notify`
+ * hcp::registry - the byte layout of the two topics that carry binary: `notify`
  * (device -> Home Assistant) and `control/cmd` (Home Assistant -> device).
  *
- * This is the contract with custom_components/solar_manager/protocol_helper/
- * modbus_protocol_helper.py, which decodes with:
+ * The contract is custom_components/solar_manager/protocol_helper/modbus_protocol_helper.py,
+ * which decodes with
  *
- *     struct.unpack(">BBHH", payload[:6])          # unit, fc, start, count
- *     struct.unpack(f"{endian_prefix}{fmt}", ...)   # the data after those 6 bytes
+ *     struct.unpack(">BBHH", payload[:6])         # unit, fc, start, count
+ *     struct.unpack(f"{endian_prefix}{fmt}", ...)  # the data after those 6 bytes
  *
- * so the header is big-endian and the data words are big-endian too. The old
- * firmware produced that by byte-swapping each host-order uint16_t after the read
- * (main/solar_manager.cpp pollingTaskLoop), and Zephyr's subsys hands us host-order
- * registers the same way - so the swap has to be carried over, not "cleaned up".
+ * so the header and the data words are both big-endian. The old firmware byte-swapped
+ * each host-order uint16_t after the read (main/solar_manager.cpp pollingTaskLoop) and
+ * Zephyr's subsys hands us host-order registers the same way, so the swap carries over.
  *
- * Getting this wrong is silent: the device still polls, Home Assistant still
- * decodes, and every value is garbage. Which is why the vectors below are taken
- * from the real payloads rather than invented, and why the packing lives here as
- * pure functions with host tests instead of inline in the collector's loop.
+ * Getting this wrong is silent - both sides keep working and every value is garbage - so
+ * the test vectors are real payloads, and the packing is pure functions with host tests
+ * rather than inline code in the collector's loop.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
