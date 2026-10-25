@@ -60,15 +60,12 @@ HeartbeatWatchdog g_hb;
 
 #ifdef CONFIG_HCP_ENABLE_SWITCH_CONTROL
 /*
- * The relay outputs are a second device on the broker ("<sn>-K"), so they carry
- * their own little world here: their own commands, their own state, their own
- * report. They share this worker for one reason only - a relay that is switched from
- * the MQTT session thread would be writing flash (its persisted state) from the
- * thread that must never block, and the previous firmware's SwitchController did the
- * same GPIO + NVS + publish sequence from its single event-loop task.
- *
- * Nothing here touches the Modbus bus: the relays are board GPIOs (hcp-k1/hcp-k2),
- * not registers.
+ * The relay outputs are a second device on the broker ("<sn>-K"), with their own commands,
+ * state and report. They share this worker for one reason: switching a relay writes flash
+ * (its persisted state), and the MQTT session thread must never block - the previous
+ * firmware's SwitchController ran the same GPIO + NVS + publish sequence from its single
+ * event-loop task. Nothing here touches the Modbus bus: the relays are board GPIOs
+ * (hcp-k1/hcp-k2), not registers.
  */
 switchctl::Relay g_relays[switchctl::kRelayCount];
 bool g_relays_ready = false;
@@ -382,10 +379,9 @@ void Handle(Slot& slot) {
       return;
 
     case Command::kLed: {
-      /* Home Assistant's light entity for this device. The strip itself belongs to
-       * hcp::provision (it is the status readout), so the honest meaning of "on"/
-       * "off" here is "show the status light / keep it dark" - and the answer goes
-       * back in diagnostics as "led":"on"|"off", which is exactly where the
+      /* Home Assistant's light entity. The strip belongs to hcp::provision (it is the
+       * status readout), so "on"/"off" here means show the status light / keep it dark,
+       * and the answer goes back in diagnostics as "led", which is where the
        * integration reads the light's state from. */
       const registry::LedSetting s =
           registry::ParseLedCommand(slot.data, slot.len);
@@ -405,12 +401,12 @@ void Handle(Slot& slot) {
 
     case Command::kOtaStart:
 #ifdef CONFIG_HCP_OTA
-      /* Home Assistant driving the update, which is the previous firmware's flow
-       * (it registered this topic and then did checkForUpdate/startUpdate against
-       * http://<host learned from discovery>:9998/firmware.bin). No URL arrives in
-       * the payload, so the endpoints come from the configured templates and the
-       * discovered host - and if nothing is serving that host, the failure is
-       * reported here rather than looking like a device that ignores its owner. */
+      /* Home Assistant driving the update, as in the previous firmware (it registered
+       * this topic and ran checkForUpdate/startUpdate against
+       * http://<discovered host>:9998/firmware.bin). No URL arrives in the payload, so
+       * the endpoints come from the configured templates plus the discovered host - and
+       * if nothing serves that host, the failure is reported here rather than looking
+       * like a device that ignores its owner. */
       COL_LOGI("ota/start: checking for an update from the discovered host");
       if (!ota::Trigger(nullptr)) {
         COL_LOGW("ota/start: not started (worker busy, no host discovered yet, or "
@@ -513,12 +509,10 @@ void Worker(void* /*arg*/, void* /*p2*/, void* /*p3*/) {
     }
 
 #ifdef CONFIG_HCP_ENABLE_SWITCH_CONTROL
-    /* Re-report the relay states each time the session comes up. Home Assistant
-     * subscribes QoS 0 and keeps no queue for a device that was away, so without this
-     * its switches would show whatever they remembered until the next command - and
-     * "the UI and the load disagree" is exactly the failure an owner cannot see.
-     * Detected as an edge rather than published every tick: the topic carries state,
-     * not a heartbeat. */
+    /* Re-report the relay states whenever the session comes up: Home Assistant
+     * subscribes QoS 0 and keeps no queue for a device that was away, so without this its
+     * switches show whatever they remembered until the next command. An edge, not a tick -
+     * the topic carries state, not a heartbeat. */
     const bool link_up = mqtt::IsConnected();
     if (link_up && !g_session_was_up && g_relays_ready) {
       PublishRelayStates();
@@ -572,11 +566,11 @@ bool Start() {
   }
 
 #ifdef CONFIG_HCP_ENABLE_SWITCH_CONTROL
-  /* Announce the relay device on every connect (hcp::mqtt sends "<sn>-K/online"
-   * itself, because the session can come up long after this call and a document
-   * published once at boot would miss every session that follows). The direct publish
-   * below covers the other order - a session that came up between mqtt::Start() and
-   * here - and is harmless when it fails, since retained messages are replaced. */
+  /* Announce the relay device on every connect - hcp::mqtt repeats "<sn>-K/online",
+   * because the session can come up long after this call and a document published once at
+   * boot would miss every session after it. The direct publish below covers the other
+   * order (a session that came up between mqtt::Start() and here) and is harmless when it
+   * fails, since retained messages are replaced. */
   if (!mqtt::AnnounceDevice(mqtt::Tree::kSwitch, SwitchOnlineDoc)) {
     COL_LOGW("cannot announce the relay device on <sn>-K/online");
     return false;

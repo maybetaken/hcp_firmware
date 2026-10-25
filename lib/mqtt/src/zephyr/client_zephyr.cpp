@@ -1,15 +1,13 @@
 /*
  * hcp::mqtt - Zephyr backend: one MQTT session on its own thread.
  *
- * Zephyr's MQTT library is not self-driving: the application must poll the
- * socket and feed mqtt_input(), so this runs a single thread that
- *   waits for hcp::provision to be online and for a broker address,
- *   connects, subscribes to the command topic, pumps traffic,
- *   publishes whatever the application queued,
- *   and on any error tears the client down and retries with a capped backoff.
+ * Zephyr's MQTT library is not self-driving - the application must poll the socket and
+ * feed mqtt_input() - so this thread waits for hcp::provision to be online and for a
+ * broker address, connects, subscribes, pumps traffic, publishes what the application
+ * queued, and on any error tears the client down and retries with a capped backoff.
  *
- * Publish() from other threads only touches a message queue, never the client,
- * because the library is not thread-safe.
+ * Publish() from other threads only touches a message queue, never the client, because
+ * the library is not thread-safe.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
