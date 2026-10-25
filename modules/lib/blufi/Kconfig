@@ -48,4 +48,17 @@ config BLUFI_SECURITY
 	  protocol compatibility rather than strength - its DH group is 256 bits and
 	  the key is MD5-derived.
 
+config BLUFI_BLE_SUPERVISION_TIMEOUT
+	int "Supervision timeout to request for the link (10 ms units, 0 = central's choice)"
+	default 0
+	depends on BLUFI
+	help
+	  A Wi-Fi scan or association burst deafens the ESP32's shared 2.4 GHz
+	  radio to BLE for seconds; against centrals that negotiated a short
+	  supervision timeout the link then drops (reason 8, supervision
+	  timeout) mid-provisioning and the phone never receives the final
+	  report. Set this (600 = 6 s, the Apple guideline maximum) to request
+	  a timeout that survives the radio gap; the central may still refuse.
+	  0 keeps whatever the central negotiated.
+
 endif

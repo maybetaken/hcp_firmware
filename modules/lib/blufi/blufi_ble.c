@@ -424,6 +424,27 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	blufi_security_deinit();
 	blufi_security_init();
 #endif
+	/*
+	 * Ask the central for a supervision timeout that survives a Wi-Fi scan
+	 * or association burst. The ESP32's single 2.4 GHz radio is deaf to BLE
+	 * for the seconds those take (coex); against centrals that negotiated a
+	 * short timeout the link then dies of a supervision timeout (reason 8)
+	 * mid-provisioning - measured roughly one run in three, and the phone
+	 * is left waiting at "85%" with no way to receive the final report.
+	 * 600 = 6 s is the Apple guideline maximum; the central may refuse,
+	 * in which case we are no worse off than before.
+	 */
+	if (IS_ENABLED(CONFIG_BLUFI_BLE_SUPERVISION_TIMEOUT) &&
+	    CONFIG_BLUFI_BLE_SUPERVISION_TIMEOUT > 0) {
+		struct bt_le_conn_param param = BT_LE_CONN_PARAM_INIT(
+			24, 40, 0, CONFIG_BLUFI_BLE_SUPERVISION_TIMEOUT);
+
+		int ret = bt_conn_le_param_update(conn, &param);
+
+		if (ret) {
+			LOG_WRN("conn param update declined (%d)", ret);
+		}
+	}
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
