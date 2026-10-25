@@ -162,9 +162,11 @@ void PhoneProvisioner::OnWifiEvent(hcp::net::WifiEvent e) {
       return;
     }
 #endif
-    atomic_set(&prov_active_, 0);
-    k_work_cancel_delayable(&prov_timeout_);
-    ReportFail(0x01);
+    /* Not a straight FAIL report anymore: the WeChat mini-program locks its UI
+     * at 85% on any report that is not the final SUCCESS (see
+     * kPhoneConnAttempts), so a failed attempt is retried silently and only
+     * the exhaustion of the budget is reported. */
+    FailOrRetry();
   } else if (e == E::kDisconnected) {
     k_sem_give(&disconn_sem_);
   }
@@ -189,14 +191,38 @@ void PhoneProvisioner::ConnectNow() {
              "blufi: disconnect wait timed out, connecting anyway");
   }
   hcp::net::WifiCredential c{ssid_, pass_[0] ? pass_ : nullptr};
-  HCP_LOGI(hcp::log::kDomainWifi, "blufi: (re)connecting to \"%s\"", ssid_);
+  HCP_LOGI(hcp::log::kDomainWifi, "blufi: (re)connecting to \"%s\" (attempt %d/%d)",
+           ssid_, phone_attempts_, kPhoneConnAttempts);
+  phone_attempts_++;
   bool ok = hcp::net::wifi::Connect(c);
   if (!ok && !hcp::net::wifi::IsConnected()) {
-    atomic_set(&prov_active_, 0);
-    k_work_cancel_delayable(&prov_timeout_);
-    HCP_LOGW(hcp::log::kDomainWifi, "blufi: connect failed, report FAIL");
-    ReportFail(0x01);
+    /* The request itself was refused (EALREADY while CONNECTING, a disconnect
+     * still settling...): same policy as an association failure - retry, and
+     * only report the final one. */
+    FailOrRetry();
   }
+}
+
+// One phone-driven association attempt failed (the driver reported a failure or
+// the connect request was refused). Retry silently while the budget lasts;
+// tell the phone only once, at the end.
+void PhoneProvisioner::FailOrRetry() {
+  if (!atomic_get(&prov_active_)) {
+    return;  // not a phone-driven attempt in flight: nothing to report
+  }
+  if (phone_attempts_ < kPhoneConnAttempts) {
+    HCP_LOGW(hcp::log::kDomainWifi,
+             "blufi: attempt %d/%d failed; retrying without telling the phone",
+             phone_attempts_, kPhoneConnAttempts);
+    k_work_reschedule(&retry_work_, K_MSEC(300));
+    return;
+  }
+  atomic_set(&prov_active_, 0);
+  k_work_cancel_delayable(&prov_timeout_);
+  HCP_LOGW(hcp::log::kDomainWifi,
+           "blufi: all %d attempts failed, reporting the final FAIL",
+           kPhoneConnAttempts);
+  ReportFail(0x01);
 }
 
 // Accumulate a Wi-Fi scan into a BluFi WIFI_LIST payload.
@@ -315,6 +341,8 @@ void PhoneProvisioner::OnData(uint8_t type, uint8_t subtype, const uint8_t* data
          * report. */
         atomic_set(&prov_active_, 1);
         atomic_set(&succ_sent_, 0);
+        phone_attempts_ = 0;  // a fresh request cancels any retry in flight
+        k_work_cancel_delayable(&retry_work_);
         k_work_reschedule(&prov_timeout_, K_SECONDS(30));
 #ifdef CONFIG_HCP_PROVISION
         /* Persist what the phone gave us and arm "close BLE after success"; the
@@ -416,6 +444,10 @@ void PhoneProvisioner::SuccWorkThunk(struct k_work* /*work*/) {
   s_self->OnSuccReportDue();
 }
 
+void PhoneProvisioner::RetryThunk(struct k_work* /*work*/) {
+  s_self->ConnectNow();
+}
+
 /* -------------------------------------------------------------- entry points -- */
 
 void PhoneProvisioner::Init() {
@@ -426,6 +458,7 @@ void PhoneProvisioner::Init() {
   k_work_init(&prov_work_, ProvWorkThunk);
   k_work_init_delayable(&prov_timeout_, ProvTimeoutThunk);
   k_work_init_delayable(&succ_work_, SuccWorkThunk);
+  k_work_init_delayable(&retry_work_, RetryThunk);
 
   hcp::log::SetLevel(hcp::log::kDomainWifi, hcp::log::kLevelDebug);
   hcp::net::wifi::SetCallback(WifiEventThunk, this);

@@ -94,6 +94,19 @@ class PhoneProvisioner {
   static constexpr int kMaxAps = 32;
   // One BluFi frame, so the phone shows the list without reassembling (see OnScan).
   static constexpr int kMaxListBytes = 255;
+  /*
+   * Association attempts the phone-driven connect gets before the phone is
+   * told it failed. The official WeChat mini-program (ESP-Config-WeChat,
+   * pages/blueConnect/blueConnect.js) can only render ONE report per
+   * provisioning run: its UI moves to 85% on the first WIFI_REP notification
+   * and to 100% only if that first report's second byte is 0x00 (SUCCESS).
+   * A FAIL report freezes it at 85% until its own 20 s timeout - and because
+   * it never clears its accumulated byte array between notifications, no
+   * later SUCCESS can reach the byte position it checks either. So every
+   * intermediate failure MUST be retried silently, and exactly one final
+   * report (SUCCESS, or the FAIL after the last attempt) must be sent.
+   */
+  static constexpr int kPhoneConnAttempts = 3;
 
   // Registers the Wi-Fi callback and the BluFi data handler and arms the work items.
   // Called before the provisioning state machine starts, because that machine drives
@@ -121,6 +134,11 @@ class PhoneProvisioner {
   void OnScanResult(const hcp::net::ScanResult* r);
   void OnProvTimeout();
   void OnSuccReportDue();
+  // One phone-driven association attempt failed: retry it silently while the
+  // budget lasts, and only tell the phone about the final failure (see
+  // kPhoneConnAttempts for why an intermediate FAIL report is fatal to the
+  // WeChat mini-program's UI).
+  void FailOrRetry();
   const Ap* FindAp(const char* ssid) const;
 
   // ---- thunks: the APIs below take plain function pointers ----
@@ -131,6 +149,7 @@ class PhoneProvisioner {
   static void ProvWorkThunk(struct k_work* work);
   static void ProvTimeoutThunk(struct k_work* work);
   static void SuccWorkThunk(struct k_work* work);
+  static void RetryThunk(struct k_work* work);
 
   // ---- state ----
   char ssid_[33];
@@ -146,11 +165,15 @@ class PhoneProvisioner {
    * handler reads these to choose a FAIL report over a late SUCCESS one. */
   atomic_t prov_active_;
   atomic_t succ_sent_;
+  // Association attempts issued for the current phone-driven connect (see
+  // kPhoneConnAttempts).
+  int phone_attempts_ = 0;
 
   struct k_sem disconn_sem_;
   struct k_work prov_work_;
   struct k_work_delayable prov_timeout_;
   struct k_work_delayable succ_work_;
+  struct k_work_delayable retry_work_;
 };
 #endif  // CONFIG_BLUFI
 
