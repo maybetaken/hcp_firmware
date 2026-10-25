@@ -64,7 +64,19 @@ void PhoneProvisioner::ReportState(uint8_t sta_state) {
 void PhoneProvisioner::ReportSuccess() {
   uint8_t rep[3 + 2 + 6 + 2 + 32];
   if (!blufi_is_connected()) {
-    return;  // boot-time connect with provisioning closed: nothing to report
+    /* The phone link is gone - most often it dropped around the association
+     * (coex). Provisioning may still have SUCCEEDED, and the FSM will close
+     * BLE two seconds after going online: keep it advertising instead, or the
+     * phone's retry finds nothing and a successful provisioning turns into a
+     * dead device until a power cycle. (The boot-time connect with
+     * provisioning closed also lands here; no delayed close is pending in
+     * that flow, so the flag is harmless.) */
+#ifdef CONFIG_HCP_PROVISION
+    hcp::provision::KeepBleAfterUndeliveredReport();
+#endif
+    HCP_LOGW(hcp::log::kDomainWifi,
+             "blufi: SUCCESS undeliverable (no link); keeping BLE reachable");
+    return;
   }
   int n = 0;
   rep[n++] = kOpModeSta;
@@ -87,7 +99,12 @@ void PhoneProvisioner::ReportSuccess() {
   HCP_LOGI(hcp::log::kDomainWifi, "blufi: report SUCCESS (%d bytes, bssid=%s)",
            n, ap ? "yes" : "no");
   atomic_set(&succ_sent_, 1);
-  blufi_send(BLUFI_TYPE_DATA, BLUFI_DATA_WIFI_REP, rep, n);
+  if (blufi_send(BLUFI_TYPE_DATA, BLUFI_DATA_WIFI_REP, rep, n) != 0) {
+    /* The link died between the check and the send: same story as above. */
+#ifdef CONFIG_HCP_PROVISION
+    hcp::provision::KeepBleAfterUndeliveredReport();
+#endif
+  }
 }
 
 // Final failure report, including the ESP-compatible disconnect-reason TLV.

@@ -95,6 +95,9 @@ struct k_work_delayable g_tick_work;
 struct k_work_delayable g_ble_close_work;
 struct k_work_delayable g_attempt_work;
 static K_SEM_DEFINE(g_disconn_sem, 0, 1);
+/* Set when a final report could not be delivered (link down): the pending
+ * delayed BLE close is then skipped so the phone's retry can still reach us. */
+static bool g_keep_ble_open = false;
 
 void Apply(const Fsm::Output& out);  // defined below
 
@@ -205,6 +208,19 @@ void WifiThread(void*, void*, void*) {
 }
 
 void BleCloseFn(struct k_work*) {
+  if (g_keep_ble_open) {
+    /* The final report never reached the phone (the link dropped around the
+     * association, coex) - closing BLE now would hide a provisioning that
+     * actually SUCCEEDED: the phone's retry would find nothing, and the only
+     * way out is a power cycle. Stay advertising so the retry reconnects and
+     * learns the outcome over GET_WIFI_STATUS or a quick re-connect; the next
+     * report that reaches a live link closes BLE through this same path. */
+    g_keep_ble_open = false;
+    HCP_LOGW(hcp::log::kDomainWifi,
+             "provision: report undelivered; keeping BLE open for the "
+             "phone's retry");
+    return;
+  }
   HCP_LOGI(hcp::log::kDomainWifi, "provision: closing BLE after provisioning");
   blufi_stop();
 }
@@ -483,6 +499,13 @@ void NoteOwnDisconnect() {
 
 bool InOwnDisconnectWindow() {
   return k_uptime_get() < g_own_disconnect_until_ms;
+}
+
+void KeepBleAfterUndeliveredReport() {
+  /* Only bites when a delayed close is actually pending (the phone-driven
+   * success path); the boot path never schedules one, so callers can set
+   * this unconditionally when a report had nowhere to go. */
+  g_keep_ble_open = true;
 }
 
 void NotifyServiceReady() {

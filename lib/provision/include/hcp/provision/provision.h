@@ -41,6 +41,12 @@ void NoteOwnDisconnect();
 // the phone must consult it, or a routine teardown looks like a Wi-Fi failure.
 bool InOwnDisconnectWindow();
 
+// The final SUCCESS report had nowhere to go (the phone link was already
+// down): skip the pending "close BLE after success" so the phone's retry can
+// still reconnect and learn the outcome - otherwise a provisioning that
+// succeeded becomes invisible and unrecoverable without a power cycle.
+void KeepBleAfterUndeliveredReport();
+
 // Report that the service session (MQTT) came up on top of the Wi-Fi link: this
 // is what moves the LED from violet-slow (Wi-Fi only) to solid light green.
 void NotifyServiceReady();
