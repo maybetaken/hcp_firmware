@@ -447,6 +447,18 @@ static void connected(struct bt_conn *conn, uint8_t err)
 	}
 }
 
+/* What the central actually granted (it may ignore or adjust the request
+ * above): interval in 1.25 ms units, timeout in 10 ms units. This is the
+ * number that decides whether the link survives the radio-deaf Wi-Fi bursts,
+ * so it belongs in the log. */
+static void conn_param_updated(struct bt_conn *conn, uint16_t interval,
+			       uint16_t latency, uint16_t timeout)
+{
+	LOG_INF("conn params: interval=%u (%u ms), latency=%u, timeout=%u (%u ms)",
+		interval, (uint32_t)interval * 5 / 4, latency, timeout,
+		(uint32_t)timeout * 10);
+}
+
 static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
 	LOG_INF("phone disconnected (%u), re-advertising", reason);
@@ -475,6 +487,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 BT_CONN_CB_DEFINE(conn_callbacks) = {
 	.connected = connected,
 	.disconnected = disconnected,
+	.le_param_updated = conn_param_updated,
 };
 
 void blufi_set_callback(blufi_data_cb_t cb, void *user)
