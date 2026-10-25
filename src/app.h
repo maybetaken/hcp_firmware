@@ -168,6 +168,10 @@ class PhoneProvisioner {
   // Association attempts issued for the current phone-driven connect (see
   // kPhoneConnAttempts).
   int phone_attempts_ = 0;
+  // True once any Wi-Fi driver event has been seen (or a connect issued):
+  // until then the pre-connect teardown dance in ConnectNow() is skipped,
+  // saving its full 1 s wait on a fresh device.
+  bool wifi_was_active_ = false;
 
   struct k_sem disconn_sem_;
   struct k_work prov_work_;

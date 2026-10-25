@@ -148,10 +148,14 @@ void PhoneProvisioner::OnWifiEvent(hcp::net::WifiEvent e) {
   hcp::provision::NotifyWifiEvent(e);
 #endif
   if (e == E::kConnected) {
+    wifi_was_active_ = true;
     atomic_set(&prov_active_, 0);
     k_work_cancel_delayable(&prov_timeout_);
     k_work_reschedule(&succ_work_, K_MSEC(500));
   } else if (e == E::kConnectFailed) {
+    /* Any driver event means the radio was in use: from here on, the
+     * pre-connect teardown dance in ConnectNow() is live. */
+    wifi_was_active_ = true;
 #ifdef CONFIG_HCP_PROVISION
     /* The esp32 driver reports "dropped while CONNECTING" as an association
      * failure, which our own pre-connect Disconnect() also triggers. Do not tell
@@ -180,16 +184,30 @@ void PhoneProvisioner::ConnectNow() {
   /* Wait for the disconnect event rather than racing it: re-provisioning with only a
    * fixed delay can leave the driver in a state where the next connect never completes.
    * The phone path can re-provision back-to-back while still CONNECTING; unlike the boot
-   * path, this is not latency critical. */
-  k_sem_reset(&disconn_sem_);
+   * path, this is not latency critical.
+   *
+   * But skip the whole dance when Wi-Fi has been idle since boot: with nothing
+   * to tear down, the wait can only time out, and it burns a full second of
+   * the phone's perceived provisioning time (the WeChat mini-program sits at
+   * 60% for the entire connect). Any Wi-Fi driver event marks the radio as
+   * previously active - including the boot-path attempt the FSM makes when
+   * stored credentials exist, which is exactly the re-provisioning case the
+   * dance exists for. */
+  if (wifi_was_active_) {
+    k_sem_reset(&disconn_sem_);
 #ifdef CONFIG_HCP_PROVISION
-  hcp::provision::NoteOwnDisconnect();
+    hcp::provision::NoteOwnDisconnect();
 #endif
-  hcp::net::wifi::Disconnect();
-  if (k_sem_take(&disconn_sem_, K_SECONDS(1)) != 0) {
-    HCP_LOGW(hcp::log::kDomainWifi,
-             "blufi: disconnect wait timed out, connecting anyway");
+    hcp::net::wifi::Disconnect();
+    if (k_sem_take(&disconn_sem_, K_SECONDS(1)) != 0) {
+      HCP_LOGW(hcp::log::kDomainWifi,
+               "blufi: disconnect wait timed out, connecting anyway");
+    }
+  } else {
+    HCP_LOGD(hcp::log::kDomainWifi,
+             "blufi: Wi-Fi idle since boot, skipping the disconnect wait");
   }
+  wifi_was_active_ = true;
   hcp::net::WifiCredential c{ssid_, pass_[0] ? pass_ : nullptr};
   HCP_LOGI(hcp::log::kDomainWifi, "blufi: (re)connecting to \"%s\" (attempt %d/%d)",
            ssid_, phone_attempts_, kPhoneConnAttempts);
