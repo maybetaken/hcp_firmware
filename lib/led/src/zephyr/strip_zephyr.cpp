@@ -26,38 +26,72 @@
 namespace hcp {
 namespace led {
 
-/* How long to keep off a driver that just refused a frame, and how much longer each
- * further refusal adds. A failed update_rgb is not a quiet no-op: the driver reaches
- * its 200000-pass timeout before giving up - tens of milliseconds of busy-wait on the
- * cooperative system workqueue, which is also where the button debounce and the BluFi
- * receive work run - and it leaves whatever partial waveform it got going on the data
- * line for the strip to latch. Retrying that every 50 ms tick buys another timeout and
- * another partial frame, and measures out as an animation rate that is half what the
- * caller asked for. One success clears the window, which is also how a strip that came
- * back tells anyone without being asked. */
+/* How long to keep off a *repeat* of a frame the driver just refused, and how much
+ * longer each further refusal adds. A failed update_rgb is not a quiet no-op: the
+ * driver reaches its 200000-pass timeout before giving up - tens of milliseconds of
+ * busy-wait on the cooperative system workqueue, which is also where the button
+ * debounce and the BluFi receive work run - and it leaves whatever partial waveform it
+ * got going on the data line for the strip to latch. Retrying that every 50 ms tick
+ * buys another timeout and another partial frame, and measures out as an animation rate
+ * that is half what the caller asked for. One success clears the window, which is also
+ * how a strip that came back tells anyone without being asked.
+ *
+ * "Repeat" is the whole of the rule and it is not a detail: the same stale success
+ * cache that made the old code hammer is what would otherwise make a user's command
+ * wait out the cap. See MatchesAttempt(). */
 constexpr uint32_t kRetryBaseMs = 1000;
 constexpr uint32_t kRetryCapMs = 30000;
 
 struct Strip::Impl {
   Color* fb = nullptr;
   Color* shown = nullptr;   // last frame actually sent, for the no-change check
+  Color* attempted = nullptr;  // last frame handed to the driver, sent or not
   uint8_t shown_brightness = 0xFF;
+  uint8_t attempted_brightness = 0xFF;
   const struct device* dev = nullptr;
   uint32_t retry_ms = 0;    // current backoff window; 0 means the last flush worked
   int64_t retry_at_ms = 0;  // and until when it holds
 };
 
+namespace {
+
+// True when the framebuffer is exactly what the driver was last given - same
+// brightness, same pixels. Only this may be held back by the backoff, because only
+// this repeats a refusal: a frame that differs is a change somebody asked for (an
+// animation edge, or the owner switching the light) and it goes out when it is asked
+// for. Compared against the attempted frame rather than the successful one precisely
+// because a driver that refuses everything never lets the successful copy advance, and
+// comparing against that would make every tick look new.
+bool MatchesAttempt(const Color* fb, const Color* attempted, uint16_t count,
+                    uint8_t brightness, uint8_t attempted_brightness) {
+  if (brightness != attempted_brightness) {
+    return false;
+  }
+  for (uint16_t i = 0; i < count; ++i) {
+    if (fb[i].r != attempted[i].r || fb[i].g != attempted[i].g ||
+        fb[i].b != attempted[i].b) {
+      return false;
+    }
+  }
+  return true;
+}
+
+}  // namespace
+
 Strip::Strip(uint16_t count) : impl_(new Impl()), count_(count) {
   impl_->fb = new Color[count ? count : 1];
   impl_->shown = new Color[count ? count : 1];
+  impl_->attempted = new Color[count ? count : 1];
   for (uint16_t i = 0; i < count; ++i) {
     impl_->fb[i] = Color{};
     impl_->shown[i] = Color{};
+    impl_->attempted[i] = Color{};
   }
 }
 Strip::~Strip() {
   delete[] impl_->fb;
   delete[] impl_->shown;
+  delete[] impl_->attempted;
   delete impl_;
 }
 
@@ -109,14 +143,6 @@ bool Strip::Flush(bool force) {
     return false;
   }
 
-  /* Before the no-change check, and for a forced call too: "re-assert" asks the driver
-   * for the frame it is currently refusing, and asking early only buys another
-   * timeout. */
-  const int64_t now = k_uptime_get();
-  if (impl_->retry_ms != 0 && now < impl_->retry_at_ms) {
-    return false;
-  }
-
   /* A blink only changes the framebuffer on its edges, so skipping an unchanged
    * frame keeps the driver's work down to the few per second that actually alter the
    * strip rather than every animation tick. Refresh() is the caller saying "that
@@ -131,6 +157,17 @@ bool Strip::Flush(bool force) {
     /* Silent: this is the normal path (the animation ticks every 50 ms, almost always
      * with the same colour), and twenty log lines a second fills the C5's 1 KB ring. */
     return true;
+  }
+
+  /* The backoff goes after the no-change check and only on this side of the repeat
+   * test - so a frame nobody has been refused yet, and any frame that differs from the
+   * one that was, go straight through. Skipping here rather than at the top also means
+   * a held-back frame costs no allocation and no log line. */
+  const int64_t now = k_uptime_get();
+  if (MatchesAttempt(impl_->fb, impl_->attempted, count_, brightness_,
+                     impl_->attempted_brightness) &&
+      now < impl_->retry_at_ms) {
+    return false;
   }
 
   struct led_rgb* rgb = new struct led_rgb[count_];
@@ -150,6 +187,10 @@ bool Strip::Flush(bool force) {
    * reported on the line below it rather than hidden by a smaller count. */
   frames_++;
   last_rc_ = rc;
+  /* Recorded whether or not it was accepted: this copy is what the next call compares
+   * itself against to decide whether it is repeating a refusal. */
+  memcpy(impl_->attempted, impl_->fb, sizeof(Color) * count_);
+  impl_->attempted_brightness = brightness_;
 
   if (rc == 0) {
     impl_->retry_ms = 0;

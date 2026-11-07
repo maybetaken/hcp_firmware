@@ -711,6 +711,14 @@ bool Publish(const void* payload, size_t len) {
   return PublishTopic(CONFIG_HCP_MQTT_TOPIC_DIAGNOSTICS, payload, len);
 }
 
+/* The same builder the heartbeat uses, exported so a command can be answered the
+ * moment it arrives instead of on the schedule. Nothing is special-cased for the case
+ * with no session: the document is queued only while the client is connected, which is
+ * what the periodic call already checks, and a report that could not go out simply
+ * waits for the next one - the state it carries is also carried by every heartbeat
+ * behind it. */
+void PublishState() { PublishStateHeartbeat(); }
+
 void SetCommandHandler(CommandHandler cb, void* user) {
   cmd_cb = cb;
   cmd_user = user;

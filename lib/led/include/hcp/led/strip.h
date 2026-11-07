@@ -68,7 +68,10 @@ class Strip {
    * unchanged frame is not only redundant - for a light that is being held in some
    * state (off, above all, which has no edges left to send) it is also a claim that
    * the wire still agrees with us. Refresh() is how a caller stops making that claim:
-   * re-assert, and let the driver overwrite what anything else may have latched. */
+   * re-assert, and let the driver overwrite what anything else may have latched -
+   * though a refresh of a frame the driver is currently refusing waits for the
+   * refusal window like any other repeat, because re-asking for what was just refused
+   * buys another timeout and nothing else. */
   bool Flush(bool force);
 
   struct Impl;

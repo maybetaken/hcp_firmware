@@ -67,6 +67,13 @@ bool IsConnected();
 // Publish on the configured state/telemetry topic. Returns false when there is
 // no session - the caller does not need to retry, the loop reconnects anyway.
 bool Publish(const void* payload, size_t len);
+
+  /* Send the periodic diagnostics document right now, on the same topic and with the
+   * same content as the heartbeat. It exists because Home Assistant reads some of that
+   * document as the *state* of things it can also command - the status light among them
+   * - and a device that only reports on its own schedule looks like a device that
+   * ignored the command for as long as the schedule says. */
+void PublishState();
 bool PublishTopic(const char* topic, const void* payload, size_t len,
                   Tree tree = Tree::kMain);
 

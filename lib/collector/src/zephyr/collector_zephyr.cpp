@@ -394,6 +394,14 @@ void Handle(Slot& slot) {
       }
 #ifdef CONFIG_HCP_PROVISION
       provision::SetLedEnabled(s == registry::LedSetting::kOn);
+      /* Answered on the diagnostics topic rather than left to the schedule: Home
+       * Assistant's light entity reads its state from the "led" field of that document
+       * and from nothing else, so reporting it only every
+       * CONFIG_HCP_MQTT_DIAG_INTERVAL_SEC makes a box that acted on the request within
+       * a few milliseconds look like one that ignored it for up to half a minute.
+       * Reported whether or not the setting changed, the same rule the relays follow:
+       * what the entity needs is the device's opinion, not a signal that it moved. */
+      mqtt::PublishState();
 #else
       COL_LOGW("led command %s but hcp::provision is not in this build",
                s == registry::LedSetting::kOn ? "on" : "off");
