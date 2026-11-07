@@ -65,15 +65,31 @@ void RequestReset();
 
 /*
  * Home Assistant's light entity for this device: <sn>/control/led with "on"/"off"
- * switches the status light up or blanks it. The state machine keeps running
- * either way - this only silences its output, which is what a request to turn the
- * LED "off" can honestly mean. Off means off, including the alert blinks.
+ * switches the status light up or blanks it. The state machine keeps running either
+ * way - this only silences its output, which is what a request to turn the LED "off"
+ * can honestly mean: no steady pattern and no alert blinks either.
  *
- * It is persisted, because Home Assistant restores the light's state on its side
- * after a restart and an unremembered setting would disagree with the device after
- * every power cycle (the previous firmware stored the same thing as "led_state").
+ * The persisted setting is one of the two things this interface keeps apart. It is
+ * *applied* only once the machine reports everything connected (and, from then on,
+ * only while it still does) - because a box that cannot reach the network has no
+ * console at the user's end, and its blink is the only answer to "did it even try".
+ * A device that never connects therefore keeps blinking while its light entity says
+ * "off", which is the intended reading: the entity reports the owner's preference,
+ * the strip reports the boot.
+ *
+ * A control/led command that arrives over the network is applied in this boot without
+ * waiting for either, so the rule above only ever defers an unattended restart.
+ *
+ * The preference is persisted, because Home Assistant restores the light's state on
+ * its side after a restart and an unremembered setting would disagree with the device
+ * after every power cycle (the previous firmware stored the same thing as
+ * "led_state").
  */
 void SetLedEnabled(bool on);
+
+// The stored preference - what the owner asked for, not necessarily what the strip is
+// showing while the boot is still being reported. Read by diagnostics, which is where
+// Home Assistant's light entity gets its state from.
 bool LedEnabled();
 
 /* What hcp::provision has handed the strip and what came back: the frames, the

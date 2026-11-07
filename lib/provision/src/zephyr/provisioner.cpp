@@ -62,8 +62,13 @@ constexpr char kKeySsid[] = "prov/ssid";
 constexpr char kKeyPass[] = "prov/pass";
 constexpr char kKeyLed[] = "prov/led";
 
-// The status light, as Home Assistant's light entity can switch it.
+/* The status light's stored preference, as Home Assistant's light entity reads and
+ * sets it - and deliberately not the output. PaintLed() waits until the machine has
+ * nothing left to report before it silences anything, so this can keep telling the UI
+ * what the owner asked for while the bring-up blink is still running. */
 bool g_led_enabled = true;
+bool g_led_settled = false;    // the steady pattern is kGreenSolid: everything is up
+bool g_led_commanded = false;  // the network asked for a setting during this boot
 
 Fsm g_fsm(kWifiAttempts);
 storage::Store g_store;
@@ -259,6 +264,17 @@ void Apply(const Fsm::Output& out) {
   // 3 blinks, 4 ticks (200 ms) per blink.
   g_alert_ticks = (out.alert == Fsm::Alert::kNone) ? 0 : 12;
 
+  /* Steady green is the moment the light stops being a report and becomes a
+   * preference: up to here the box had something to say about its own startup, and
+   * from here it has not. That is why the stored "off" is deferred to exactly this
+   * edge rather than honoured from the first paint. */
+  const bool settled = out.pattern == Fsm::Pattern::kGreenSolid;
+  if (settled && !g_led_settled && !g_led_enabled) {
+    HCP_LOGI(hcp::log::kDomainDevice,
+             "provision: everything connected, applying the stored status light = off");
+  }
+  g_led_settled = settled;
+
   // One readable line per transition: this is what tells you on the console
   // which state the box is in when the LED alone is ambiguous.
   HCP_LOGI(hcp::log::kDomainWifi, "provision: state=%s led=%s attempt=%d",
@@ -382,7 +398,10 @@ void Paint(Color c, bool force = false) {
 }
 
 void PaintLed() {
-  if (!g_led_enabled) {
+  /* Dark only once there is nothing to report: see the note in Start(). A command
+   * from the network short-circuits the wait, because someone asked for this in
+   * person - the deferral is for an unattended restart, not for ignoring the owner. */
+  if (!g_led_enabled && (g_led_settled || g_led_commanded)) {
     /* Asked to be dark: no steady pattern and no alert. The state machine keeps
      * running underneath - this function is only its output device.
      *
@@ -473,8 +492,15 @@ void Start() {
   }
   LoadCreds();
 
-  // Restore the LED setting before the first paint, so a device that was told to
-  // stay dark does not flash once on the way up.
+  /* The stored status-light preference is read here but deliberately NOT applied
+   * here. The bring-up blink is the only report this box has when it cannot reach
+   * anything, and honouring the preference from the first paint would boot it blind:
+   * no light, no console at the user's end, and no way to tell "connected and told to
+   * stay dark" from "rebooted and cannot find the network" - which is the one question
+   * anybody standing at the box can actually answer. LedEnabled() still reports this
+   * value from the first heartbeat, so Home Assistant knows what the owner asked for
+   * even while the light is busy being diagnostic; the silencing starts at the first
+   * settled pattern (Apply), which is when there is nothing left to say. */
   {
     char val[8];
     if (g_store.GetString(kKeyLed, val, sizeof(val))) {
@@ -577,6 +603,9 @@ void RequestReset() {
 }
 
 void SetLedEnabled(bool on) {
+  /* Set before the early return: a repeated "off" that arrives while the box is still
+   * trying to connect has to land too, and the value itself may already match. */
+  g_led_commanded = true;
   if (on == g_led_enabled) {
     return;  // same as before: do not spend a flash write
   }
@@ -604,10 +633,10 @@ uint32_t LedErrors() { return g_strip.Errors(); }
 
 int LedLastError() { return g_strip.LastError(); }
 
-/* The steady pattern the renderer is in, named the way the console log names it. On
- * the network it answers the question a flicker always raises - "did the machine leave
- * its steady state, or did the strip" - which is not something a person reading Home
- * Assistant can tell, and which nothing else in this build reported until now. */
+/* The steady pattern the state machine is in, named the way the console log names it -
+ * and deliberately not "off" when the light has been silenced: silencing is an output
+ * switch, the machine keeps running underneath it, and a report that conflated the two
+ * would make Home Assistant's light entity look like the device's connectivity state. */
 const char* LedPattern() { return PatternName(g_pattern); }
 
 }  // namespace provision
