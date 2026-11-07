@@ -266,14 +266,18 @@ void PublishAnnouncements() {
  * receiving one resets that timer. It also gives a debug subscriber something to
  * look at between events. */
 void PublishStateHeartbeat() {
-  /* 192, and the arithmetic is worth stating because this document grows by whatever
-   * the extra handler adds: the fixed part is 38 bytes at its widest
+  /* 256, and the arithmetic is worth stating because this document grows by whatever
+   * the extra handler adds. Widest case, field by field: the fixed part is 38 bytes
    * ({"up":4294967295,"fw":"255.255.255.255"), a 32-character ssid plus rssi is 49,
-   * "led" is 12 and an ota status of 47 is 56 - 156 in total, and an overflow here
-   * is not a crash but a silently missing field, which is the kind of bug that is
-   * only ever found by someone noticing Home Assistant has no signal sensor. It sits
-   * on the session thread's own stack (4 KB), so the bytes are not SRAM budget. */
-  char payload[192];
+   * "led" is 12, the four light counters are 18 ("ledf", full uint32), 21 ("lederr"),
+   * 20 ("ledrc", widest int) and 21 ("ledp", longest pattern name, violet-slow), and an
+   * ota status of 47 is 56 - 235 plus the closing brace. The 192 this carried until the
+   * light counters arrived had 36 bytes of slack and the new fields need 80, which is
+   * the whole reason the sum is written down rather than eyeballed: an overflow here is
+   * not a crash but a silently missing field, and the field that would have been
+   * dropped is the one added to answer a bug report. It sits on the session thread's own
+   * stack (4 KB), so the bytes are not SRAM budget. */
+  char payload[256];
 
   int n = snprintk(payload, sizeof(payload), "{\"up\":%u,\"fw\":\"%s\"",
                    static_cast<unsigned>(k_uptime_get() / 1000),

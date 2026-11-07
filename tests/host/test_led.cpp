@@ -54,3 +54,27 @@ TEST(Led, BrightnessClamps) {
   s.SetBrightness(40);
   EXPECT_EQ(s.Brightness(), 40);
 }
+
+/* Frames() counts flushes, not SetAll/Show calls, and says nothing about whether the
+ * frame differed. The host has no pixel to be wrong about, so what it can pin is the
+ * contract the Zephyr backend is held to as well: one count per flush, starting at
+ * zero, and unchanged by a frame that never reached Show(). */
+TEST(Led, FramesCountsFlushes) {
+  Strip s(2);
+  EXPECT_EQ(s.Frames(), 0u);       // opened or not, nothing has gone out yet
+  ASSERT_TRUE(s.Open());
+  EXPECT_EQ(s.Frames(), 0u);
+
+  s.SetAll(Color{1, 2, 3});
+  ASSERT_TRUE(s.Show());
+  ASSERT_TRUE(s.Show());           // the host has no no-change check to miss
+  EXPECT_EQ(s.Frames(), 2u);
+
+  ASSERT_TRUE(s.Refresh());        // re-asserting an unchanged frame still flushes
+  EXPECT_EQ(s.Frames(), 3u);
+
+  /* Nothing can refuse a flush here - there is no driver - so the two fields a failing
+   * strip reports on target stay at their initial value rather than disappearing. */
+  EXPECT_EQ(s.Errors(), 0u);
+  EXPECT_EQ(s.LastError(), 0);
+}

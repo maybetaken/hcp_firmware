@@ -76,7 +76,8 @@ class Services {
 #endif
 #if defined(CONFIG_HCP_OTA) || defined(CONFIG_HCP_PROVISION)
   /* The diagnostics fields hcp::mqtt cannot know: "led" (the light entity reads its
-   * state from there) and "ota" once an update has been tried. */
+   * state from there), the two frame/pattern counters behind it, and "ota" once an
+   * update has been tried. */
   static int StateExtra(char* buf, size_t cap);
 #endif
 };

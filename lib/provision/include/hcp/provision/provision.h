@@ -12,6 +12,8 @@
  */
 #pragma once
 
+#include <cstdint>
+
 #include "hcp/net/wifi.h"
 #include "hcp/provision/fsm.h"
 
@@ -73,6 +75,17 @@ void RequestReset();
  */
 void SetLedEnabled(bool on);
 bool LedEnabled();
+
+/* What hcp::provision has handed the strip and what came back: the frames, the
+ * refusals, the last code one of them returned, and the steady pattern the state
+ * machine is in. All four are for the diagnostics document rather than for the
+ * machine: with them, a device that is only reachable over MQTT can still say whether a
+ * light doing something unexpected was told to by us, was refused by the driver, or was
+ * written by something that reached the data line without asking. */
+uint32_t LedFrames();
+uint32_t LedErrors();
+int LedLastError();
+const char* LedPattern();
 
 // Current state, for logging/diagnostics (the MQTT session waits for kOnline).
 Fsm::State state();

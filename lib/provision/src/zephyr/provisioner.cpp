@@ -323,6 +323,13 @@ constexpr Color kLedGreen{80, 255, 120};
 constexpr Color kLedRed{255, 30, 20};
 constexpr Color kLedWhite{255, 255, 255};
 
+/* How often a dark light writes itself again: every 20 ticks, so once a second.
+ * Dark is the one state with no edges of its own - a lit pattern changes its
+ * framebuffer on every blink and therefore keeps the strip honest for free, while a
+ * light that was switched off sends exactly one all-black frame and then never
+ * returns to the driver. See Paint(). */
+constexpr uint32_t kLedRefreshTicks = 20;
+
 Color SteadyColor() {
   switch (g_pattern) {
     /* The LED language, as the product asked for it: not connected to Wi-Fi
@@ -365,16 +372,31 @@ Color AlertColor() {
  * answered by that flush line, and it was: the C3 alternates rgb(6,15,25) and
  * rgb(0,0,0) every 250 ms in blue-fast, so a steady light means the state's pattern
  * is steady (kGreenSolid), not a broken driver. */
-void Paint(Color c) {
+void Paint(Color c, bool force = false) {
   g_strip.SetAll(c);
-  g_strip.Show();
+  if (force) {
+    g_strip.Refresh();
+  } else {
+    g_strip.Show();
+  }
 }
 
 void PaintLed() {
   if (!g_led_enabled) {
-    // Asked to be dark: no steady pattern and no alert. The state machine keeps
-    // running underneath - this function is only its output device.
-    Paint(kLedOff);
+    /* Asked to be dark: no steady pattern and no alert. The state machine keeps
+     * running underneath - this function is only its output device.
+     *
+     * Dark still has to be written, once a second. A WS2812 holds the last frame it
+     * latched for as long as it has power, and it latches whatever reaches the data
+     * line - including bits this firmware did not send. Show() would answer "already
+     * dark" and touch nothing, so the one state that has to be true on the wire was
+     * also the one state we had no way to make true again: a pixel lit by anything
+     * else (crosstalk from a neighbouring transmitter, a supply dip that re-latched
+     * the line) stayed lit on a device whose owner had switched the light off, and no
+     * command could undo it. Re-asserting is cheap - one 24-symbol frame a second on
+     * a strip that is otherwise idle - and it is what turns "off" from a memory of
+     * what we last sent into something we keep holding. */
+    Paint(kLedOff, (g_tick_count % kLedRefreshTicks) == 0);
     return;
   }
   Color c = kLedOff;
@@ -569,6 +591,24 @@ void SetLedEnabled(bool on) {
 }
 
 bool LedEnabled() { return g_led_enabled; }
+
+/* Frames this process has handed to the strip, and how many of them the driver
+ * refused. The second one is the reason the first is worth reading: with the light
+ * switched off the framebuffer never changes, so a Frames() that climbs at all is a
+ * refusal, not an animation - measured on the bench C3 at about ten a second, which is
+ * also what the 50 ms tick looks like once every attempt spends its whole timeout
+ * busy-waiting on the workqueue it is running from. */
+uint32_t LedFrames() { return g_strip.Frames(); }
+
+uint32_t LedErrors() { return g_strip.Errors(); }
+
+int LedLastError() { return g_strip.LastError(); }
+
+/* The steady pattern the renderer is in, named the way the console log names it. On
+ * the network it answers the question a flicker always raises - "did the machine leave
+ * its steady state, or did the strip" - which is not something a person reading Home
+ * Assistant can tell, and which nothing else in this build reported until now. */
+const char* LedPattern() { return PatternName(g_pattern); }
 
 }  // namespace provision
 }  // namespace hcp

@@ -1,5 +1,6 @@
 /*
- * hcp::led — POSIX backend (host). CPU-side framebuffer only; Show() no-op.
+ * hcp::led — POSIX backend (host). CPU-side framebuffer only; Show()/Refresh() count
+ * calls instead of writing anything.
  * Copyright (c) 2026 maybetaken
  *
  * SPDX-License-Identifier: Apache-2.0
@@ -55,7 +56,22 @@ void Strip::Clear() {
   }
 }
 
-bool Strip::Show() { return open_; }  // host: nothing to flush
+bool Strip::Flush(bool force) {
+  if (!open_) {
+    return false;  // the Zephyr backend's rule, so the two agree on what Frames() counts
+  }
+
+  /* Nothing to flush and nothing to re-assert: there is no pixel here, so the
+   * framebuffer being the whole model makes force and no-force the same call. The
+   * count still moves, because what it counts on this backend is the calls that would
+   * have written - which is what a host test can assert about the caller's logic. */
+  (void)force;
+  frames_++;
+  return true;
+}
+
+bool Strip::Show() { return Flush(false); }
+bool Strip::Refresh() { return Flush(true); }
 
 }  // namespace led
 }  // namespace hcp
