@@ -53,6 +53,16 @@ constexpr uint32_t kRetryAttemptTimeoutMs = 10000;
 /* Window during which a link drop is attributed to our own pre-connect
  * Disconnect() instead of a failed attempt. */
 constexpr int kOwnDisconnectMs = 1500;
+/* The background re-attempt of the stored network, while the box waits for a phone.
+ * The budget above is sized for a network that exists - three association tries, one
+ * 20 s deadline for the first and 10 s for the rest. The outage that actually reaches
+ * that end state is a router reboot, which takes minutes: WAN re-sync, radio, DHCP
+ * pool, and only then Home Assistant's own add-ons. So the box used to sit in
+ * provisioning beside an access point that had been back for a quarter of an hour,
+ * and nothing but a phone or a long press could move it again. These are the slow
+ * rounds behind the fast budget: same attempts, just re-issued on a widening clock. */
+constexpr uint32_t kNetRetryBaseMs = 30000;
+constexpr uint32_t kNetRetryCapMs = 300000;
 
 #ifndef CONFIG_HCP_PROVISION_LED_BRIGHTNESS
 #define CONFIG_HCP_PROVISION_LED_BRIGHTNESS 10
@@ -84,6 +94,13 @@ char g_pend_ssid[33];
 char g_pend_pass[65];
 
 Fsm::Pattern g_pattern = Fsm::Pattern::kOff;
+/* The state Apply() last left the machine in. Half of what Apply() is called with are
+ * NoChange() results - a stray disconnect while an attempt is running, a service
+ * report in a state that ignores them - and those carry the current state without
+ * having moved it. Only an edge may re-schedule the background retry: an unchanged
+ * call would otherwise widen the interval for nothing, and a few of those next to
+ * each other turn a 30 s round into a 5 min one with no failure behind any of it. */
+Fsm::State g_state_last = Fsm::State::kIdle;
 Fsm::Alert g_alert = Fsm::Alert::kNone;
 int g_alert_ticks;  // remaining ticks of the current blink sequence
 uint32_t g_tick_count;
@@ -99,6 +116,8 @@ static K_SEM_DEFINE(g_wifi_kick, 0, 1);
 struct k_work_delayable g_tick_work;
 struct k_work_delayable g_ble_close_work;
 struct k_work_delayable g_attempt_work;
+struct k_work_delayable g_net_retry_work;
+uint32_t g_net_retry_ms = kNetRetryBaseMs;  // next background round, doubling to cap
 static K_SEM_DEFINE(g_disconn_sem, 0, 1);
 /* Set when a final report could not be delivered (link down): the pending
  * delayed BLE close is then skipped so the phone's retry can still reach us. */
@@ -109,6 +128,23 @@ void Apply(const Fsm::Output& out);  // defined below
 void AttemptTimeoutFn(struct k_work*) {
   HCP_LOGW(hcp::log::kDomainWifi, "provision: attempt timed out");
   Apply(g_fsm.OnAttemptTimeout());
+}
+
+void NetRetryFn(struct k_work*) {
+  if (blufi_is_connected()) {
+    /* Someone is provisioning right now. Competing with them for the shared 2.4 GHz
+     * radio is exactly the failure this branch exists to avoid, and the interval must
+     * not grow for a round that was skipped rather than failed - so this re-arms
+     * itself with what it was given and leaves the schedule to the next real edge. */
+    HCP_LOGD(hcp::log::kDomainWifi,
+             "provision: phone connected, background network retry waits %u ms",
+             (unsigned)g_net_retry_ms);
+    k_work_reschedule(&g_net_retry_work, K_MSEC(g_net_retry_ms));
+    return;
+  }
+  HCP_LOGI(hcp::log::kDomainWifi,
+           "provision: re-attempting the stored network in the background");
+  Apply(g_fsm.OnNetworkRetry());
 }
 
 void Reboot() {
@@ -315,6 +351,29 @@ void Apply(const Fsm::Output& out) {
         break;
     }
   }
+
+  /* Armed last, so it reads the credentials as this transition just left them:
+   * kEraseCreds runs above, and a box that was just told to forget its network has
+   * nothing to re-attempt and must wait for a phone instead. Leaving
+   * kProvisioning disarms it, because from there the attempt deadline owns the
+   * schedule; reaching kOnline also resets the widening clock, so the next outage
+   * starts at the quick end again. */
+  const bool moved = out.state != g_state_last;
+  g_state_last = out.state;
+
+  if (moved && out.state == Fsm::State::kProvisioning && g_have_creds) {
+    HCP_LOGI(hcp::log::kDomainWifi,
+             "provision: network still unreachable, re-attempting in %u ms",
+             (unsigned)g_net_retry_ms);
+    k_work_reschedule(&g_net_retry_work, K_MSEC(g_net_retry_ms));
+    g_net_retry_ms = g_net_retry_ms >= kNetRetryCapMs / 2 ? kNetRetryCapMs
+                                                         : g_net_retry_ms * 2;
+  } else if (moved) {
+    k_work_cancel_delayable(&g_net_retry_work);
+    if (out.state == Fsm::State::kOnline) {
+      g_net_retry_ms = kNetRetryBaseMs;
+    }
+  }
 }
 
 /* ---- status LED ---- */
@@ -481,6 +540,7 @@ void Start() {
   k_work_init_delayable(&g_tick_work, TickFn);
   k_work_init_delayable(&g_ble_close_work, BleCloseFn);
   k_work_init_delayable(&g_attempt_work, AttemptTimeoutFn);
+  k_work_init_delayable(&g_net_retry_work, NetRetryFn);
   k_thread_create(&g_wifi_thread, g_wifi_thread_stack,
                   K_THREAD_STACK_SIZEOF(g_wifi_thread_stack), WifiThread,
                   nullptr, nullptr, nullptr, K_LOWEST_APPLICATION_THREAD_PRIO, 0,

@@ -40,6 +40,7 @@ Fsm::Output Fsm::NoChange() const {
 
 Fsm::Output Fsm::Start(bool have_creds) {
   from_phone_ = false;
+  have_creds_ = have_creds;
   if (have_creds) {
     // Try the network first; the radio stays off until we know we need it.
     ble_open_ = false;
@@ -59,6 +60,7 @@ Fsm::Output Fsm::OnPhoneCreds() {
   // The phone drives the connect (and reports the result over BLE), so we only
   // persist here - no kConnectWifi, and BLE must stay open for the exchange.
   from_phone_ = true;
+  have_creds_ = true;
   attempts_ = 1;
   ble_open_ = true;
   Output o = Make(State::kWifiTry, Pattern::kBlueFast, Alert::kNone);
@@ -78,6 +80,14 @@ Fsm::Output Fsm::OnWifiConnected() {
     from_phone_ = false;
     ble_open_ = false;
     Push(o, Action::kCloseBleDelayed);
+  } else if (ble_open_) {
+    /* The network came up on credentials the box already held, over a round it
+     * started itself - so the phone BLE was opened for is not coming, and an
+     * advertising radio next to a working device is a cost with no buyer.
+     * Closed here rather than after a delay: nobody is waiting for a report,
+     * because nobody sent one. */
+    ble_open_ = false;
+    Push(o, Action::kDisableBle);
   }
   return o;
 }
@@ -134,6 +144,19 @@ Fsm::Output Fsm::OnAttemptTimeout() {
   return OnWifiConnectFailed();
 }
 
+Fsm::Output Fsm::OnNetworkRetry() {
+  /* Two callers say "not now" and neither is a failure: no credentials means there
+   * is nothing to connect to until a phone arrives, and any state but kProvisioning
+   * means an attempt is already in flight or the network is already up. */
+  if (state_ != State::kProvisioning || !have_creds_) {
+    return NoChange();
+  }
+  attempts_ = 1;
+  Output o = Make(State::kWifiTry, Pattern::kBlueFast, Alert::kNone);
+  Push(o, Action::kConnectWifi);
+  return o;
+}
+
 Fsm::Output Fsm::OnServiceReady() {
   if (state_ != State::kOnline) {
     return NoChange();
@@ -152,6 +175,7 @@ Fsm::Output Fsm::OnServiceLost() {
 
 Fsm::Output Fsm::OnResetRequested() {
   from_phone_ = false;
+  have_creds_ = false;  // erased by the kEraseCreds action this returns
   attempts_ = 0;
   Output o = Make(State::kProvisioning, Pattern::kBlueSlow, Alert::kErased3);
   Push(o, Action::kEraseCreds);

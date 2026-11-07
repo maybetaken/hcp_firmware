@@ -319,3 +319,81 @@ TEST(ProvisionFsm, ServiceLostIsANoOpWhenServiceWasNotUp) {
   EXPECT_EQ(o.state, Fsm::State::kOnline);
   EXPECT_EQ(o.pattern, Fsm::Pattern::kVioletSlow);
 }
+
+/* ---- the background re-attempt of a network that was not up yet ---- */
+
+// Running the fast budget out is not evidence the credentials are wrong; the common
+// reason is a router that is still booting. So a retry round has to be possible from
+// the provisioning end state, and it has to be an ordinary round.
+TEST(ProvisionFsm, BackgroundRetryStartsAFreshOrdinaryRound) {
+  Fsm fsm(3);
+  fsm.Start(true);
+  for (int i = 0; i < 3; i++) {
+    fsm.OnWifiConnectFailed();
+  }
+  ASSERT_EQ(fsm.state(), Fsm::State::kProvisioning);
+
+  Fsm::Output o = fsm.OnNetworkRetry();
+  EXPECT_EQ(o.state, Fsm::State::kWifiTry);
+  EXPECT_EQ(o.pattern, Fsm::Pattern::kBlueFast);
+  EXPECT_EQ(o.alert, Fsm::Alert::kNone);  // a retry is not news about a failure
+  EXPECT_TRUE(Has(o, Fsm::Action::kConnectWifi));
+  EXPECT_FALSE(Has(o, Fsm::Action::kEnableBle));  // already advertising
+  EXPECT_TRUE(fsm.ble_open());  // ...and stays reachable for the phone
+  EXPECT_EQ(fsm.attempts(), 1);  // a whole new budget, not the last attempt's tail
+}
+
+// Nothing to retry, in both directions: no credentials stored, and credentials that
+// were just erased because the owner said to forget them.
+TEST(ProvisionFsm, BackgroundRetryNeedsStoredCredentials) {
+  Fsm fresh(3);
+  fresh.Start(false);
+  ASSERT_EQ(fresh.state(), Fsm::State::kProvisioning);
+  Fsm::Output o = fresh.OnNetworkRetry();
+  EXPECT_EQ(o.state, Fsm::State::kProvisioning);
+  EXPECT_EQ(o.num_actions, 0);
+
+  Fsm wiped(3);
+  wiped.Start(true);
+  wiped.OnWifiConnectFailed();
+  wiped.OnWifiConnectFailed();
+  ASSERT_TRUE(Has(wiped.OnWifiConnectFailed(), Fsm::Action::kEnableBle));
+  // A long press erases and stays reachable: kEraseCreds, and no second kEnableBle
+  // because BLE is already open from the fall-back above.
+  Fsm::Output erased = wiped.OnResetRequested();
+  EXPECT_EQ(erased.num_actions, 1);
+  EXPECT_TRUE(Has(erased, Fsm::Action::kEraseCreds));
+
+  Fsm::Output o2 = wiped.OnNetworkRetry();
+  EXPECT_EQ(o2.state, Fsm::State::kProvisioning);
+  EXPECT_EQ(o2.num_actions, 0);
+}
+
+// While an attempt is in flight, or once the network is up, the timer is noise.
+TEST(ProvisionFsm, BackgroundRetryIsIgnoredOutsideProvisioning) {
+  Fsm fsm(3);
+  fsm.Start(true);
+  EXPECT_EQ(fsm.OnNetworkRetry().num_actions, 0);  // kWifiTry already
+
+  fsm.OnWifiConnected();
+  fsm.OnServiceReady();
+  EXPECT_EQ(fsm.state(), Fsm::State::kOnline);
+  EXPECT_EQ(fsm.OnNetworkRetry().num_actions, 0);
+}
+
+// A round the box started for itself must not leave BLE advertised once it worked:
+// the phone it was opened for is not coming, and the network it wanted is here.
+TEST(ProvisionFsm, BackgroundRetrySuccessClosesBleRightAway) {
+  Fsm with_creds(3);
+  with_creds.Start(true);
+  for (int i = 0; i < 3; i++) {
+    with_creds.OnWifiConnectFailed();
+  }
+  with_creds.OnNetworkRetry();
+
+  Fsm::Output o = with_creds.OnWifiConnected();
+  EXPECT_EQ(o.state, Fsm::State::kOnline);
+  EXPECT_TRUE(Has(o, Fsm::Action::kDisableBle));
+  EXPECT_FALSE(Has(o, Fsm::Action::kCloseBleDelayed));  // nobody waits for a report
+  EXPECT_FALSE(with_creds.ble_open());
+}

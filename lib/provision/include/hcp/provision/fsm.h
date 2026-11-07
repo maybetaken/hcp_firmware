@@ -89,6 +89,19 @@ class Fsm {
   Output OnAttemptTimeout();
   Output OnResetRequested();      // long press: forget credentials
 
+  /* The slow background re-attempt of the stored network, fired by the caller while
+   * the machine is waiting for a phone. Reaching kProvisioning is not evidence that
+   * the credentials are wrong - the common reason is a network that was still booting
+   * when the (much shorter) attempt budget ran out - so without this the box keeps
+   * advertising BLE next to an access point that came back minutes ago.
+   *
+   * It is a fresh round of ordinary attempts rather than a special state: kWifiTry,
+   * the same per-attempt deadline behind it, the same fall-back in front of it. It
+   * does nothing when there are no credentials to retry or when the machine is not
+   * waiting for a phone.
+   */
+  Output OnNetworkRetry();
+
   // The service session (MQTT) came up on top of the Wi-Fi link: this is what
   // turns the LED from violet to green. Ignored unless we are online.
   Output OnServiceReady();
@@ -112,6 +125,8 @@ class Fsm {
   int attempts_ = 0;
   int wifi_attempts_;
   bool ble_open_ = false;
+  // Stored credentials exist, so a network retry has something to connect to.
+  bool have_creds_ = false;
   // Wi-Fi is up *and* the service session (MQTT) is established.
   bool service_up_ = false;
   // Credentials came from the phone in this session: on success, shut BLE down
