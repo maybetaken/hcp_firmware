@@ -108,6 +108,20 @@ LOG_MODULE_REGISTER(ws2812_rmt, CONFIG_LOG_DEFAULT_LEVEL);
 #define kT1hTicks     64
 #define kBitCellTicks 100
 
+/* How many reads the wait for one chunk may take before the chunk is called a failure.
+ *
+ * A bound on damage, not an estimate of a slow frame: a chunk is at most 48 symbols of
+ * 1250 ns = 60 us of hardware time, and one poll of the raw interrupt word is a single
+ * register read, so a few thousand passes already sits an order of magnitude past
+ * anything that is going to finish at all. The value this file carried before, 200000,
+ * was chosen for being comfortably larger than anything plausible - which on a channel
+ * that never raises tx_end turns every frame into forty-odd milliseconds of busy-wait
+ * on the cooperative system workqueue, the same thread that runs the button debounce
+ * and the BluFi receive work. Whatever else remains open about this part, one status
+ * LED must not be able to hold a board up like that.
+ */
+#define kWaitPassCap 4000U
+
 struct ws2812_rmt_config {
 	struct gpio_dt_spec data;
 	uint8_t channel;      /* RMT TX channel: 0 or 1 on these parts */
@@ -152,12 +166,35 @@ static inline uint32_t ws2812_symbol(bool one)
  * pushes landed (non-FIFO mode on the C3 accepted 24 writes, left the write pointer at
  * zero, and then transmitted empty symbols while reporting done).
  *
- * 'status' is a raw word, and the two generations disagree about which half means what:
- *   ESP32-C3 tx_status: mem_waddr_ex[8:0], mem_raddr[20:12], state[23:21], then
- *                       owner_err/mem_full/mem_rd_err.
+ * 'status' is a raw word, and the two generations disagree about which half means what.
+ * The layouts below come from each part's soc/rmt_struct.h rather than from memory:
+ * the version of this comment that shipped for five releases described the C3's
+ * *rx_status* as its tx_status - read pointer high, write pointer low, the other way
+ * round - and code was written against it. Reading the wrong half of a status word
+ * does not fail to compile; it just answers a question nobody asked, which is how a
+ * read pointer of 0 came to be read as 24 twice in a row.
+ *
+ *   ESP32-C3 tx_status: mem_raddr_ex[8:0], state[10:9], waddr[19:11], then
+ *                       mem_rd_err(20)/mem_empty(21)/mem_wr_err(22) and raddr[30:23].
  *   C5/C6 chnstatus:    mem_raddr_ex_chn[8:0], state_chn[11:9], apb_mem_waddr_chn[20:12],
  *                       then rd_err(21)/empty(22)/wr_err(23).
- * So 0x00018000 is "24 consumed" on the C3 and "24 written, none consumed" on the C6. */
+ * So the read pointer is the low field on both generations, and 0x00018000 on a C3 is
+ * "48 written, none read" - not the "24 consumed" this comment used to claim.
+ *
+ * What tx_lim, raddr and waddr count on the C3 is NOT settled and is not asserted
+ * here. Measured on the bench C3 for a 24-symbol single-pixel frame with tx_lim at
+ * symbols-1: waddr 48, the read pointer reached 28 during the wait, ch0_tx_thr_event
+ * set, ch0_tx_end never set - and the strip shows the stage colours. Either the
+ * pointers count 16-bit entries, so every frame stalls at 58 % with half a red byte and
+ * no blue byte at all, or they count symbols, so the frame is complete and this part
+ * simply never raises tx_end. One experiment separates them: tx_lim = 2*symbols-1, and
+ * whether the read pointer then reaches 48. It has not been run, so neither reading is
+ * a basis for a completion rule - building one on a guess has been tried twice on this
+ * driver and gave, in order, a green strip and a false all-clear.
+ *
+ * A third trap in the same words: stopping the channel resets the read pointer, so a
+ * status word captured after rmt_ll_tx_stop() shows 0 whatever happened during the
+ * frame. Progress has to be sampled inside the wait to mean anything. */
 struct tx_result {
 	uint32_t written;  /* status word after the pushes, before the channel is started */
 	uint32_t status;   /* channel status word at the moment it finished or gave up */
@@ -291,7 +328,7 @@ static int ws2812_rmt_flush_chunk(const struct device *dev, const uint8_t *bytes
 	 * capacity the read pointer runs past the written symbols and waits for ones that
 	 * never arrive, so the frame neither ends nor reports done. */
 	ws2812_rmt_tx_chunk(dev, bytes, count, RMT_TX_LIMIT(symbols), kTxAppendEof, kTxWrapAtLimit,
-			   200000U, &r);
+			   kWaitPassCap, &r);
 
 	/* Once per boot: the three readings that say what happened on the hardware, since
 	 * a completion bit alone has proved nothing (see struct tx_result for the field
