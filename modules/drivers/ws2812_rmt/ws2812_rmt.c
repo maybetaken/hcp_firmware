@@ -66,7 +66,9 @@
 #define RMT_CHANNEL_LIMIT(dev, ch)     ((dev)->tx_lim[ch].val)
 #define RMT_TX_CLK_SRC                 RMT_CLK_SRC_APB
 /* tx_lim is the index of the last symbol: a 24-symbol frame ends the transmitter at 23
- * and raises TX_DONE there (bench: raddr 24, raw 0x101 = done + threshold). */
+ * and raises TX_DONE there (bench C3 probe: waddr 24, raddr 0 -> 25, raw 0x101 = done +
+ * threshold, observed during the wait). 2*symbols-1 also raises done but only by reading
+ * the stale entries past the data - see the tx_result note. */
 #define RMT_TX_LIMIT(symbols)          ((symbols) - 1U)
 #define kTxAppendEof                   false
 #define kTxWrapAtLimit                 false
@@ -166,40 +168,52 @@ static inline uint32_t ws2812_symbol(bool one)
  * pushes landed (non-FIFO mode on the C3 accepted 24 writes, left the write pointer at
  * zero, and then transmitted empty symbols while reporting done).
  *
- * 'status' is a raw word, and the two generations disagree about which half means what.
- * The layouts below come from each part's soc/rmt_struct.h rather than from memory:
- * the version of this comment that shipped for five releases described the C3's
+ * 'status' is a raw word, and for five releases this comment described the C3's
  * *rx_status* as its tx_status - read pointer high, write pointer low, the other way
  * round - and code was written against it. Reading the wrong half of a status word
- * does not fail to compile; it just answers a question nobody asked, which is how a
- * read pointer of 0 came to be read as 24 twice in a row.
+ * does not fail to compile; it just answers a question nobody asked. The layout below
+ * is transcribed from each part's soc/rmt_struct.h, field width by field width:
  *
- *   ESP32-C3 tx_status: mem_raddr_ex[8:0], state[10:9], waddr[19:11], then
- *                       mem_rd_err(20)/mem_empty(21)/mem_wr_err(22) and raddr[30:23].
+ *   ESP32-C3 tx_status: mem_raddr_ex[8:0], state[11:9], waddr[20:12], then
+ *                       mem_rd_err(21)/mem_empty(22)/mem_wr_err(23) and raddr[31:24].
  *   C5/C6 chnstatus:    mem_raddr_ex_chn[8:0], state_chn[11:9], apb_mem_waddr_chn[20:12],
  *                       then rd_err(21)/empty(22)/wr_err(23).
- * So the read pointer is the low field on both generations, and 0x00018000 on a C3 is
- * "48 written, none read" - not the "24 consumed" this comment used to claim.
+ * The two generations agree: the read pointer is the low 9 bits, the write pointer is
+ * [20:12]. An earlier revision of this comment had state as 2 bits and waddr as [19:11]
+ * - one bit short - so it decoded the write pointer with >>11 instead of >>12 and read
+ * 0x00018000 as "48 written". The correct decode is waddr 24, raddr 0: 24 symbols pushed,
+ * none read yet. That single off-by-one is what spawned the "the pointers count 16-bit
+ * entries" theory and the two completion rules built on it (a green strip, then a false
+ * all-clear), so the widths are stated here rather than paraphrased.
  *
- * What tx_lim, raddr and waddr count on the C3 is NOT settled and is not asserted
- * here. Measured on the bench C3 for a 24-symbol single-pixel frame with tx_lim at
- * symbols-1: waddr 48, the read pointer reached 28 during the wait, ch0_tx_thr_event
- * set, ch0_tx_end never set - and the strip shows the stage colours. Either the
- * pointers count 16-bit entries, so every frame stalls at 58 % with half a red byte and
- * no blue byte at all, or they count symbols, so the frame is complete and this part
- * simply never raises tx_end. One experiment separates them: tx_lim = 2*symbols-1, and
- * whether the read pointer then reaches 48. It has not been run, so neither reading is
- * a basis for a completion rule - building one on a guess has been tried twice on this
- * driver and gave, in order, a green strip and a false all-clear.
+ * What tx_lim, raddr and waddr count on the C3 is now MEASURED, not argued. The probe
+ * (CONFIG_WS2812_RMT_PROBE) ran the ten frame-end candidates on the bench C3 for a
+ * 24-symbol single-pixel frame, sampling the read pointer inside the wait and the raw
+ * interrupt word on both sides of the stop:
  *
- * A third trap in the same words: stopping the channel resets the read pointer, so a
- * status word captured after rmt_ll_tx_stop() shows 0 whatever happened during the
- * frame. Progress has to be sampled inside the wait to mean anything. */
+ *   lim=s-1 (23):  waddr 24, raddr 0 -> 25 during the wait, raw 0x101 (threshold +
+ *                  TX_DONE) already set BEFORE the stop, done observed in 78 passes.
+ *   lim=2s-1 / 2s: raw 0x001 - TX_DONE without the threshold, reached only by streaming
+ *                  the stale entries that follow the data (the C6's wrong-colour trap).
+ *
+ * So the pointers count 32-bit symbols (waddr 24 for 24 symbols, not 48), tx_lim =
+ * symbols-1 is the right frame end on this part, and TX_DONE is observable during the
+ * wait - the completion rule below is not asking the hardware for something it never
+ * gives. 25 s of the production animation logged zero "never done" and zero errors.
+ * The "tx_end never set" reading that drove the earlier rounds was the >>11 decode plus
+ * a status word captured after the stop, not a channel that refused to finish.
+ *
+ * A trap that survives the corrected decode: stopping the channel resets the read
+ * pointer, so a status word captured after rmt_ll_tx_stop() shows 0 whatever happened
+ * during the frame. Progress has to be sampled inside the wait to mean anything - which
+ * is why raddr_max below is collected there, and raw_before is taken before the stop. */
 struct tx_result {
 	uint32_t written;  /* status word after the pushes, before the channel is started */
 	uint32_t status;   /* channel status word at the moment it finished or gave up */
-	uint32_t raw;      /* raw interrupt word at that same moment */
+	uint32_t raw;      /* raw interrupt word after the stop */
 	uint32_t passes;   /* how many polls the wait took */
+	uint32_t raddr_max; /* furthest mem_raddr_ex got during the wait (decoded, low 9 bits) */
+	uint32_t raw_before; /* raw interrupt word one instruction before the stop */
 	int rc;            /* 0 = the hardware reported TX_DONE */
 };
 
@@ -252,9 +266,17 @@ static void ws2812_rmt_tx_chunk(const struct device *dev, const uint8_t *bytes, 
 	const uint32_t err_bit = RMT_LL_EVENT_TX_ERROR(ch);
 
 	out->rc = -EIO;
+	out->raddr_max = 0;
 	for (uint32_t passes = 0; passes <= pass_cap; passes++) {
 		const uint32_t raw = rmt_ll_tx_get_interrupt_status_raw(regs, ch);
+		/* mem_raddr_ex is the low 9 bits on both generations. Sampled, not acted
+		 * on: completion is TX_DONE below. This is the reading that settles whether
+		 * the counter ran at all, and it has to be taken here - the stop resets it. */
+		const uint32_t raddr = RMT_CHANNEL_STATUS(regs, ch) & 0x1FFU;
 
+		if (raddr > out->raddr_max) {
+			out->raddr_max = raddr;
+		}
 		if ((raw & done_bit) != 0U) {
 			out->rc = 0;
 			out->passes = passes;
@@ -269,10 +291,15 @@ static void ws2812_rmt_tx_chunk(const struct device *dev, const uint8_t *bytes, 
 		out->passes = passes;
 	}
 
+	/* The interrupt word and the status word on the live side of the stop: the stop
+	 * resets the read pointer, and on this part TX_DONE is already set before it, so
+	 * these are the readings that describe the frame rather than the reset. */
+	out->raw_before = rmt_ll_tx_get_interrupt_status_raw(regs, ch);
+	out->status = RMT_CHANNEL_STATUS(regs, ch);
+
 	rmt_ll_tx_stop(regs, ch);
 	/* Read before the status is cleared: reading after is how an early version printed
 	 * raw=0 for a channel that had just reported done. */
-	out->status = RMT_CHANNEL_STATUS(regs, ch);
 	out->raw = rmt_ll_tx_get_interrupt_status_raw(regs, ch);
 	rmt_ll_clear_interrupt_status(regs, RMT_LL_EVENT_TX_MASK(ch) | err_bit);
 }
@@ -308,12 +335,12 @@ static void ws2812_rmt_probe_frame_end(const struct device *dev)
 
 		ws2812_rmt_tx_chunk(dev, kPattern, sizeof(kPattern), kTries[t].limit,
 				   kTries[t].eof, kTries[t].wrap, 30000U, &r);
-		LOG_INF("probe ch%lu [%s] rc=%d passes=%u written=0x%08x status=0x%08x "
-			"raw=0x%08x limit=0x%08x conf=0x%08x",
+		LOG_INF("probe ch%lu [%s] rc=%d passes=%u waddr=%u raddrMax=%u "
+			"rawBefore=0x%03x raw=0x%03x written=0x%08x status=0x%08x",
 			(unsigned long)chan_of(dev), kTries[t].what, r.rc,
-			(unsigned)r.passes, (unsigned)r.written, (unsigned)r.status,
-			(unsigned)r.raw, (unsigned)kTries[t].limit,
-			(unsigned)RMT_CHANNEL_CONF(regs_of(dev), chan_of(dev)));
+			(unsigned)r.passes, (unsigned)((r.written >> 12) & 0x1FFU),
+			(unsigned)r.raddr_max, (unsigned)r.raw_before, (unsigned)r.raw,
+			(unsigned)r.written, (unsigned)r.status);
 	}
 }
 #endif /* CONFIG_WS2812_RMT_PROBE */
@@ -337,11 +364,12 @@ static int ws2812_rmt_flush_chunk(const struct device *dev, const uint8_t *bytes
 
 	if (!first_reported) {
 		first_reported = true;
-		LOG_INF("ch%lu %u symbols: written=0x%08x status=0x%08x raw=0x%08x "
-			"sys_conf=0x%08x",
-			(unsigned long)chan_of(dev), (unsigned)symbols, (unsigned)r.written,
-			(unsigned)r.status, (unsigned)r.raw,
-			(unsigned)regs_of(dev)->sys_conf.val);
+		LOG_INF("ch%lu %u symbols: waddr=%u raddrMax=%u rawBefore=0x%03x "
+			"written=0x%08x status=0x%08x raw=0x%08x sys_conf=0x%08x",
+			(unsigned long)chan_of(dev), (unsigned)symbols,
+			(unsigned)((r.written >> 12) & 0x1FFU), (unsigned)r.raddr_max,
+			(unsigned)r.raw_before, (unsigned)r.written, (unsigned)r.status,
+			(unsigned)r.raw, (unsigned)regs_of(dev)->sys_conf.val);
 	}
 
 	if (r.rc == 0) {
@@ -358,10 +386,15 @@ static int ws2812_rmt_flush_chunk(const struct device *dev, const uint8_t *bytes
 	if ((r.raw & RMT_LL_EVENT_TX_ERROR(chan_of(dev))) != 0U) {
 		LOG_ERR("rmt channel %lu reported an error", (unsigned long)chan_of(dev));
 	} else {
-		LOG_ERR("rmt ch%lu never done: written=0x%08x status=0x%08x raw=0x%08x "
-			"sys_conf=0x%08x",
-			(unsigned long)chan_of(dev), (unsigned)r.written, (unsigned)r.status,
-			(unsigned)r.raw, (unsigned)regs_of(dev)->sys_conf.val);
+		/* raddrMax is the discriminator: 0 means the counter never ran (clock or
+		 * symbol path), >= symbols means the frame went out and only the done bit
+		 * was missed. Both used to read as the same "never done". */
+		LOG_ERR("rmt ch%lu never done: waddr=%u raddrMax=%u rawBefore=0x%03x "
+			"written=0x%08x status=0x%08x raw=0x%08x sys_conf=0x%08x",
+			(unsigned long)chan_of(dev), (unsigned)((r.written >> 12) & 0x1FFU),
+			(unsigned)r.raddr_max, (unsigned)r.raw_before,
+			(unsigned)r.written, (unsigned)r.status, (unsigned)r.raw,
+			(unsigned)regs_of(dev)->sys_conf.val);
 	}
 	return r.rc;
 }
