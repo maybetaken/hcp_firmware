@@ -44,6 +44,8 @@
 #include <soc/soc.h>
 #include <esp_rom_gpio.h>
 
+#include <ws2812_rmt/ws2812_rmt.h>
+
 /* What the hal/ll layer does not hide between these parts: where a symbol is written,
  * which channel registers to read back, the counter clock's name, and how a frame is
  * ended. All four are stated per part rather than guessed - a wrong guess compiles and
@@ -214,6 +216,7 @@ struct tx_result {
 	uint32_t passes;   /* how many polls the wait took */
 	uint32_t raddr_max; /* furthest mem_raddr_ex got during the wait (decoded, low 9 bits) */
 	uint32_t raw_before; /* raw interrupt word one instruction before the stop */
+	uint32_t limit;    /* the tx_lim this chunk asked to stop at */
 	int rc;            /* 0 = the hardware reported TX_DONE */
 };
 
@@ -252,6 +255,7 @@ static void ws2812_rmt_tx_chunk(const struct device *dev, const uint8_t *bytes, 
 	}
 
 	out->written = RMT_CHANNEL_STATUS(regs, ch);
+	out->limit = limit;
 
 	rmt_ll_tx_start(regs, ch);
 
@@ -345,6 +349,29 @@ static void ws2812_rmt_probe_frame_end(const struct device *dev)
 }
 #endif /* CONFIG_WS2812_RMT_PROBE */
 
+/* The last chunk's readings, kept for the diagnostic surface (ws2812_rmt_last_tx) so a
+ * board with no console can still say whether the counter ran. Written by the transmit
+ * path, read by the application over the network; a torn read of a 60 us transaction is
+ * cheaper than a lock and reads as "the last frame", never "the frame on the wire now". */
+static struct tx_result g_last_tx;
+static bool g_last_tx_valid;
+
+bool ws2812_rmt_last_tx(uint32_t out[WS2812_RMT_LAST_TX_WORDS], int *rc)
+{
+	if (!g_last_tx_valid || out == NULL || rc == NULL) {
+		return false;
+	}
+	out[0] = g_last_tx.written;
+	out[1] = g_last_tx.status;
+	out[2] = g_last_tx.raw;
+	out[3] = g_last_tx.passes;
+	out[4] = g_last_tx.raddr_max;
+	out[5] = g_last_tx.raw_before;
+	out[6] = g_last_tx.limit;
+	*rc = g_last_tx.rc;
+	return true;
+}
+
 /* Push one chunk of the real frame and wait for it. */
 static int ws2812_rmt_flush_chunk(const struct device *dev, const uint8_t *bytes, uint8_t count)
 {
@@ -356,6 +383,8 @@ static int ws2812_rmt_flush_chunk(const struct device *dev, const uint8_t *bytes
 	 * never arrive, so the frame neither ends nor reports done. */
 	ws2812_rmt_tx_chunk(dev, bytes, count, RMT_TX_LIMIT(symbols), kTxAppendEof, kTxWrapAtLimit,
 			   kWaitPassCap, &r);
+	g_last_tx = r;
+	g_last_tx_valid = true;
 
 	/* Once per boot: the three readings that say what happened on the hardware, since
 	 * a completion bit alone has proved nothing (see struct tx_result for the field

@@ -3,6 +3,10 @@
 # Named library rather than the default, so a link error names this module instead of
 # "app". Built only when a board describes such a node (see Kconfig).
 zephyr_library_named(ws2812_rmt)
+# include/ carries the driver's diagnostic surface (ws2812_rmt.h), reached weakly by the
+# application; reachable even in a build that selects no such node, where the weak
+# reference resolves to nothing.
+zephyr_include_directories(include)
 zephyr_library_sources_ifdef(CONFIG_LED_STRIP_ESP_RMT ws2812_rmt.c)
 
 # The GPIO-matrix signal index per RMT channel comes from the SoC's own table rather

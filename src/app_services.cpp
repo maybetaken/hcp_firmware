@@ -33,6 +33,13 @@
 #include "hcp/ssdp/discovery.h"
 #endif
 
+/* The ws2812_rmt driver's diagnostic surface, reached weakly: a build with no LED node
+ * links with this resolving to nothing and the readings are simply omitted from the
+ * report. It is how a board with no console says whether its RMT counter ran at all. */
+#include <ws2812_rmt/ws2812_rmt.h>
+extern "C" bool ws2812_rmt_last_tx(uint32_t out[WS2812_RMT_LAST_TX_WORDS],
+                                   int* rc) __attribute__((weak));
+
 #ifdef CONFIG_HCP_PROVISION
 
 namespace hcp {
@@ -127,6 +134,26 @@ int Services::StateExtra(char* buf, size_t cap) {
                             hcp::provision::LedPattern());
   if (more > 0 && static_cast<size_t>(more) < cap - used) {
     used += static_cast<size_t>(more);
+  }
+
+  /* The driver's own last-chunk readings, so "ledrc -5" can be read from the network:
+   * rmax 0 means the counter never ran, rmax >= symbols means the frame went out and only
+   * the done bit was missed. w/s/raw are the raw status/interrupt words (see the driver). */
+  if (ws2812_rmt_last_tx != nullptr) {
+    uint32_t tx[WS2812_RMT_LAST_TX_WORDS];
+    int txrc = 0;
+    if (ws2812_rmt_last_tx(tx, &txrc)) {
+      const int t = snprintk(buf + used, cap - used,
+                             ",\"ledtx\":{\"w\":%u,\"s\":%u,\"raw\":%u,\"p\":%u,"
+                             "\"rmax\":%u,\"rb\":%u,\"lim\":%u,\"rc\":%d}",
+                             static_cast<unsigned>(tx[0]), static_cast<unsigned>(tx[1]),
+                             static_cast<unsigned>(tx[2]), static_cast<unsigned>(tx[3]),
+                             static_cast<unsigned>(tx[4]), static_cast<unsigned>(tx[5]),
+                             static_cast<unsigned>(tx[6]), txrc);
+      if (t > 0 && static_cast<size_t>(t) < cap - used) {
+        used += static_cast<size_t>(t);
+      }
+    }
   }
 #endif
 #ifdef CONFIG_HCP_OTA
