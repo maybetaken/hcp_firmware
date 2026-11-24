@@ -198,12 +198,17 @@ static inline uint32_t ws2812_symbol(bool one)
  *   lim=2s-1 / 2s: raw 0x001 - TX_DONE without the threshold, reached only by streaming
  *                  the stale entries that follow the data (the C6's wrong-colour trap).
  *
- * So the pointers count 32-bit symbols (waddr 24 for 24 symbols, not 48), tx_lim =
- * symbols-1 is the right frame end on this part, and TX_DONE is observable during the
- * wait - the completion rule below is not asking the hardware for something it never
- * gives. 25 s of the production animation logged zero "never done" and zero errors.
- * The "tx_end never set" reading that drove the earlier rounds was the >>11 decode plus
- * a status word captured after the stop, not a channel that refused to finish.
+ * So the pointers count 32-bit symbols (waddr 24 for 24 symbols, not 48) and tx_lim =
+ * symbols-1 is the right frame end. But TX_DONE is NOT universal: the bench/dev C3 raises
+ * it (raw 0x101), while the deployed production C3 never does - its readings (read over
+ * MQTT via ws2812_rmt_last_tx, no console) are waddr 24, raddr running to 28, int_raw
+ * stuck at 0x100 (threshold only), wait running to its 4000-pass cap. The frame went out
+ * (the read pointer consumed well past the 24 symbols) and only the announcement is
+ * missing. So completion accepts EITHER the done bit OR the read pointer reaching the
+ * symbol count - the pointer starts at 0 and advances only as symbols are consumed, so
+ * unlike the write pointer (full before start, the source of the old green-strip false
+ * complete) it cannot judge a frame done before it is. A dev-board pass did not prove the
+ * production part; the production readings did.
  *
  * A trap that survives the corrected decode: stopping the channel resets the read
  * pointer, so a status word captured after rmt_ll_tx_stop() shows 0 whatever happened
@@ -268,20 +273,33 @@ static void ws2812_rmt_tx_chunk(const struct device *dev, const uint8_t *bytes, 
 	 * caller - which for a status LED is the system workqueue. */
 	const uint32_t done_bit = RMT_LL_EVENT_TX_DONE(ch);
 	const uint32_t err_bit = RMT_LL_EVENT_TX_ERROR(ch);
+	const uint32_t symbols = (uint32_t)count * 8U;
 
 	out->rc = -EIO;
 	out->raddr_max = 0;
 	for (uint32_t passes = 0; passes <= pass_cap; passes++) {
 		const uint32_t raw = rmt_ll_tx_get_interrupt_status_raw(regs, ch);
-		/* mem_raddr_ex is the low 9 bits on both generations. Sampled, not acted
-		 * on: completion is TX_DONE below. This is the reading that settles whether
-		 * the counter ran at all, and it has to be taken here - the stop resets it. */
+		/* mem_raddr_ex is the low 9 bits on both generations, and it starts at 0 and
+		 * advances as the counter consumes symbols - so it is a completion signal too,
+		 * not just a diagnostic. Some parts never raise TX_DONE: the production C3 runs
+		 * the read pointer past the whole frame (raddr 28 for 24 symbols) yet int_raw
+		 * stays 0x100 (threshold only), so waiting for the done bit alone times out on
+		 * a frame that already went out. The read pointer reaching the symbol count is
+		 * the evidence that survives both behaviours. */
 		const uint32_t raddr = RMT_CHANNEL_STATUS(regs, ch) & 0x1FFU;
 
 		if (raddr > out->raddr_max) {
 			out->raddr_max = raddr;
 		}
 		if ((raw & done_bit) != 0U) {
+			out->rc = 0;
+			out->passes = passes;
+			break;
+		}
+		if (raddr >= symbols) {
+			/* The counter consumed the last symbol; let its bit cell finish shifting
+			 * out before the stop, so the tail of the frame is not clipped. */
+			k_busy_wait(3);
 			out->rc = 0;
 			out->passes = passes;
 			break;
