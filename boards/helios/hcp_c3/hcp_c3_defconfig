@@ -4,3 +4,8 @@ CONFIG_CONSOLE=y
 CONFIG_SERIAL=y
 CONFIG_UART_CONSOLE=y
 CONFIG_GPIO=y
+# This module carries 4 MB and the partition table spans all of it (storage/prodinfo/
+# scratch/coredump live above 0x200000). Zephyr's esp32c3 default tells esptool 2 MB,
+# so `erase-flash` silently erased only the lower half and left the upper partitions
+# untouched. Match the tool to the part.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y

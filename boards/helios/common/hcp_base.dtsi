@@ -15,11 +15,18 @@
 #include <zephyr/dt-bindings/gpio/gpio.h>
 #include <zephyr/dt-bindings/input/input-event-codes.h>
 
+/* Console node. The RISC-V parts (C3/C5/C6) have a native USB-Serial-JTAG CDC; the
+ * classic dual-core ESP32 does not, so it defines HCP_CONSOLE as a UART and
+ * HCP_NO_USB_SERIAL to skip the usb_serial node entirely. */
+#ifndef HCP_CONSOLE
+#define HCP_CONSOLE usb_serial
+#endif
+
 / {
 	chosen {
 		zephyr,sram = &HCP_SRAM;
-		zephyr,console = &usb_serial;
-		zephyr,shell-uart = &usb_serial;
+		zephyr,console = &HCP_CONSOLE;
+		zephyr,shell-uart = &HCP_CONSOLE;
 		zephyr,flash = &flash0;
 		zephyr,code-partition = &slot0_partition;
 		/* Persistent KV (hcp::storage -> settings -> NVS) uses the 192 KB
@@ -108,7 +115,10 @@
 	status = "okay";
 };
 
-/* Console via native USB-Serial-JTAG (CDC-ACM) -> /dev/cu.usbmodem* on host. */
+/* Console via native USB-Serial-JTAG (CDC-ACM) -> /dev/cu.usbmodem* on host.
+ * Absent on the classic ESP32, which defines HCP_NO_USB_SERIAL. */
+#ifndef HCP_NO_USB_SERIAL
 &usb_serial {
 	status = "okay";
 };
+#endif
