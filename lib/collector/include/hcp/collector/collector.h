@@ -46,7 +46,10 @@ namespace collector {
  * an exception, it would switch the wrong load. */
 enum class Command {
   kNone = 0,
-  kConfig,       /* <sn>/config: the point table, as JSON */
+  kConfig,       /* <sn>/config: the point table, as JSON (per-unit merge) */
+  kReplaceConfig, /* same JSON, but replaces the WHOLE table: the firmware's own device
+                   * table on a device-type change, where the previous type's segments
+                   * must not survive. Internal only - no MQTT suffix maps to it. */
   kModbusWrite,  /* <sn>/control/cmd: raw [unit, fc, addr..., values...] */
   kRestart,      /* <sn>/control/restart */
   kReconfig,     /* <sn>/control/reconfig: forget Wi-Fi, open BluFi */

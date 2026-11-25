@@ -17,6 +17,7 @@
 #include "hcp/collector/schedule.h"
 #include "hcp/kernel/kernel.h"
 #include "hcp/log/log.h"
+#include "hcp/modbus/dlt645.h"
 #include "hcp/modbus/master.h"
 #include "hcp/mqtt/client.h"
 #ifdef CONFIG_HCP_OTA
@@ -138,6 +139,7 @@ bool g_bus_open = false;
 const char* Name(Command cmd) {
   switch (cmd) {
     case Command::kConfig: return "config";
+    case Command::kReplaceConfig: return "replace config";
     case Command::kModbusWrite: return "modbus write";
     case Command::kRestart: return "restart";
     case Command::kReconfig: return "reconfig";
@@ -176,10 +178,15 @@ void OnMessage(const uint8_t* payload, size_t len, void* user) {
   }
 }
 
-void ApplyConfig(Slot& slot) {
+void ApplyConfig(Slot& slot, bool replace) {
+  /* A device-type change (the firmware's own device table, selected by the provisioned
+   * driver) replaces the WHOLE table: keeping the previous type's segments would poll a
+   * register map that no longer belongs to this device. Home Assistant's config keeps the
+   * per-unit merge, so a second meter it configures does not wipe the first. The registry
+   * still compares before writing, so re-applying the same table does not wear storage. */
   const char* text = reinterpret_cast<const char*>(slot.data);
   const registry::Apply result =
-      g_table.ApplyConfig(text, slot.len, g_kv);
+      g_table.ApplyConfig(text, slot.len, g_kv, replace);
   switch (result) {
     case registry::Apply::kIgnored:
       /* No "segments" array - another plugin's handshake (Switches.py sends "{}"
@@ -214,6 +221,23 @@ void ApplyConfig(Slot& slot) {
 /* A write request from <sn>/control/cmd, executed on this thread - which is the
  * only one allowed on the bus, so a write can never interleave with a poll. */
 void ExecuteWrite(Slot& slot) {
+  /* A DL/T645 frame is the other protocol on this wire, not a Modbus request: the
+   * ddsu666's "switch to Modbus" command arrives this way, addressed by 表号 rather
+   * than by unit. Recognised by its 0xFE preamble, which no Modbus unit can be, and
+   * forwarded verbatim - the reference module does not interpret it either. */
+  if (modbus::IsDlt645(slot.data, slot.len)) {
+    if (!g_bus_open) {
+      COL_LOGW("645 frame refused: bus not open");
+      return;
+    }
+    const bool ok = g_bus.Transceive645(slot.data, slot.len);
+    COL_LOGI("645 frame (%u bytes) -> %s", (unsigned)slot.len,
+             ok ? "ok" : "failed");
+    /* No health note: the 645 address is a 12-digit 表号, not a unit on the poll
+     * plan, so there is no entry here whose history this answer belongs to. */
+    return;
+  }
+
   registry::WriteRequest req{};
   if (registry::ParseWriteRequest(slot.data, slot.len, &req) !=
       registry::WriteParse::kOk) {
@@ -345,7 +369,11 @@ void Poll(int index) {
 void Handle(Slot& slot) {
   switch (slot.cmd) {
     case Command::kConfig:
-      ApplyConfig(slot);
+      ApplyConfig(slot, false);
+      return;
+
+    case Command::kReplaceConfig:
+      ApplyConfig(slot, true);
       return;
 
     case Command::kModbusWrite:
