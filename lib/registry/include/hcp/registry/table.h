@@ -137,8 +137,11 @@ class Table {
   Source Load(KeyValue& kv);
 
   /* Apply a payload from the config topic, with the precedence and dedup rules
-   * described at the top of this header. */
-  Apply ApplyConfig(const char* payload, size_t len, KeyValue& kv);
+   * described at the top of this header. `whole` replaces the entire table instead of
+   * merging per unit - a device-type change must not leave the previous type's segments
+   * polling. Equality is still checked, so re-applying the same table stays a no-op and
+   * does not rewrite storage. */
+  Apply ApplyConfig(const char* payload, size_t len, KeyValue& kv, bool whole = false);
 
  private:
   /* Value-initialised so padding is deterministic even though equality is

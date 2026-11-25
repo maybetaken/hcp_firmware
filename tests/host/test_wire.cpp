@@ -178,3 +178,25 @@ TEST(WireParse, RejectsWhatItCannotTrust) {
                                                  0, kMaxWriteValues + 1};
   EXPECT_EQ(ParseWriteRequest(many, sizeof(many), &req), WriteParse::kBad);
 }
+
+TEST(WireParse, MultipleRegisterWriteAcceptsTheCloudModbusFraming) {
+  // Captured from the iotrix app's 地址校准 on ddsu666/XAE7NMad/cmd:
+  //   05 10 0006 0001 02 0003 d4f7  (CRC stripped -> 9 bytes)
+  // unit 5 = the address read off the meter's screen, register 0x0006 = Addr, value 3 =
+  // the address to force. A real Modbus FC10 inserts a byte-count byte, which HA's
+  // pack_data omits - both framings must parse.
+  const uint8_t buf[9] = {0x05, 0x10, 0x00, 0x06, 0x00, 0x01, 0x02, 0x00, 0x03};
+  WriteRequest req{};
+  ASSERT_EQ(ParseWriteRequest(buf, sizeof(buf), &req), WriteParse::kOk);
+  EXPECT_EQ(req.unit_id, 5);
+  EXPECT_EQ(req.start_address, 0x0006);
+  EXPECT_EQ(req.count, 1);
+  EXPECT_EQ(req.values[0], 3);
+}
+
+TEST(WireParse, MultipleRegisterWriteRejectsAnInconsistentByteCount) {
+  // byte count says 4 but only one register's worth of data follows.
+  const uint8_t buf[9] = {0x05, 0x10, 0x00, 0x06, 0x00, 0x01, 0x04, 0x00, 0x03};
+  WriteRequest req{};
+  EXPECT_EQ(ParseWriteRequest(buf, sizeof(buf), &req), WriteParse::kBad);
+}

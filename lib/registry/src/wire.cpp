@@ -107,12 +107,25 @@ WriteParse ParseWriteRequest(const uint8_t* buf, size_t len, WriteRequest* out) 
       if (n == 0 || n > kMaxWriteValues) {
         return WriteParse::kBad;  // refused, never truncated
       }
-      if (len != (size_t)kNotifyHeaderBytes + (size_t)n * 2u) {
-        return WriteParse::kBad;  // header does not match the bytes present
+      /* Two framings reach this door and both are legitimate:
+       *   HA's <sn>/control/cmd  - the 6-byte notify header then the values, NO byte
+       *                            count (modbus_protocol_helper.pack_data);
+       *   the cloud's /cmd       - a real Modbus RTU frame, which inserts a byte-count
+       *                            byte between the quantity and the data (7 + 2n).
+       * Accepting only the first rejected every cloud FC10 (the app's setup_addr arrives
+       * as 05 10 0006 0001 02 0003 crc); accepting only the second would break HA. */
+      size_t data_off = (size_t)kNotifyHeaderBytes;
+      if (len == data_off + (size_t)n * 2u) {
+        // HA form: no byte count present.
+      } else if (len == data_off + 1u + (size_t)n * 2u &&
+                 buf[kNotifyHeaderBytes] == (uint8_t)(n * 2u)) {
+        data_off += 1u;  // Modbus form: byte count present and consistent.
+      } else {
+        return WriteParse::kBad;
       }
       req.count = n;
       for (uint16_t i = 0; i < n; i++) {
-        req.values[i] = Be16(buf + kNotifyHeaderBytes + 2 * i);
+        req.values[i] = Be16(buf + data_off + 2 * i);
       }
       *out = req;
       return WriteParse::kOk;

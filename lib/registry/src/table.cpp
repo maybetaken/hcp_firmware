@@ -425,7 +425,7 @@ Source Table::Load(KeyValue& kv) {
   return source_;
 }
 
-Apply Table::ApplyConfig(const char* payload, size_t len, KeyValue& kv) {
+Apply Table::ApplyConfig(const char* payload, size_t len, KeyValue& kv, bool whole) {
   Segment parsed[kMaxSegments];
   int n = 0;
   switch (ParseWire(payload, len, parsed, kMaxSegments, &n)) {
@@ -464,7 +464,7 @@ Apply Table::ApplyConfig(const char* payload, size_t len, KeyValue& kv) {
         touched[tn++] = parsed[i].slave_id;
       }
     }
-    for (int i = 0; i < count_; i++) {
+    for (int i = 0; !whole && i < count_; i++) {
       bool replace = false;
       for (int j = 0; j < tn; j++) {
         if (touched[j] == segs_[i].slave_id) {

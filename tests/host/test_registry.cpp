@@ -377,3 +377,29 @@ TEST(RegistrySerialize, RejectsTornOrOutOfRangeText) {
   EXPECT_FALSE(t.Deserialize(""));            /* "nothing stored" is not a table */
   EXPECT_EQ(t.count(), 0);
 }
+TEST(RegistryApply, WholeReplaceDropsTheOtherDeviceType) {
+  // A device-type change installs the firmware's own device table: the previous type's
+  // segments must not survive, or the board keeps polling a map that is not this device.
+  Table t;
+  FakeStore kv;
+  ASSERT_EQ(t.ApplyConfig(kJkbms, strlen(kJkbms), kv), Apply::kUpdated);
+  const int before = t.count();
+  ASSERT_GT(before, 0);
+  EXPECT_EQ(t.ApplyConfig(kDdsu666, strlen(kDdsu666), kv, true), Apply::kUpdated);
+  Segment segs[kMaxSegments];
+  int n = 0;
+  ASSERT_EQ(Wire(kDdsu666, segs, &n), Parsed::kParsed);
+  EXPECT_EQ(n, t.count());
+  // Re-applying the same whole table is still a no-op: no storage wear on every boot.
+  EXPECT_EQ(t.ApplyConfig(kDdsu666, strlen(kDdsu666), kv, true), Apply::kUnchanged);
+}
+
+TEST(RegistryApply, MergeStillKeepsTheOtherUnit) {
+  // Home Assistant's path is unchanged: configuring a second meter must not wipe the first.
+  Table t;
+  FakeStore kv;
+  ASSERT_EQ(t.ApplyConfig(kJkbms, strlen(kJkbms), kv), Apply::kUpdated);
+  const int before = t.count();
+  EXPECT_EQ(t.ApplyConfig(kDdsu666, strlen(kDdsu666), kv, false), Apply::kUpdated);
+  EXPECT_GT(t.count(), before);
+}
