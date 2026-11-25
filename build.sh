@@ -186,6 +186,11 @@ build_one() {
       source /opt/venv/bin/activate
       source /opt/toolchains/zephyr/zephyr-env.sh
       export ZEPHYR_BASE=/opt/toolchains/zephyr
+      # The reusable modules are west projects now, not in-tree code. The image's
+      # workspace predates them, so fetch what the manifest names before building;
+      # west update is a no-op for projects already at their pinned revision.
+      cp /workspace/scripts/espressif/west.yml /opt/toolchains/zephyr/west.yml
+      (cd /opt/toolchains && west update blufi ota_client ws2812_rmt mbedtls-2.28)
       cd /workspace/hcp
       west build -p auto -d /workspace/hcp/build/${SLUG} -b ${BOARD} . -- \
         -DBOARD_ROOT=/workspace/hcp ${LED_ARGS} ${RS485_ARGS} ${VERSION_ARGS} ${BENCH_ARGS} ${EXTRA_ARGS}
