@@ -73,6 +73,20 @@ class Master {
   bool WriteMultipleRegisters(uint8_t addr, uint16_t reg, uint16_t count,
                               const uint16_t* values);
 
+  /*
+   * Send a DL/T645-2007 frame on the same wire (see dlt645.h). The frame goes out
+   * verbatim at 2400 8E1 and the Modbus line settings are restored afterwards,
+   * whether or not the meter answered - the next poll must not inherit 2400 baud.
+   *
+   * `frame`/`len` must pass IsDlt645(); anything else is refused without touching
+   * the bus. Returns true only for a well-formed reply the meter did not flag as
+   * an error.
+   *
+   * Native backend only. The subsys owns its UART and exposes no raw send, so
+   * there this logs and returns false; the meter target (c3) is native.
+   */
+  bool Transceive645(const uint8_t* frame, size_t len);
+
   // 0 on success, otherwise the subsys' -errno (-ENOTCONN from the subsys means
   // the slave did not answer, -EIO a malformed ADU), or -1 if Open() never
   // succeeded, or -EFBIG if the request was too long for the ADU buffer.

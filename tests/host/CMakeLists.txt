@@ -104,6 +104,13 @@ target_include_directories(test_rtu PRIVATE ${MB}/include)
 target_link_libraries(test_rtu PRIVATE GTest::gtest_main)
 add_test(NAME test_rtu COMMAND test_rtu)
 
+# ---- hcp::modbus DL/T645 framing (pure; scripted transport) ----
+add_executable(test_dlt645 ${MB}/src/dlt645.cpp
+              ${CMAKE_CURRENT_LIST_DIR}/test_dlt645.cpp)
+target_include_directories(test_dlt645 PRIVATE ${MB}/include)
+target_link_libraries(test_dlt645 PRIVATE GTest::gtest_main)
+add_test(NAME test_dlt645 COMMAND test_dlt645)
+
 # ---- hcp::collector topic mapping (pure part) ----
 set(CC ${HCP_ROOT}/lib/collector)
 add_executable(test_collector ${CC}/src/commands.cpp

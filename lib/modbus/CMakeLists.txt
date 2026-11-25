@@ -6,6 +6,9 @@ if(CONFIG_HCP_MODBUS)
   # The subsys backend's implementation of the facade; it excludes itself with an
   # #if when the native backend is chosen, so listing it always is harmless.
   target_sources(app PRIVATE src/master.cpp)
+  # DL/T645 framing is pure and backend-independent: the collector classifies a
+  # control/cmd payload with it whichever backend is running.
+  target_sources(app PRIVATE src/dlt645.cpp)
   target_sources_ifdef(CONFIG_HCP_MODBUS_BACKEND_NATIVE app PRIVATE
                        src/rtu.cpp src/zephyr/master_native.cpp)
 

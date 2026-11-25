@@ -21,6 +21,7 @@
 #include <zephyr/kernel.h>
 
 #include "hcp/log/log.h"
+#include "hcp/modbus/dlt645.h"
 #include "hcp/modbus/master.h"
 #include "hcp/modbus/rtu.h"
 #include "hcp/serial/port.h"
@@ -68,16 +69,40 @@ const char* Name(Frame f) {
 
 // Up to 12 bytes of what actually arrived. Seeing the bytes is the point of this
 // backend: the failure it replaces gave nothing but an error code.
-void Describe(const Reply& rep, char* out, size_t cap) {
+void Describe(const uint8_t* raw, size_t raw_len, char* out, size_t cap) {
   size_t used = 0;
   out[0] = '\0';
-  const size_t n = rep.raw_len < 12 ? rep.raw_len : 12;
+  const size_t n = raw_len < 12 ? raw_len : 12;
   for (size_t i = 0; i < n && used + 3 < cap; i++) {
     used += static_cast<size_t>(
-        snprintk(out + used, cap - used, "%s%02X", i ? " " : "", rep.raw[i]));
+        snprintk(out + used, cap - used, "%s%02X", i ? " " : "", raw[i]));
   }
-  if (rep.raw_len > n && used + 4 < cap) {
+  if (raw_len > n && used + 4 < cap) {
     used += static_cast<size_t>(snprintk(out + used, cap - used, " .."));
+  }
+}
+
+const char* Name645(Frame645 f) {
+  switch (f) {
+    case Frame645::kOk: return "ok";
+    case Frame645::kError: return "refused";
+    case Frame645::kBadCs: return "checksum";
+    case Frame645::kWrongAddr: return "wrong addr";
+    case Frame645::kTruncated: return "truncated";
+    case Frame645::kNoReply: return "no reply";
+    default: return "unframable";
+  }
+}
+
+int Errno645(Frame645 f) {
+  switch (f) {
+    case Frame645::kOk: return 0;
+    case Frame645::kError: return -EPROTO;
+    case Frame645::kBadCs: return -EIO;
+    case Frame645::kWrongAddr: return -EADDRNOTAVAIL;
+    case Frame645::kTruncated: return -ETIMEDOUT;
+    case Frame645::kNoReply: return -ENOTCONN;
+    default: return -EMSGSIZE;
   }
 }
 
@@ -145,7 +170,7 @@ bool Master::Transceive(const Request& req, Reply* rep, const char* what,
     return true;
   }
   char bytes[48];
-  Describe(*rep, bytes, sizeof(bytes));
+  Describe(rep->raw, rep->raw_len, bytes, sizeof(bytes));
   HCP_LOGW(hcp::log::kDomainModbus,
            "%s unit %u fc 0x%02x addr %u n %u -> %s (%u bytes: %s)", what,
            req.unit, req.fc, req.start, count, Name(f), (unsigned)rep->raw_len,
@@ -223,6 +248,49 @@ bool Master::WriteCoil(uint8_t addr, uint16_t reg, bool on) {
   req.coil_on = on;
   Reply rep;
   return Transceive(req, &rep, "write coil", 1);
+}
+
+bool Master::Transceive645(const uint8_t* frame, size_t len) {
+  if (!impl_->open) {
+    last_error_ = -1;
+    return false;
+  }
+  if (!IsDlt645(frame, len)) {
+    last_error_ = -EMSGSIZE;
+    return false;
+  }
+
+  const serial::Port::Line modbus = impl_->port.line();
+  serial::Port::Line dlt;
+  dlt.baud = kDlt645Baud;
+  dlt.parity = serial::Port::Parity::kEven;
+  dlt.stop_bits = 1;
+  if (!impl_->port.SetLine(dlt)) {
+    last_error_ = -EIO;
+    HCP_LOGW(hcp::log::kDomainModbus, "645: uart refused 2400 8E1");
+    return false;
+  }
+
+  Reply645 rep;
+  const Frame645 f =
+      Transact645(impl_->io, frame, len, impl_->cfg.response_timeout_ms, &rep);
+
+  /* Restored before anything else can run on this thread's bus, and on every
+   * outcome: leaving 2400 8E1 behind would silently break the next Modbus poll. */
+  if (!impl_->port.SetLine(modbus)) {
+    HCP_LOGE(hcp::log::kDomainModbus, "645: could not restore %u baud",
+             (unsigned)modbus.baud);
+  }
+
+  last_error_ = Errno645(f);
+  if (f == Frame645::kOk) {
+    return true;
+  }
+  char bytes[48];
+  Describe(rep.raw, rep.raw_len, bytes, sizeof(bytes));
+  HCP_LOGW(hcp::log::kDomainModbus, "645 (%u bytes) -> %s (%u bytes: %s)",
+           (unsigned)len, Name645(f), (unsigned)rep.raw_len, bytes);
+  return false;
 }
 
 }  // namespace modbus

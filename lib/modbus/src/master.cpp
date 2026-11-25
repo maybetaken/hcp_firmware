@@ -161,6 +161,17 @@ bool Master::WriteSingleRegister(uint8_t addr, uint16_t reg, uint16_t value) {
   return last_error_ == 0;
 }
 
+/* The subsys owns the UART and offers no raw send, so a 645 frame cannot go out
+ * through it. The meter target runs the native backend (see master.h). */
+bool Master::Transceive645(const uint8_t* frame, size_t len) {
+  (void)frame;
+  (void)len;
+  last_error_ = -ENOTSUP;
+  HCP_LOGW(hcp::log::kDomainModbus,
+           "645 frame refused: the subsys backend cannot send raw frames");
+  return false;
+}
+
 bool Master::WriteMultipleRegisters(uint8_t addr, uint16_t reg, uint16_t count,
                                     const uint16_t* values) {
   const int iface = Iface();
