@@ -8,12 +8,13 @@ if(CONFIG_BLUFI)
     # The algorithms (DH, bignum, AES-CFB128, MD5) are compiled from Mbed TLS, not
     # from a copy inside this module. Where to find it, in order:
     #   1. -DBLUFI_MBEDTLS_DIR=<path>, if the caller says where;
-    #   2. deps/mbedtls, the git submodule this library carries (pin = its gitlink);
-    #   3. the west module location, for workspaces that provide it that way.
+    #   2. the mbedtls-2.28 west project, which is where the workspace provides it;
+    #   3. deps/mbedtls, the submodule this library used to carry. Transitional:
+    #      it goes once every workspace has the west project.
     set(BLUFI_MBEDTLS_DIR "" CACHE PATH
         "Mbed TLS 2.28 source tree used by the BluFi security handshake")
-    foreach(_cand ${CMAKE_CURRENT_SOURCE_DIR}/deps/mbedtls
-                   ${ZEPHYR_BASE}/../modules/crypto/mbedtls-2.28)
+    foreach(_cand ${ZEPHYR_BASE}/../modules/crypto/mbedtls-2.28
+                   ${CMAKE_CURRENT_SOURCE_DIR}/deps/mbedtls)
       if(BLUFI_MBEDTLS_DIR STREQUAL "" AND EXISTS ${_cand}/library/dhm.c)
         set(BLUFI_MBEDTLS_DIR ${_cand})
       endif()
