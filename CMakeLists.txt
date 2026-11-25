@@ -3,21 +3,18 @@
 # SPDX-License-Identifier: Apache-2.0
 cmake_minimum_required(VERSION 3.20.0)
 
-# In-tree Zephyr modules (reusable components). Add each module dir (the one
-# containing zephyr/module.yml) before find_package.
-list(APPEND ZEPHYR_EXTRA_MODULES
-  ${CMAKE_CURRENT_LIST_DIR}/modules/drivers/ws2812_rmt
-  ${CMAKE_CURRENT_LIST_DIR}/modules/lib/blufi
-  ${CMAKE_CURRENT_LIST_DIR}/modules/lib/ota_client)
-
-# A module's devicetree bindings have to be announced separately from the module
-# itself: ZEPHYR_EXTRA_MODULES wires up its CMakeLists and Kconfig, but dts roots are
-# collected from the west manifest, and this application is not a west module. Verified
-# the hard way - with only the line above, a node using the module's compatible got its
-# properties ignored (no DT_HAS_* symbol, so the driver's Kconfig was never selectable)
-# and the failure surfaced much later as an undefined device object at link time.
-# pre_dt.cmake documents DTS_ROOT as "initial contents may be populated here".
-list(APPEND DTS_ROOT ${CMAKE_CURRENT_LIST_DIR}/modules/drivers/ws2812_rmt)
+# The three reusable modules (blufi, ota_client, ws2812_rmt) are west projects
+# now, fetched into the workspace's modules/ tree - west discovers them by their
+# zephyr/module.yml, so nothing here needs to name them. What does need naming is
+# the devicetree root: dts roots are collected from the west manifest, and this
+# application is not a west module. Verified the hard way - without DTS_ROOT, a
+# node using the module's compatible got its properties ignored (no DT_HAS_*
+# symbol, so the driver's Kconfig was never selectable) and the failure surfaced
+# much later as an undefined device object at link time.
+#
+# ZEPHYR_BASE is only defined INSIDE find_package(Zephyr), so it cannot be used
+# here - the workspace root comes from the environment instead, which west sets.
+list(APPEND DTS_ROOT $ENV{ZEPHYR_BASE}/../modules/drivers/ws2812_rmt)
 
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(hcp LANGUAGES C CXX)
