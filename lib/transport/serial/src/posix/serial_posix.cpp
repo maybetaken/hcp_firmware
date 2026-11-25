@@ -16,16 +16,30 @@ namespace serial {
 
 struct Port::Impl {
   std::deque<uint8_t> buf;
+  Port::Line line;
   bool open = false;
 };
 
 Port::Port() : impl_(new Impl()) {}
 Port::~Port() { delete impl_; }
 
-bool Port::Open(uint32_t /*baud*/) {
+bool Port::Open(uint32_t baud) {
+  impl_->line.baud = baud ? baud : 9600;
   impl_->open = true;
   return true;
 }
+
+bool Port::SetLine(const Line& line) {
+  if (!impl_->open || line.baud == 0 ||
+      (line.stop_bits != 1 && line.stop_bits != 2)) {
+    return false;
+  }
+  impl_->line = line;
+  return true;
+}
+
+Port::Line Port::line() const { return impl_->line; }
+
 void Port::Close() { impl_->open = false; }
 bool Port::IsOpen() const { return impl_->open; }
 

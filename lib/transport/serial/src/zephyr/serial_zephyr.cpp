@@ -30,7 +30,7 @@ static const struct gpio_dt_spec g_de =
 
 struct Port::Impl {
   const struct device* dev = nullptr;
-  uint32_t baud = 0;
+  Port::Line line;
   bool open = false;
 };
 
@@ -43,14 +43,9 @@ bool Port::Open(uint32_t baud) {
     impl_->dev = nullptr;
     return false;
   }
-  const struct uart_config cfg = {
-      .baudrate = static_cast<uint32_t>(baud),
-      .parity = UART_CFG_PARITY_NONE,
-      .stop_bits = UART_CFG_STOP_BITS_1,
-      .data_bits = UART_CFG_DATA_BITS_8,
-      .flow_ctrl = UART_CFG_FLOW_CTRL_NONE,
-  };
-  if (uart_configure(impl_->dev, &cfg) != 0) {
+  Line l;
+  l.baud = baud ? baud : 9600;
+  if (!SetLine(l)) {
     impl_->dev = nullptr;
     return false;
   }
@@ -59,10 +54,33 @@ bool Port::Open(uint32_t baud) {
     gpio_pin_configure_dt(&g_de, GPIO_OUTPUT_INACTIVE);  // RX by default
   }
 #endif
-  impl_->baud = baud ? baud : 9600;
   impl_->open = true;
   return true;
 }
+
+bool Port::SetLine(const Line& line) {
+  if (impl_->dev == nullptr || line.baud == 0 ||
+      (line.stop_bits != 1 && line.stop_bits != 2)) {
+    return false;
+  }
+  const struct uart_config cfg = {
+      .baudrate = line.baud,
+      .parity = line.parity == Parity::kEven  ? UART_CFG_PARITY_EVEN
+                : line.parity == Parity::kOdd ? UART_CFG_PARITY_ODD
+                                              : UART_CFG_PARITY_NONE,
+      .stop_bits = line.stop_bits == 2 ? UART_CFG_STOP_BITS_2
+                                       : UART_CFG_STOP_BITS_1,
+      .data_bits = UART_CFG_DATA_BITS_8,
+      .flow_ctrl = UART_CFG_FLOW_CTRL_NONE,
+  };
+  if (uart_configure(impl_->dev, &cfg) != 0) {
+    return false;
+  }
+  impl_->line = line;
+  return true;
+}
+
+Port::Line Port::line() const { return impl_->line; }
 
 void Port::Close() { impl_->open = false; }
 bool Port::IsOpen() const { return impl_->open; }
@@ -80,7 +98,7 @@ int Port::Write(const uint8_t* data, size_t len) {
   }
 #if HCP_RS485
   // Wait ~2 byte-times for the shift register to drain, then release to RX.
-  const uint32_t byte_us = 10u * 1000000u / impl_->baud;
+  const uint32_t byte_us = 10u * 1000000u / impl_->line.baud;
   k_busy_wait(2 * byte_us);
   gpio_pin_set_dt(&g_de, 0);
 #endif
