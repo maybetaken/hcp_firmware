@@ -8,9 +8,12 @@ if(CONFIG_BLUFI)
     # The algorithms (DH, bignum, AES-CFB128, MD5) are compiled from Mbed TLS, not
     # from a copy inside this module. Where to find it, in order:
     #   1. -DBLUFI_MBEDTLS_DIR=<path>, if the caller says where;
-    #   2. the mbedtls-2.28 west project, which is where the workspace provides it;
-    #   3. deps/mbedtls, the submodule this library used to carry. Transitional:
-    #      it goes once every workspace has the west project.
+    #   2. the mbedtls-2.28 west project, for a workspace that provides it - the
+    #      consumer that needs Mbed TLS but not this module gets it from there too,
+    #      so neither has to reach into the other;
+    #   3. deps/mbedtls, the submodule this library carries. This is the standalone
+    #      path and it stays: someone who takes just this library runs
+    #      `git submodule update --init deps/mbedtls` and builds.
     set(BLUFI_MBEDTLS_DIR "" CACHE PATH
         "Mbed TLS 2.28 source tree used by the BluFi security handshake")
     foreach(_cand ${ZEPHYR_BASE}/../modules/crypto/mbedtls-2.28

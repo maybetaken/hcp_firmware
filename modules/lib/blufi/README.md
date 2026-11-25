@@ -44,10 +44,13 @@ negotiates its own 256-bit group.
 git submodule update --init --depth 1 deps/mbedtls
 ```
 
-Then build with `CONFIG_BLUFI_SECURITY=y`; CMake finds `deps/mbedtls` by itself and
-prints which tree it resolved to. `-DBLUFI_MBEDTLS_DIR=<path>` points it at another
-checkout (any 2.28 tree), which is also how a workspace that provides Mbed TLS by
-other means - a west manifest entry, for instance - reuses that copy instead.
+Then build with `CONFIG_BLUFI_SECURITY=y`; CMake prints which tree it resolved to.
+It looks in three places, in order: `-DBLUFI_MBEDTLS_DIR=<path>` if you set it, then
+`modules/crypto/mbedtls-2.28` in the west workspace, then `deps/mbedtls` here. The
+west entry is for a workspace that already provides Mbed TLS 2.28: a sibling
+feature needing the same tree gets it from there, so neither module reaches into
+the other and that workspace never runs `submodule update`. Taken on its own, this
+library's submodule is the path, and it stays.
 
 `sec/mbedtls/CMakeLists.txt` builds those upstream files as a library of their
 own, for two reasons: the application already links an AES, so
