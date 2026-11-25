@@ -10,8 +10,8 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
-#ifndef HCP_WS2812_RMT_H
-#define HCP_WS2812_RMT_H
+#ifndef WS2812_RMT_H
+#define WS2812_RMT_H
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -39,4 +39,4 @@ bool ws2812_rmt_last_tx(uint32_t out[WS2812_RMT_LAST_TX_WORDS], int *rc);
 }
 #endif
 
-#endif  /* HCP_WS2812_RMT_H */
+#endif  /* WS2812_RMT_H */
